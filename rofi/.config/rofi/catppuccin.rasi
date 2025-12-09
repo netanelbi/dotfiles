@@ -1,0 +1,119 @@
+/* Catppuccin Mocha */
+* {
+    base: #1e1e2e;
+    mantle: #181825;
+    crust: #11111b;
+    text: #cdd6f4;
+    subtext0: #a6adc8;
+    subtext1: #bac2de;
+    surface0: #313244;
+    surface1: #45475a;
+    surface2: #585b70;
+    overlay0: #6c7086;
+    blue: #89b4fa;
+    lavender: #b4befe;
+    sapphire: #74c7ec;
+    teal: #94e2d5;
+    green: #a6e3a1;
+    yellow: #f9e2af;
+    peach: #fab387;
+    red: #f38ba8;
+    mauve: #cba6f7;
+    pink: #f5c2e7;
+    flamingo: #f2cdcd;
+    rosewater: #f5e0dc;
+
+    background-color: transparent;
+    text-color: @text;
+}
+
+window {
+    background-color: @base;
+    border: 2px solid;
+    border-color: @mauve;
+    border-radius: 12px;
+    width: 500px;
+    padding: 0;
+}
+
+mainbox {
+    background-color: transparent;
+    children: [inputbar, listview];
+    spacing: 0;
+    padding: 0;
+}
+
+inputbar {
+    background-color: @surface0;
+    border-radius: 10px 10px 0 0;
+    padding: 12px;
+    spacing: 8px;
+    children: [prompt, entry];
+}
+
+prompt {
+    background-color: @mauve;
+    text-color: @base;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-weight: bold;
+}
+
+entry {
+    background-color: transparent;
+    text-color: @text;
+    placeholder: "Search...";
+    placeholder-color: @overlay0;
+    padding: 6px;
+}
+
+listview {
+    background-color: transparent;
+    columns: 1;
+    lines: 8;
+    padding: 8px;
+    spacing: 4px;
+    fixed-height: true;
+}
+
+element {
+    background-color: transparent;
+    padding: 10px 12px;
+    border-radius: 8px;
+    spacing: 10px;
+}
+
+element normal.normal {
+    background-color: transparent;
+    text-color: @text;
+}
+
+element selected.normal {
+    background-color: @surface1;
+    text-color: @text;
+    border: 1px solid;
+    border-color: @mauve;
+}
+
+element alternate.normal {
+    background-color: transparent;
+    text-color: @text;
+}
+
+element-icon {
+    size: 24px;
+    background-color: transparent;
+}
+
+element-text {
+    background-color: transparent;
+    text-color: inherit;
+    vertical-align: 0.5;
+}
+
+scrollbar {
+    background-color: @surface0;
+    handle-color: @mauve;
+    handle-width: 4px;
+    border-radius: 4px;
+}
