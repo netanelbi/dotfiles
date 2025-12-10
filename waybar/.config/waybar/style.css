@@ -170,6 +170,23 @@ window#waybar {
     margin: 0 4px;
 }
 
+/* Power profile */
+#power-profiles-daemon {
+    padding: 0;
+    margin: 0;
+    color: transparent;
+}
+
+#power-profiles-daemon.performance {
+    color: @red;
+    margin: 0 4px;
+}
+
+#power-profiles-daemon.power-saver {
+    color: @green;
+    margin: 0 4px;
+}
+
 /* Tooltip */
 tooltip {
     background: @base;

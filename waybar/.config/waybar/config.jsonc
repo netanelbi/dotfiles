@@ -9,7 +9,7 @@
   "height": 38,
 
   "modules-left": ["hyprland/workspaces"],
-  "modules-center": ["clock", "hyprland/language", "keyboard-state"],
+  "modules-center": ["clock", "hyprland/language", "keyboard-state", "power-profiles-daemon"],
   "modules-right": [
     "tray",
     "bluetooth",
@@ -50,8 +50,7 @@
     "format-off": "󰂲",
     "tooltip-format": "{controller_alias}: {status}",
     "tooltip-format-connected": "{controller_alias}\n\n{device_enumerate}",
-    "tooltip-format-enumerate-connected": "  {device_alias}",
-    "on-click": "bash -c 'if bluetoothctl show | grep -q \"Powered: yes\"; then bluetoothctl power off; else bluetoothctl power on; fi'"
+    "tooltip-format-enumerate-connected": "  {device_alias}"
   },
 
   "network": {
@@ -106,5 +105,15 @@
   "tray": {
     "icon-size": 16,
     "spacing": 10
+  },
+
+  "power-profiles-daemon": {
+    "format": "{icon}",
+    "format-icons": {
+      "performance": "󰓅",
+      "balanced": "",
+      "power-saver": "󰌪"
+    },
+    "tooltip-format": "Power profile: {profile}"
   }
 }
