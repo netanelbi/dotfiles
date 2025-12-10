@@ -59,8 +59,9 @@
 }
 
 .notification.low {
-  border-color: @surface1;
+  border-color: @green;
 }
+
 
 .close-button {
   background: @surface0;
