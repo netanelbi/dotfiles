@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+tmp_dir="/tmp/cliphist"
+
+# Handle selection (piped from rofi)
+if [[ -n "$1" ]]; then
+    selected="$1"
+elif [[ ! -t 0 ]]; then
+    read -r selected
+fi
+
+if [[ -n "$selected" ]]; then
+    # Look up the ID from our mapping file
+    id=$(grep -Fm1 "$selected" "$tmp_dir/map" 2>/dev/null | cut -f1)
+    if [[ -n "$id" ]]; then
+        echo -e "$id\t$selected" | cliphist decode | wl-copy
+    else
+        cliphist decode <<<"$selected" | wl-copy
+    fi
+    exit
+fi
+
+# Generate list
+rm -rf "$tmp_dir"
+mkdir -p "$tmp_dir"
+
+cliphist list | while IFS=$'\t' read -r id content; do
+    [[ "$content" == *"<meta http-equiv="* ]] && continue
+
+    printf '%s\t%s\n' "$id" "$content" >> "$tmp_dir/map"
+
+    if [[ "$content" =~ binary.*\ (jpg|jpeg|png|bmp) ]]; then
+        ext="${BASH_REMATCH[1]}"
+        echo -e "$id\t" | cliphist decode > "$tmp_dir/$id.$ext" 2>/dev/null
+        display="[image:$id]"
+        printf '%s\t%s\n' "$id" "$display" >> "$tmp_dir/map"
+        printf '%s\0icon\x1f%s/%s.%s\n' "$display" "$tmp_dir" "$id" "$ext"
+    else
+        printf '%s\n' "$content"
+    fi
+done

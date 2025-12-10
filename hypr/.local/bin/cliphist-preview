@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Preview an image from cliphist in imv
+
+tmp_dir="/tmp/cliphist"
+selected="$1"
+
+if [[ "$selected" =~ ^\[image:([0-9]+)\]$ ]]; then
+    id="${BASH_REMATCH[1]}"
+    for ext in png jpg jpeg bmp; do
+        img="$tmp_dir/$id.$ext"
+        if [[ -f "$img" ]]; then
+            imv "$img" &
+            exit 0
+        fi
+    done
+fi
