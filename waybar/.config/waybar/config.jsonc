@@ -50,7 +50,8 @@
     "format-off": "󰂲",
     "tooltip-format": "{controller_alias}: {status}",
     "tooltip-format-connected": "{controller_alias}\n\n{device_enumerate}",
-    "tooltip-format-enumerate-connected": "  {device_alias}"
+    "tooltip-format-enumerate-connected": "  {device_alias}",
+    "on-click": "blueman-manager"
   },
 
   "network": {
