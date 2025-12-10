@@ -7,6 +7,7 @@ configuration {
     display-drun: "Apps";
     display-run: "Run";
     display-window: "Windows";
+    kb-custom-1: "Alt+p";
 }
 
 @theme "catppuccin"
