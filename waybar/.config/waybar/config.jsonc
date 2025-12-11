@@ -9,7 +9,7 @@
   "height": 38,
 
   "modules-left": ["hyprland/workspaces"],
-  "modules-center": ["clock", "hyprland/language", "keyboard-state", "power-profiles-daemon"],
+  "modules-center": ["clock", "hyprland/language", "keyboard-state", "pulseaudio#mic", "power-profiles-daemon"],
   "modules-right": [
     "tray",
     "bluetooth",
@@ -73,7 +73,7 @@
       "default": ["󰕿", "󰖀", "󰕾"]
     },
     "tooltip-format": "{desc}",
-    "on-click": "kitty --class wiremix-popup -e wiremix",
+    "on-click": "kitty --class wiremix-popup -e wiremix -v output",
     "on-click-right": "pavucontrol",
     "on-click-middle": "pamixer -t",
     "on-scroll-up": "pamixer -i 5",
@@ -108,6 +108,14 @@
   "tray": {
     "icon-size": 16,
     "spacing": 10
+  },
+
+  "pulseaudio#mic": {
+    "format": "{format_source}",
+    "format-source": "",
+    "format-source-muted": "󰍭",
+    "tooltip-format": "Mic: {source_desc}",
+    "on-click": "pamixer --default-source -t"
   },
 
   "power-profiles-daemon": {
