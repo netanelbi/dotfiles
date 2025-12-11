@@ -19,13 +19,19 @@ package/.config/package/ -> ~/.config/package
 | swaync | Notification center |
 | swaylock | Lock screen (swaylock-effects) |
 | swayidle | Idle daemon |
+| swayosd | OSD for volume/brightness |
 | kitty | Terminal emulator |
+| rofi | Application launcher |
+| fish | Fish shell config |
+| starship | Prompt customization |
+| fastfetch | System info display |
+| btop | System monitor |
 
 ## Install
 
 ```bash
 cd ~/.dotfiles
-stow hypr waybar swaync swaylock swayidle kitty
+stow hypr waybar swaync swaylock swayidle swayosd kitty rofi fish starship fastfetch btop
 ```
 
 ## Uninstall a package
