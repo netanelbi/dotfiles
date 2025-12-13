@@ -38,9 +38,21 @@ window {
 
 mainbox {
     background-color: transparent;
-    children: [inputbar, listview];
+    children: [inputbar, message, listview];
     spacing: 0;
     padding: 0;
+}
+
+message {
+    background-color: @surface0;
+    padding: 8px 12px;
+    border-radius: 0;
+}
+
+textbox {
+    background-color: transparent;
+    text-color: @green;
+    font-weight: bold;
 }
 
 inputbar {
