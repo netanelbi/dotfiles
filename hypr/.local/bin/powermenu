@@ -1,0 +1,23 @@
+#!/bin/bash
+
+options="  Lock\n  Logout\n  Suspend\n  Reboot\n  Shutdown"
+
+selected=$(echo -e "$options" | rofi -dmenu -p "Power" -i)
+
+case "$selected" in
+    *"Lock"*)
+        swaylock
+        ;;
+    *"Logout"*)
+        hyprctl dispatch exit
+        ;;
+    *"Suspend"*)
+        systemctl suspend
+        ;;
+    *"Reboot"*)
+        systemctl reboot
+        ;;
+    *"Shutdown"*)
+        systemctl poweroff
+        ;;
+esac
