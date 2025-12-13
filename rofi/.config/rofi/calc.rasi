@@ -1,0 +1,71 @@
+/* Calculator theme - minimal with focus on result */
+* {
+    base: #1e1e2e;
+    surface: #313244;
+    text: #cdd6f4;
+    green: #a6e3a1;
+    mauve: #cba6f7;
+    overlay: #6c7086;
+
+    background-color: transparent;
+    text-color: @text;
+}
+
+window {
+    background-color: @base;
+    border: 2px solid;
+    border-color: @green;
+    border-radius: 16px;
+    width: 550px;
+    padding: 0;
+}
+
+mainbox {
+    background-color: transparent;
+    children: [inputbar, message];
+    spacing: 0;
+    padding: 0;
+}
+
+inputbar {
+    background-color: @surface;
+    border-radius: 14px 14px 0 0;
+    padding: 16px;
+    spacing: 12px;
+    children: [prompt, entry];
+}
+
+prompt {
+    background-color: @green;
+    text-color: @base;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font: "JetBrainsMono Nerd Font Bold 12";
+}
+
+entry {
+    background-color: transparent;
+    text-color: @text;
+    placeholder: "Type expression...";
+    placeholder-color: @overlay;
+    padding: 8px;
+    font: "JetBrainsMono Nerd Font 14";
+}
+
+message {
+    background-color: @base;
+    padding: 20px;
+    border-radius: 0 0 14px 14px;
+}
+
+textbox {
+    background-color: transparent;
+    text-color: @mauve;
+    font: "JetBrainsMono Nerd Font Bold 14";
+    horizontal-align: 0.5;
+}
+
+/* Hide listview completely */
+listview {
+    enabled: false;
+}
