@@ -1,0 +1,79 @@
+/* Power Menu - Catppuccin Mocha */
+* {
+    base: #1e1e2e;
+    mantle: #181825;
+    text: #cdd6f4;
+    subtext: #a6adc8;
+    surface0: #313244;
+    surface1: #45475a;
+    red: #f38ba8;
+    mauve: #cba6f7;
+
+    background-color: transparent;
+    text-color: @text;
+}
+
+window {
+    background-color: @base;
+    border: 2px solid;
+    border-color: @mauve;
+    border-radius: 16px;
+    width: 200px;
+    location: center;
+}
+
+mainbox {
+    background-color: transparent;
+    children: [inputbar, listview];
+    spacing: 0;
+}
+
+inputbar {
+    background-color: @surface0;
+    border-radius: 14px 14px 0 0;
+    padding: 14px;
+    children: [prompt];
+}
+
+prompt {
+    background-color: transparent;
+    text-color: @mauve;
+    font: "JetBrainsMono Nerd Font Bold 13";
+    horizontal-align: 0.5;
+}
+
+entry {
+    enabled: false;
+}
+
+listview {
+    background-color: transparent;
+    columns: 1;
+    lines: 5;
+    padding: 8px;
+    spacing: 4px;
+    fixed-height: true;
+}
+
+element {
+    background-color: transparent;
+    padding: 10px 14px;
+    border-radius: 10px;
+}
+
+element normal.normal {
+    text-color: @text;
+}
+
+element selected.normal {
+    background-color: @surface1;
+    text-color: @mauve;
+    border: 1px solid;
+    border-color: @mauve;
+}
+
+element-text {
+    background-color: transparent;
+    text-color: inherit;
+    font: "JetBrainsMono Nerd Font 12";
+}

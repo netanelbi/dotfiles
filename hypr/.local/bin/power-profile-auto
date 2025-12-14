@@ -1,0 +1,23 @@
+#!/bin/bash
+# Auto-switch power profile based on AC power status
+
+# Get current power source
+if [ -f /sys/class/power_supply/AC/online ]; then
+    ac_online=$(cat /sys/class/power_supply/AC/online)
+elif [ -f /sys/class/power_supply/ACAD/online ]; then
+    ac_online=$(cat /sys/class/power_supply/ACAD/online)
+else
+    # Try to find any AC adapter
+    for adapter in /sys/class/power_supply/*/online; do
+        if [ -f "$adapter" ]; then
+            ac_online=$(cat "$adapter")
+            break
+        fi
+    done
+fi
+
+if [ "$ac_online" = "1" ]; then
+    powerprofilesctl set balanced
+else
+    powerprofilesctl set power-saver
+fi

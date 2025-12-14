@@ -1,0 +1,2 @@
+# Auto-switch power profile on AC power change
+SUBSYSTEM=="power_supply", ATTR{type}=="Mains", RUN+="/home/netanel/.local/bin/power-profile-auto"

@@ -14,11 +14,9 @@ package/.config/package/ -> ~/.config/package
 
 | Package | Description |
 |---------|-------------|
-| hypr | Hyprland window manager config |
+| hypr | Hyprland, hyprlock, hypridle configs |
 | waybar | Status bar (island style) |
 | swaync | Notification center |
-| swaylock | Lock screen (swaylock-effects) |
-| swayidle | Idle daemon |
 | swayosd | OSD for volume/brightness |
 | kitty | Terminal emulator |
 | rofi | Application launcher |
@@ -31,7 +29,7 @@ package/.config/package/ -> ~/.config/package
 
 ```bash
 cd ~/.dotfiles
-stow hypr waybar swaync swaylock swayidle swayosd kitty rofi fish starship fastfetch btop
+stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop
 ```
 
 ## Uninstall a package
@@ -71,8 +69,8 @@ pkill -SIGUSR2 waybar
 ## Dependencies
 
 ```bash
-sudo pacman -S hyprland xdg-desktop-portal-hyprland \
-  swaylock-effects swayidle kitty rofi waybar swaync swww stow \
+sudo pacman -S hyprland hyprlock hypridle xdg-desktop-portal-hyprland \
+  kitty rofi waybar swaync swww stow \
   grim slurp wl-copy cliphist jq pamixer
 ```
 
