@@ -1,17 +1,17 @@
 #!/bin/bash
 
-options="  Lock\n  Logout\n  Suspend\n  Reboot\n  Shutdown"
+options="󰌾  Lock\n󰗼  Logout\n󰤄  Sleep\n󰜉  Reboot\n󰐥  Shutdown"
 
-selected=$(echo -e "$options" | rofi -dmenu -p "Power" -i)
+selected=$(echo -e "$options" | rofi -dmenu -p "󰐥 Power" -i -theme ~/.config/rofi/powermenu.rasi)
 
 case "$selected" in
     *"Lock"*)
-        swaylock
+        hyprlock
         ;;
     *"Logout"*)
         hyprctl dispatch exit
         ;;
-    *"Suspend"*)
+    *"Sleep"*)
         systemctl suspend
         ;;
     *"Reboot"*)
