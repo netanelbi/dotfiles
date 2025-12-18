@@ -1,0 +1,19 @@
+#!/bin/bash
+# Hyprland monitor hotplug handler
+
+SOCKET="/run/user/$(id -u)/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+WALLPAPER="/usr/share/hypr/wall2.png"
+
+socat -U - UNIX-CONNECT:"$SOCKET" | while read -r line; do
+    case "$line" in
+        monitoradded*)
+            # External monitor connected (DP-1, DP-2, etc.)
+            sleep 0.5
+            swww img "$WALLPAPER"
+            ;;
+        monitorremoved*)
+            # External monitor disconnected - switch to workspace 1
+            hyprctl dispatch workspace 1
+            ;;
+    esac
+done
