@@ -45,7 +45,7 @@ ssh_symbol = " "
 
 [directory]
 style = "bold peach"
-truncate_to_repo = true
+truncate_to_repo = false
 truncation_length = 0
 truncation_symbol = "../"
 read_only = ""
