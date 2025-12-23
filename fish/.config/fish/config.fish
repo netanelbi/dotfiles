@@ -44,9 +44,6 @@ set -gx ANDROID_HOME ~/.Android/Sdk
 set -gx ANDROID_SDK_ROOT ~/.Android/Sdk
 set -gx PATH $ANDROID_SDK_ROOT/platform-tools $ANDROID_SDK_ROOT/cmdline-tools/latest/bin $PATH
 
-# ROCm (AMD GPU)
-export HSA_OVERRIDE_GFX_VERSION=11.0.0
-export ROCM_PATH=/opt/rocm
 
 # Work aliases
 alias ccropAPP="cd /home/netanel/Development/CCrop/c-crop-app"
