@@ -1,0 +1,13 @@
+#!/bin/bash
+# Move window to scratchpad and update waybar
+
+silent="$1"
+
+if [ "$silent" == "silent" ]; then
+    hyprctl dispatch movetoworkspacesilent special:magic
+else
+    hyprctl dispatch movetoworkspace special:magic
+fi
+
+# Update waybar indicator
+pkill -RTMIN+8 waybar
