@@ -1,0 +1,46 @@
+#!/bin/bash
+# Watch Hyprland events and update scratchpad count in real-time
+
+# Find Hyprland socket
+if [ -n "$HYPRLAND_INSTANCE_SIGNATURE" ]; then
+    SOCKET="/run/user/$(id -u)/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+else
+    # Find the first running instance
+    SOCKET=$(find /run/user/$(id -u)/hypr -name ".socket2.sock" -type s 2>/dev/null | head -1)
+fi
+
+if [ -z "$SOCKET" ] || [ ! -S "$SOCKET" ]; then
+    echo '{"text": "", "class": "", "tooltip": "Hyprland socket not found"}'
+    exit 1
+fi
+
+# Function to get current count and visibility
+get_status() {
+    count=$(hyprctl clients -j | jq '[.[] | select(.workspace.name == "special:magic")] | length')
+    is_visible=$(hyprctl monitors -j | jq -r '[.[] | select(.specialWorkspace.name == "special:magic")] | length > 0')
+
+    if [ "$count" -eq 0 ]; then
+        echo '{"text": "", "class": ""}'
+    else
+        if [ "$is_visible" == "true" ]; then
+            echo "{\"text\": \"󰝖 $count\", \"class\": \"active\"}"
+        else
+            echo "{\"text\": \"󰝖 $count\", \"class\": \"\"}"
+        fi
+    fi
+}
+
+# Output initial state
+get_status
+
+# Listen to Hyprland events
+socat -u "UNIX-CONNECT:$SOCKET" - | while read -r event; do
+    # Update on relevant events:
+    # - workspace/special workspace toggle
+    # - window move/open/close (affects count)
+    case "$event" in
+        workspace*|activespecial*|movewindow*|openwindow*|closewindow*)
+            get_status
+            ;;
+    esac
+done

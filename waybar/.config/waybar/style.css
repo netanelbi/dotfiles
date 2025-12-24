@@ -66,13 +66,43 @@ window#waybar {
 }
 
 #workspaces button.active {
-    color: @base;
-    background: @mauve;
+    color: @mauve;
+    background: transparent;
+    font-weight: bold;
+    border: 2px solid @mauve;
 }
 
 #workspaces button.urgent {
     color: @base;
     background: @red;
+}
+
+/* Scratchpad */
+#custom-scratchpad {
+    color: @overlay0;
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 2px solid transparent;
+}
+
+#custom-scratchpad.active {
+    color: @yellow;
+    font-weight: bold;
+    border: 2px solid @yellow;
+}
+
+/* Active windows */
+#custom-windows {
+    padding: 0 10px;
+    font-size: 12px;
+}
+
+#custom-windows.scratchpad {
+    text-shadow: 0 0 8px alpha(@yellow, 0.4);
+}
+
+#custom-windows.workspace {
+    text-shadow: 0 0 8px alpha(@mauve, 0.3);
 }
 
 /* Clock */

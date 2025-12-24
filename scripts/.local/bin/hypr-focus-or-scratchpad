@@ -1,0 +1,23 @@
+#!/bin/bash
+# Smart focus: if floating, cycle floating windows; otherwise move focus normally
+
+direction="$1"  # l, r, u, d
+
+# Check if current window is floating
+current=$(hyprctl activewindow -j 2>/dev/null)
+is_floating=$(echo "$current" | jq -r '.floating // false')
+
+if [[ "$is_floating" == "true" ]]; then
+    # We're on a floating window, cycle through floating windows
+    case "$direction" in
+        l|u)  # Left or Up = previous window
+            ~/.local/bin/hypr-floating-cycle prev
+            ;;
+        r|d)  # Right or Down = next window
+            ~/.local/bin/hypr-floating-cycle next
+            ;;
+    esac
+else
+    # Tiled window, do regular focus movement
+    hyprctl dispatch movefocus "$direction"
+fi

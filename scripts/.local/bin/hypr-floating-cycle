@@ -1,0 +1,58 @@
+#!/bin/bash
+# Cycle through floating windows on the current workspace
+
+direction="${1:-next}"  # next or prev
+
+# Get current workspace
+current_win=$(hyprctl activewindow -j 2>/dev/null)
+current_workspace=$(echo "$current_win" | jq -r '.workspace.id // empty')
+
+if [ -z "$current_workspace" ]; then
+    exit 0
+fi
+
+# Get all floating windows on current workspace, sorted by PID
+windows=$(hyprctl clients -j | jq -r --arg ws "$current_workspace" \
+    '[.[] | select(.floating == true and .workspace.id == ($ws | tonumber))] | sort_by(.pid) | .[].address')
+
+if [ -z "$windows" ]; then
+    exit 0
+fi
+
+# Get current focused window address
+current=$(echo "$current_win" | jq -r '.address // empty')
+
+# Convert to array
+readarray -t win_array <<< "$windows"
+
+# Find current window index
+current_idx=-1
+for i in "${!win_array[@]}"; do
+    if [[ "${win_array[$i]}" == "$current" ]]; then
+        current_idx=$i
+        break
+    fi
+done
+
+# Calculate next window index based on direction
+if [ "$direction" == "prev" ]; then
+    # Previous window
+    if [ $current_idx -le 0 ]; then
+        next_idx=$((${#win_array[@]} - 1))
+    else
+        next_idx=$((current_idx - 1))
+    fi
+else
+    # Next window
+    if [ $current_idx -eq -1 ] || [ $current_idx -eq $((${#win_array[@]} - 1)) ]; then
+        next_idx=0
+    else
+        next_idx=$((current_idx + 1))
+    fi
+fi
+
+next_window="${win_array[$next_idx]}"
+
+# Focus and raise the next window
+hyprctl dispatch focuswindow "address:$next_window"
+hyprctl dispatch alterzorder "top,address:$next_window"
