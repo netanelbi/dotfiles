@@ -1,0 +1,96 @@
+#!/bin/bash
+# Watch and display windows in active workspace with focus indicator
+
+# Find Hyprland socket
+if [ -n "$HYPRLAND_INSTANCE_SIGNATURE" ]; then
+    SOCKET="/run/user/$(id -u)/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+else
+    SOCKET=$(find /run/user/$(id -u)/hypr -name ".socket2.sock" -type s 2>/dev/null | head -1)
+fi
+
+if [ -z "$SOCKET" ] || [ ! -S "$SOCKET" ]; then
+    echo '{"text": "", "class": ""}'
+    exit 1
+fi
+
+# Function to get windows in active workspace
+get_windows() {
+    # Check if scratchpad is visible on any monitor
+    scratchpad_visible=$(hyprctl monitors -j | jq -r '[.[] | select(.specialWorkspace.name == "special:magic")] | length > 0')
+
+    # Determine which workspace to show
+    if [ "$scratchpad_visible" == "true" ]; then
+        ws_name="special:magic"
+        ws_class="scratchpad"
+    else
+        ws_name=$(hyprctl activeworkspace -j | jq -r '.name')
+        ws_class="workspace"
+    fi
+
+    # Get focused window address
+    focused=$(hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty')
+
+    # Set colors based on workspace type
+    if [ "$ws_class" == "scratchpad" ]; then
+        focused_color="#f9e2af"  # yellow
+    else
+        focused_color="#cba6f7"  # mauve
+    fi
+    unfocused_color="#6c7086"  # overlay0 (dim gray)
+
+    # Get all windows in stable order as JSON array
+    windows_json=$(hyprctl clients -j | jq -c --arg ws "$ws_name" --arg focused "$focused" '
+        [.[] | select(.workspace.name == $ws)] |
+        sort_by(.pid) |
+        map({
+            addr: .address,
+            title: ((.title // .class) | if length > 25 then .[0:22] + "..." else . end),
+            full_title: (.title // .class),
+            is_focused: (.address == $focused)
+        })
+    ')
+
+    # Build Pango markup and tooltip in bash
+    windows=""
+    tooltip_lines=()
+    while IFS= read -r window; do
+        title=$(echo "$window" | jq -r '.title')
+        full_title=$(echo "$window" | jq -r '.full_title')
+        is_focused=$(echo "$window" | jq -r '.is_focused')
+
+        if [ "$is_focused" == "true" ]; then
+            windows+="<span foreground='$focused_color' weight='bold'>$title</span>  │  "
+            tooltip_lines+=("<span foreground='$focused_color' weight='bold'>▶ $full_title</span>")
+        else
+            windows+="<span foreground='$unfocused_color'>$title</span>  │  "
+            tooltip_lines+=("<span foreground='$unfocused_color'>  $full_title</span>")
+        fi
+    done < <(echo "$windows_json" | jq -c '.[]')
+
+    # Remove trailing separator
+    windows="${windows%  │  }"
+
+    # Join tooltip lines
+    tooltip=$(printf '%s\n' "${tooltip_lines[@]}")
+    tooltip="${tooltip%$'\n'}"  # Remove final newline
+
+    if [ -z "$windows" ]; then
+        echo '{"text": "", "class": "", "tooltip": ""}'
+    else
+        # Escape tooltip for JSON
+        tooltip_escaped=$(echo -e "$tooltip" | jq -Rs .)
+        echo "{\"text\": \"$windows\", \"class\": \"$ws_class\", \"tooltip\": $tooltip_escaped}"
+    fi
+}
+
+# Output initial state
+get_windows
+
+# Listen to Hyprland events
+socat -u "UNIX-CONNECT:$SOCKET" - | while read -r event; do
+    case "$event" in
+        workspace*|activewindow*|openwindow*|closewindow*|movewindow*|windowtitle*)
+            get_windows
+            ;;
+    esac
+done

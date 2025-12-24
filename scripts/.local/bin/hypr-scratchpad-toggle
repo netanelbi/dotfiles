@@ -1,0 +1,25 @@
+#!/bin/bash
+# Toggle scratchpad with visual feedback
+
+# Check if scratchpad is currently shown on any monitor BEFORE toggling
+was_visible=$(hyprctl monitors -j | jq -r '[.[] | select(.specialWorkspace.name == "special:magic")] | length > 0')
+
+# Toggle the scratchpad
+hyprctl dispatch togglespecialworkspace magic
+
+# Update waybar indicator immediately
+pkill -RTMIN+8 waybar
+
+# If scratchpad was just OPENED (wasn't visible before), check if empty
+if [ "$was_visible" == "false" ]; then
+    # Give it a moment to open
+    sleep 0.05
+
+    # Get window count
+    count=$(hyprctl clients -j | jq '[.[] | select(.workspace.name == "special:magic")] | length')
+
+    # Only show notification if empty
+    if [ "$count" -eq 0 ]; then
+        notify-send -t 1500 -u low "󰝖 Scratchpad" "Scratchpad is empty"
+    fi
+fi
