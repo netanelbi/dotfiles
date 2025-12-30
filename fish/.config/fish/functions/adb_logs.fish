@@ -1,5 +1,5 @@
 function adb_logs --description 'Fish port of adb_logs helper for filtering adb logcat output'
-    argparse 'c/clear' 'p/process=' 't/tag=+' 'm/match=+' 'text=+' 'S/serial=' 'usb' 'emulator' 'no-gocat' 'h/help' -- $argv
+    argparse 'c/clear' 'p/process=' 't/tag=+' 'm/match=+' 'text=+' 'l/level=' 'S/serial=' 'usb' 'emulator' 'no-gocat' 'h/help' -- $argv
     or return 1
 
     if set -q _flag_help
@@ -12,6 +12,7 @@ function adb_logs --description 'Fish port of adb_logs helper for filtering adb 
             '  -t, --tag <tag[:level]>   Add a tag filter (repeatable).' \
             '  -m, --match <pattern>     Filter output by text/regex (repeatable).' \
             '      --text <pattern>      Same as --match (alias).' \
+            '  -l, --level <V|D|I|W|E|F> Minimum log level (default: V for all).' \
             '  -S, --serial <device-id>  Run against a specific device/emulator.' \
             '      --usb                 Shortcut for "adb -d" (USB device).' \
             '      --emulator            Shortcut for "adb -e" (emulator).' \
@@ -23,9 +24,32 @@ function adb_logs --description 'Fish port of adb_logs helper for filtering adb 
     end
 
     set -l package $_flag_process
+
+    # Parse and validate level
+    set -l min_level
+    if set -q _flag_level
+        set min_level (string upper $_flag_level)
+        if not string match -qr '^[VDIWEFS]$' $min_level
+            printf 'adb_logs: invalid level "%s". Use V, D, I, W, E, F, or S.\n' $_flag_level >&2
+            return 1
+        end
+    end
+
+    # Build tag filters - apply min_level to tags without explicit level
     set -l tags
     if set -q _flag_tag
-        set tags $_flag_tag
+        for tag in $_flag_tag
+            if string match -qr ':' $tag
+                # Tag has explicit level, keep as-is
+                set tags $tags $tag
+            else if test -n "$min_level"
+                # Apply min_level to tag without explicit level
+                set tags $tags "$tag:$min_level"
+            else
+                # No level specified, keep tag as-is (defaults to V)
+                set tags $tags $tag
+            end
+        end
     end
 
     set -l matches
@@ -76,8 +100,13 @@ function adb_logs --description 'Fish port of adb_logs helper for filtering adb 
         end
     end
 
+    # Apply tag/level filters
     if test (count $tags) -gt 0
+        # Tags specified - use -s for exclusive filtering
         set cmd $cmd -s $tags
+    else if test -n "$min_level"
+        # Only level specified - filter all tags at this level (no -s)
+        set cmd $cmd "*:$min_level"
     end
 
     if test (count $logcat_args) -gt 0
@@ -105,10 +134,12 @@ function adb_logs --description 'Fish port of adb_logs helper for filtering adb 
     end
 
     if test $use_gocat -eq 1
+        # Gocat can't parse tags with spaces in brackets like "Tag[Foo Bar]"
+        # Pipe through sed to replace spaces with underscores inside [...]
         if test (count $filter_cmd) -gt 0
-            $cmd | gocat | $filter_cmd
+            $cmd | sed -u 's/\(\[[^]]*\) \([^]]*\]\)/\1_\2/g' | gocat | $filter_cmd
         else
-            $cmd | gocat
+            $cmd | sed -u 's/\(\[[^]]*\) \([^]]*\]\)/\1_\2/g' | gocat
         end
     else if test (count $filter_cmd) -gt 0
         $cmd | $filter_cmd
