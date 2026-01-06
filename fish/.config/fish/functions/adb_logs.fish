@@ -1,5 +1,5 @@
 function adb_logs --description 'Fish port of adb_logs helper for filtering adb logcat output'
-    argparse 'c/clear' 'p/process=' 't/tag=+' 'm/match=+' 'text=+' 'l/level=' 'S/serial=' 'usb' 'emulator' 'no-gocat' 'h/help' -- $argv
+    argparse 'c/clear' 'p/process=' 't/tag=+' 'm/match=+' 'text=+' 'l/level=' 'S/serial=' 'usb' 'emulator' 'no-gocat' 'no-strip' 'h/help' -- $argv
     or return 1
 
     if set -q _flag_help
@@ -17,6 +17,7 @@ function adb_logs --description 'Fish port of adb_logs helper for filtering adb 
             '      --usb                 Shortcut for "adb -d" (USB device).' \
             '      --emulator            Shortcut for "adb -e" (emulator).' \
             '      --no-gocat            Do not pipe output through gocat.' \
+            '      --no-strip            Do not strip Capacitor log format (keep full output).' \
             '  -h, --help                Show this help message.' \
             '' \
             'Additional arguments are passed straight to "adb logcat".'
@@ -77,6 +78,11 @@ function adb_logs --description 'Fish port of adb_logs helper for filtering adb 
         set clear_logs 1
     end
 
+    set -l strip_capacitor 1
+    if set -q _flag_no_strip
+        set strip_capacitor 0
+    end
+
     set -l cmd adb
     if test (count $adb_args) -gt 0
         set cmd $cmd $adb_args
@@ -133,13 +139,37 @@ function adb_logs --description 'Fish port of adb_logs helper for filtering adb 
         end
     end
 
+    # Build sed commands for post-processing
+    # Strip Capacitor log format: "File: <url> - Line <num> - Msg: " -> ""
+    # Keeps gocat's tag/level prefix, just removes the verbose File/Line/Msg part
+    set -l strip_sed
+    if test $strip_capacitor -eq 1
+        set strip_sed sed -u -E 's/File: [^ ]+ - Line [0-9]+ - Msg: //'
+    end
+
     if test $use_gocat -eq 1
         # Gocat can't parse tags with spaces in brackets like "Tag[Foo Bar]"
         # Pipe through sed to replace spaces with underscores inside [...]
-        if test (count $filter_cmd) -gt 0
-            $cmd | sed -u 's/\(\[[^]]*\) \([^]]*\]\)/\1_\2/g' | gocat | $filter_cmd
+        set -l gocat_sed sed -u 's/\(\[[^]]*\) \([^]]*\]\)/\1_\2/g'
+        # Strip must happen AFTER gocat so gocat can parse the logcat format
+        if test (count $strip_sed) -gt 0
+            if test (count $filter_cmd) -gt 0
+                $cmd | $gocat_sed | gocat | $strip_sed | $filter_cmd
+            else
+                $cmd | $gocat_sed | gocat | $strip_sed
+            end
         else
-            $cmd | sed -u 's/\(\[[^]]*\) \([^]]*\]\)/\1_\2/g' | gocat
+            if test (count $filter_cmd) -gt 0
+                $cmd | $gocat_sed | gocat | $filter_cmd
+            else
+                $cmd | $gocat_sed | gocat
+            end
+        end
+    else if test (count $strip_sed) -gt 0
+        if test (count $filter_cmd) -gt 0
+            $cmd | $strip_sed | $filter_cmd
+        else
+            $cmd | $strip_sed
         end
     else if test (count $filter_cmd) -gt 0
         $cmd | $filter_cmd
