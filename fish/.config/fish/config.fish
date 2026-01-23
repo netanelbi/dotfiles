@@ -39,16 +39,22 @@ function ??
     end | aichat
 end
 
+# User paths
+fish_add_path ~/.local/bin
+fish_add_path ~/.bun/bin
+fish_add_path ~/.opencode/bin
+
 # Android SDK
 set -gx ANDROID_HOME ~/.Android/Sdk
 set -gx ANDROID_SDK_ROOT ~/.Android/Sdk
-set -gx PATH $ANDROID_SDK_ROOT/platform-tools $ANDROID_SDK_ROOT/cmdline-tools/latest/bin $PATH
+fish_add_path $ANDROID_SDK_ROOT/platform-tools
+fish_add_path $ANDROID_SDK_ROOT/cmdline-tools/latest/bin
 
 
 # Work aliases
 alias ccropAPP="cd /home/netanel/Development/CCrop/c-crop-app"
 alias ccropDEV="cd /home/netanel/Development/CCrop/cCropDev"
-alias UM="ccropDEV && /home/netanel/Development/CCrop/cCropDev/venv/bin/python -m CCrop.UserManagement"
+alias UM="ccropDEV && /home/netanel/Development/CCrop/cCropDev/.venv/bin/python -m CCrop.UserManagement"
 
 # Misc aliases
 alias nano=micro
