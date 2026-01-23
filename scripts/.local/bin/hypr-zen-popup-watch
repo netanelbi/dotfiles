@@ -1,0 +1,26 @@
+#!/bin/bash
+# Watch for Zen browser extension popups and float them
+
+SOCKET="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+
+while read -r event; do
+    if [[ "$event" == windowtitle* ]]; then
+        addr="${event#windowtitle>>}"
+
+        # Get window info
+        window_info=$(hyprctl clients -j | jq -r ".[] | select(.address == \"0x$addr\")")
+        class=$(echo "$window_info" | jq -r '.class')
+        title=$(echo "$window_info" | jq -r '.title')
+
+        # Float Zen extension popups
+        if [[ "$class" == "zen" && "$title" == Extension:* ]]; then
+            hyprctl dispatch setfloating address:0x$addr
+
+            # Bitwarden: set size and center
+            if [[ "$title" == *Bitwarden* ]]; then
+                hyprctl dispatch resizewindowpixel exact 375 609,address:0x$addr
+                hyprctl dispatch centerwindow
+            fi
+        fi
+    fi
+done < <(socat -u "UNIX-CONNECT:$SOCKET" -)
