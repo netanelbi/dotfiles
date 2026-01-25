@@ -1,0 +1,22 @@
+#!/bin/bash
+# Watch capslock LED state via evtest (true event-based)
+
+LED_FILE="/sys/class/leds/input2::capslock/brightness"
+KBD_DEVICE="/dev/input/by-path/platform-i8042-serio-0-event-kbd"
+
+# Emit current state as JSON
+emit_state() {
+    if [ "$(cat "$LED_FILE" 2>/dev/null)" -eq 1 ]; then
+        echo '{"text": "󰪛", "class": "on", "tooltip": "Caps Lock ON"}'
+    else
+        echo '{"text": "", "class": "off", "tooltip": "Caps Lock off"}'
+    fi
+}
+
+# Output initial state
+emit_state
+
+# Watch LED events via evtest
+evtest "$KBD_DEVICE" 2>/dev/null | grep --line-buffered "LED_CAPSL" | while read -r line; do
+    emit_state
+done

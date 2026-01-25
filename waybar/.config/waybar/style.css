@@ -187,14 +187,13 @@ window#waybar {
     -gtk-icon-effect: highlight;
 }
 
-/* Keyboard state */
-#keyboard-state label {
-    color: transparent;
+/* Capslock indicator */
+#custom-capslock {
     padding: 0;
     margin: 0;
 }
 
-#keyboard-state label.locked {
+#custom-capslock.on {
     color: @red;
     font-weight: bold;
     margin: 0 4px;
