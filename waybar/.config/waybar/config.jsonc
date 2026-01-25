@@ -9,7 +9,7 @@
   "height": 30,
 
   "modules-left": ["hyprland/workspaces", "custom/scratchpad", "custom/windows"],
-  "modules-center": ["clock", "hyprland/language", "keyboard-state", "pulseaudio#mic", "power-profiles-daemon"],
+  "modules-center": ["clock", "hyprland/language", "custom/capslock", "pulseaudio#mic", "power-profiles-daemon"],
   "modules-right": [
     "tray",
     "bluetooth",
@@ -86,13 +86,10 @@
     "format": "{short}"
   },
 
-  "keyboard-state": {
-    "capslock": true,
-    "format": "{icon}",
-    "format-icons": {
-      "locked": "󰪛",
-      "unlocked": ""
-    }
+  "custom/capslock": {
+    "exec": "~/.local/bin/hypr-capslock-watch",
+    "return-type": "json",
+    "tooltip": true
   },
 
   "tray": {
