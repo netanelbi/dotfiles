@@ -13,7 +13,7 @@
   "modules-right": [
     "tray",
     "bluetooth",
-    "network",
+    "custom/network",
     "pulseaudio",
     "battery"
   ],
@@ -45,13 +45,10 @@
     "on-click-right": "blueman-manager"
   },
 
-  "network": {
-    "format-wifi": "󰤨 {signalStrength}%",
-    "format-ethernet": "󰀂",
-    "format-disconnected": "󰤭",
-    "tooltip-format-wifi": "{essid}\n{ipaddr}/{cidr}\n⇣{bandwidthDownBytes} ⇡{bandwidthUpBytes}",
-    "tooltip-format-ethernet": "{ifname}\n{ipaddr}/{cidr}",
-    "tooltip-format-disconnected": "Disconnected",
+  "custom/network": {
+    "exec": "~/.local/bin/hypr-network-watch",
+    "return-type": "json",
+    "escape": false,
     "on-click": "kitty --class impala-popup -e impala",
     "on-click-right": "nm-connection-editor"
   },
