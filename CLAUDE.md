@@ -24,13 +24,15 @@ package/.config/package/ -> ~/.config/package
 | starship | Prompt customization |
 | fastfetch | System info display |
 | btop | System monitor |
+| gtk | GTK theme settings |
+| qt | Qt theme settings |
 | scripts | Utility scripts for Hyprland/Waybar |
 
 ## Install
 
 ```bash
 cd ~/.dotfiles
-stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop scripts
+stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop gtk qt scripts
 ```
 
 ## Uninstall a package
@@ -44,20 +46,33 @@ stow -D package_name
 | Key | Action |
 |-----|--------|
 | `SUPER + Return` | Terminal (kitty) |
-| `SUPER + Space` | Launcher (rofi) |
+| `CTRL + ALT + T` | Terminal (alternative) |
+| `CTRL + ALT + W` | Terminal in ~/Work |
+| `SUPER + D` | Launcher (rofi) |
 | `SUPER + Q` | Close window |
-| `SUPER + F` | Fullscreen |
-| `SUPER + SHIFT + V` | Toggle floating |
-| `SUPER + V` | Clipboard history |
+| `SUPER + SHIFT + Q` | Exit Hyprland |
+| `SUPER + F` | Toggle floating |
+| `SUPER + SHIFT + F` | Fullscreen |
+| `SUPER + V` | Clipboard history (rofi) |
 | `SUPER + L` | Lock screen |
-| `SUPER + M` | Exit Hyprland |
+| `SUPER + E` | File manager (Thunar) |
 | `SUPER + ~` | Toggle scratchpad |
 | `SUPER + S` | Move window to scratchpad |
 | `SUPER + ALT + S` | Move to scratchpad silently |
 | `SUPER + arrows` | Move focus (cycle floating windows if on floater) |
+| `SUPER + SHIFT + arrows` | Swap window |
+| `SUPER + CTRL + arrows` | Move workspace to monitor |
+| `SUPER + Tab` | Focus next (like SUPER + right) |
 | `SUPER + B` | Cycle power profile |
 | `SUPER + C` | Screenshot focused window |
 | `SUPER + SHIFT + S` | Screenshot selection |
+| `SUPER + Print` | Screenshot selection to file |
+| `Print` | Screenshot selection to clipboard |
+| `SHIFT + Print` | Screenshot full screen |
+| `SUPER + K` | Calculator (rofi) |
+| `SUPER + R` | Resize window (cycle ratios) |
+| `SUPER + Escape` | Power menu |
+| `SUPER + . / ,` | Next/previous workspace |
 | `SUPER + 1-0` | Switch workspace |
 | `SUPER + SHIFT + 1-0` | Move window to workspace |
 
@@ -93,21 +108,57 @@ sudo pacman -S hyprland hyprlock hypridle xdg-desktop-portal-hyprland \
 - **Pango markup** for per-window styling
 
 ### Event-Driven Architecture
-All indicators use Hyprland's event socket (`socat`) for real-time updates:
-- `hypr-scratchpad-watch` - scratchpad window count and visibility
-- `hypr-windows-watch` - active workspace window list with focus tracking
+All indicators use event sockets for real-time updates (no polling):
+- `hypr-scratchpad-watch` - scratchpad window count and visibility (Hyprland socket)
+- `hypr-windows-watch` - active workspace window list with focus tracking (Hyprland socket)
+- `hypr-capslock-watch` - capslock state indicator (evtest events)
 
 ### Scripts Package
 Located in `scripts/.local/bin/`:
 - `hypr-scratchpad-toggle` - Toggle scratchpad with notifications
 - `hypr-scratchpad-move` - Move window to scratchpad with signal
 - `hypr-scratchpad-cycle` - Cycle through scratchpad windows
-- `hypr-scratchpad-count` - Count scratchpad windows (legacy, replaced by watch)
-- `hypr-scratchpad-watch` - Event-based scratchpad monitoring
+- `hypr-scratchpad-watch` - Event-based scratchpad monitoring for waybar
 - `hypr-floating-cycle` - Cycle through floating windows
 - `hypr-focus-or-scratchpad` - Smart focus/cycle based on window type
-- `hypr-windows-watch` - Event-based window list monitoring
-- `hypr-window-switcher` - Rofi menu for window selection
+- `hypr-windows-watch` - Event-based window list monitoring for waybar
+- `hypr-capslock-watch` - Event-based capslock indicator for waybar
+- `hypr-zen-popup-watch` - Watch for Zen browser popup windows
+
+## Hyprland 0.53+ Window Rule Syntax
+
+The windowrule syntax changed significantly in Hyprland 0.53. Key differences:
+
+### Basic Format
+```ini
+# New syntax: rule first, then match:field pattern
+windowrule = float on, match:class myapp
+windowrule = size 800 600, match:class myapp
+windowrule = pin on, match:class myapp
+
+# Boolean rules need "on/off"
+windowrule = float on, match:class myapp    # not just "float"
+windowrule = pin on, match:class myapp      # not just "pin"
+windowrule = center on, match:class myapp   # not just "center"
+```
+
+### Positioning with Expressions
+The old `100%-550` syntax no longer works. Use expression variables instead:
+```ini
+# Position window 50px from right edge, 50px from top
+windowrule = move (monitor_w-window_w-50) 50, match:class myapp
+
+# Available variables: monitor_w, monitor_h, window_w, window_h, cursor_x, cursor_y
+```
+
+### Match Fields
+- `match:class` - window class
+- `match:title` - window title
+- `match:workspace` - workspace (use `special:name` for special workspaces)
+
+### Rule Names Changed
+- `bordercolor` -> `border_color`
+- `noblur` -> `no_blur on`
 
 ## Development Guidelines
 
