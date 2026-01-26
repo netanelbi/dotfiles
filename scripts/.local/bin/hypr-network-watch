@@ -1,0 +1,147 @@
+#!/bin/bash
+# Event-based network module for waybar with WiFi band and generation indication
+
+# Catppuccin colors
+COLOR_GREEN="#a6e3a1"
+COLOR_YELLOW="#f9e2af"
+COLOR_RED="#f38ba8"
+COLOR_TEAL="#94e2d5"
+COLOR_SAPPHIRE="#74c7ec"
+COLOR_MAUVE="#cba6f7"
+COLOR_OVERLAY0="#6c7086"
+
+get_network_info() {
+    # Check ethernet first
+    local eth_iface
+    eth_iface=$(ip -o link show | awk -F': ' '/^[0-9]+: (eth|enp|eno)/ && /state UP/ {print $2; exit}')
+
+    if [[ -n "$eth_iface" ]]; then
+        local ip
+        ip=$(ip -4 addr show "$eth_iface" 2>/dev/null | grep -oP 'inet \K[0-9.]+')
+        if [[ -n "$ip" ]]; then
+            echo "{\"text\": \"<span color='${COLOR_TEAL}'>󰈀</span>\", \"class\": \"ethernet\", \"tooltip\": \"Ethernet: ${eth_iface}\\nIP: ${ip}\"}"
+            return
+        fi
+    fi
+
+    # Check WiFi
+    local iface="wlan0"
+    local iw_output
+    iw_output=$(iw dev "$iface" link 2>/dev/null)
+
+    # Check if disconnected
+    if [[ -z "$iw_output" ]] || echo "$iw_output" | grep -q "Not connected"; then
+        echo "{\"text\": \"<span color='${COLOR_OVERLAY0}'>󰤭</span>\", \"class\": \"disconnected\", \"tooltip\": \"Disconnected\"}"
+        return
+    fi
+
+    # Get info
+    local ssid freq signal
+    ssid=$(echo "$iw_output" | grep -oP 'SSID: \K.*')
+    freq=$(echo "$iw_output" | grep -oP 'freq: \K[0-9]+' | head -1)
+    signal=$(echo "$iw_output" | grep -oP 'signal: \K-?[0-9]+')
+
+    # Calculate signal percentage (roughly: -30 = 100%, -90 = 0%)
+    local signal_pct
+    if [[ -n "$signal" ]]; then
+        signal_pct=$(( (signal + 90) * 100 / 60 ))
+        (( signal_pct > 100 )) && signal_pct=100
+        (( signal_pct < 0 )) && signal_pct=0
+    else
+        signal_pct=0
+    fi
+
+    # WiFi icon based on signal strength (4 levels)
+    local icon
+    if (( signal_pct >= 75 )); then
+        icon="󰤨"  # full
+    elif (( signal_pct >= 50 )); then
+        icon="󰤥"  # 3 bars
+    elif (( signal_pct >= 25 )); then
+        icon="󰤢"  # 2 bars
+    else
+        icon="󰤟"  # 1 bar
+    fi
+
+    # Icon color based on signal strength
+    local icon_color
+    if (( signal_pct >= 50 )); then
+        icon_color="$COLOR_GREEN"
+    else
+        icon_color="$COLOR_YELLOW"
+    fi
+
+    # Band text for tooltip
+    local band_text
+    if [[ -n "$freq" ]]; then
+        if (( freq < 3000 )); then
+            band_text="2.4 GHz"
+        elif (( freq < 6000 )); then
+            band_text="5 GHz"
+        else
+            band_text="6 GHz"
+        fi
+    else
+        band_text="Unknown"
+    fi
+
+    # Determine WiFi generation from bitrate info
+    local bitrate
+    bitrate=$(echo "$iw_output" | grep "tx bitrate")
+
+    # Unified indicator - 2.4 GHz always shows ₂.₄ in red, otherwise by WiFi gen
+    local indicator indicator_color gen_name
+    if [[ -n "$freq" ]] && (( freq < 3000 )); then
+        # 2.4 GHz - always red regardless of WiFi generation
+        indicator="₂.₄"
+        indicator_color="$COLOR_RED"
+        if echo "$bitrate" | grep -q "HE-"; then
+            gen_name="WiFi 6 (802.11ax)"
+        elif echo "$bitrate" | grep -q "VHT-"; then
+            gen_name="WiFi 5 (802.11ac)"
+        else
+            gen_name="WiFi 4 (802.11n)"
+        fi
+    elif echo "$bitrate" | grep -q "EHT-"; then
+        indicator="₇"
+        indicator_color="$COLOR_MAUVE"
+        gen_name="WiFi 7 (802.11be)"
+    elif echo "$bitrate" | grep -q "HE-"; then
+        indicator="₆"
+        indicator_color="$COLOR_SAPPHIRE"
+        gen_name="WiFi 6 (802.11ax)"
+    elif echo "$bitrate" | grep -q "VHT-"; then
+        indicator="₅"
+        indicator_color="$COLOR_TEAL"
+        gen_name="WiFi 5 (802.11ac)"
+    else
+        indicator="ₓ"
+        indicator_color="$COLOR_OVERLAY0"
+        gen_name="WiFi 4 (802.11n)"
+    fi
+
+    # Get IP for tooltip
+    local ip
+    ip=$(ip -4 addr show "$iface" 2>/dev/null | grep -oP 'inet \K[0-9.]+')
+
+    # Get link speed
+    local tx_speed rx_speed
+    tx_speed=$(echo "$iw_output" | grep "tx bitrate" | grep -oP '[0-9.]+(?= MBit/s)')
+    rx_speed=$(echo "$iw_output" | grep "rx bitrate" | grep -oP '[0-9.]+(?= MBit/s)')
+
+    local tooltip="$ssid\n${gen_name} @ ${band_text} (${freq} MHz)\nSignal: ${signal} dBm (${signal_pct}%)\nSpeed: ↓${rx_speed} ↑${tx_speed} Mbps\nIP: ${ip:-N/A}"
+
+    # Build text with Pango markup: icon (signal color) + unified indicator (indicator color)
+    local text="<span color='${icon_color}'>${icon}</span><span color='${indicator_color}'>${indicator}</span>"
+
+    echo "{\"text\": \"${text}\", \"class\": \"\", \"tooltip\": \"${tooltip}\"}"
+}
+
+# Initial output
+get_network_info
+
+# Monitor for network changes
+ip monitor link address 2>/dev/null | while read -r line; do
+    sleep 0.3
+    get_network_info
+done

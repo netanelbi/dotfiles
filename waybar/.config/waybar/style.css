@@ -136,12 +136,25 @@ window#waybar {
     color: @overlay0;
 }
 
-#network {
+#custom-network {
+    color: @teal;
+    min-width: 20px;
+}
+
+#custom-network.disconnected {
+    color: @overlay0;
+}
+
+#custom-network.wifi-6 {
+    color: @green;
+}
+
+#custom-network.wifi-5 {
     color: @teal;
 }
 
-#network.disconnected {
-    color: @overlay0;
+#custom-network.wifi-4 {
+    color: @yellow;
 }
 
 #pulseaudio {
