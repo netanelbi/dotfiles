@@ -129,7 +129,12 @@ get_network_info() {
     tx_speed=$(echo "$iw_output" | grep "tx bitrate" | grep -oP '[0-9.]+(?= MBit/s)')
     rx_speed=$(echo "$iw_output" | grep "rx bitrate" | grep -oP '[0-9.]+(?= MBit/s)')
 
-    local tooltip="$ssid\n${gen_name} @ ${band_text} (${freq} MHz)\nSignal: ${signal} dBm (${signal_pct}%)\nSpeed: ↓${rx_speed} ↑${tx_speed} Mbps\nIP: ${ip:-N/A}"
+    # Escape SSID for Pango/JSON
+    local ssid_escaped="${ssid//&/&amp;}"
+    ssid_escaped="${ssid_escaped//</&lt;}"
+    ssid_escaped="${ssid_escaped//>/&gt;}"
+
+    local tooltip="${ssid_escaped}\n${gen_name} @ ${band_text} (${freq} MHz)\nSignal: ${signal} dBm (${signal_pct}%)\nSpeed: ↓${rx_speed} ↑${tx_speed} Mbps\nIP: ${ip:-N/A}"
 
     # Build text with Pango markup: icon (signal color) + unified indicator (indicator color)
     local text="<span color='${icon_color}'>${icon}</span><span color='${indicator_color}'>${indicator}</span>"
