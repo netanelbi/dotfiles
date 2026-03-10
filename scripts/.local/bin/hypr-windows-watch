@@ -54,8 +54,8 @@ get_windows() {
     windows=""
     tooltip_lines=()
     while IFS= read -r window; do
-        title=$(echo "$window" | jq -r '.title')
-        full_title=$(echo "$window" | jq -r '.full_title')
+        title=$(echo "$window" | jq -r '.title' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&apos;/g')
+        full_title=$(echo "$window" | jq -r '.full_title' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&apos;/g')
         is_focused=$(echo "$window" | jq -r '.is_focused')
 
         if [ "$is_focused" == "true" ]; then
@@ -77,9 +77,10 @@ get_windows() {
     if [ -z "$windows" ]; then
         echo '{"text": "", "class": "", "tooltip": ""}'
     else
-        # Escape tooltip for JSON
+        # Escape text and tooltip for JSON
+        text_escaped=$(printf '%s' "$windows" | jq -Rs .)
         tooltip_escaped=$(echo -e "$tooltip" | jq -Rs .)
-        echo "{\"text\": \"$windows\", \"class\": \"$ws_class\", \"tooltip\": $tooltip_escaped}"
+        echo "{\"text\": ${text_escaped}, \"class\": \"$ws_class\", \"tooltip\": $tooltip_escaped}"
     fi
 }
 

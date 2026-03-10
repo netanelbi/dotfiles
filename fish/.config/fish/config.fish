@@ -58,6 +58,7 @@ alias UM="ccropDEV && /home/netanel/Development/CCrop/cCropDev/.venv/bin/python 
 
 # Misc aliases
 alias nano=micro
+set -gx EDITOR micro
 alias rspeedtest="ssh root@192.168.1.1 'speedtest'"
 
 # Direnv integration
