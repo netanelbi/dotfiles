@@ -1,0 +1,10 @@
+#!/bin/sh
+# Open imv with all images in the same directory, starting at the given file.
+# Usage: imv-dir <file>
+
+[ -z "$1" ] && exit 1
+
+dir="$(dirname "$1")"
+file="$(basename "$1")"
+
+exec imv -n "$file" "$dir"
