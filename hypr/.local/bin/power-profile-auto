@@ -1,13 +1,16 @@
 #!/bin/bash
-# Auto-switch power profile based on AC power status
+# Auto-switch power profile + TDP on AC power change
+# Triggered by udev rule on plug/unplug
 
-# Get current power source
+sleep 1  # let firmware settle after AC state change
+
+# Detect AC adapter
+ac_online=0
 if [ -f /sys/class/power_supply/AC/online ]; then
     ac_online=$(cat /sys/class/power_supply/AC/online)
 elif [ -f /sys/class/power_supply/ACAD/online ]; then
     ac_online=$(cat /sys/class/power_supply/ACAD/online)
 else
-    # Try to find any AC adapter
     for adapter in /sys/class/power_supply/*/online; do
         if [ -f "$adapter" ]; then
             ac_online=$(cat "$adapter")
@@ -16,8 +19,18 @@ else
     done
 fi
 
+# Set profile + TDP first
 if [ "$ac_online" = "1" ]; then
     powerprofilesctl set balanced
+    ryzenadj --stapm-limit=25000 --fast-limit=30000 --slow-limit=25000 --tctl-temp=90 2>/dev/null
 else
     powerprofilesctl set power-saver
+    ryzenadj --stapm-limit=10000 --fast-limit=15000 --slow-limit=10000 --tctl-temp=75 2>/dev/null
 fi
+
+# Fix 2GHz frequency cap (firmware bug on AC state change)
+# Wait for firmware to finish its changes, then fix once
+sleep 3
+for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+    cat "${cpu%scaling_max_freq}cpuinfo_max_freq" > "$cpu" 2>/dev/null
+done

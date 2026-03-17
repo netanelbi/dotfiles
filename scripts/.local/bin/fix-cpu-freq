@@ -1,0 +1,5 @@
+#!/bin/bash
+# Reset CPU max frequency to hardware max (fixes 2GHz stuck bug on AC change)
+for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+    cat "${cpu%scaling_max_freq}cpuinfo_max_freq" > "$cpu"
+done
