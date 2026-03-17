@@ -1,2 +1,2 @@
-# Auto-switch power profile on AC power change
-SUBSYSTEM=="power_supply", ATTR{type}=="Mains", RUN+="/home/netanel/.local/bin/power-profile-auto"
+# Auto-switch power profile on AC power change (detach to avoid udev timeout)
+SUBSYSTEM=="power_supply", ATTR{type}=="Mains", RUN+="/bin/bash -c '/home/netanel/.local/bin/power-profile-auto &'"

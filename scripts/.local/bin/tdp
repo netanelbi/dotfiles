@@ -1,0 +1,40 @@
+#!/bin/bash
+# Smart TDP setter - just pass watts
+# Usage: tdp 15    → sets 15W sustained, 20W burst
+#        tdp 25    → sets 25W sustained, 30W burst
+#        tdp       → shows current power draw
+
+if [ -z "$1" ]; then
+    echo "Usage: tdp <watts>"
+    echo "Example: tdp 15  → 15W sustained, 20W burst"
+    echo ""
+    echo "Current power:"
+    sudo turbostat --Summary --show PkgWatt,CoreTmp --num_iterations 1 2>/dev/null | head -5
+    exit 0
+fi
+
+watts=$1
+
+# Validate input
+if ! [[ "$watts" =~ ^[0-9]+$ ]] || [ "$watts" -lt 5 ] || [ "$watts" -gt 65 ]; then
+    echo "Error: watts must be 5-65"
+    exit 1
+fi
+
+# Derive parameters from base wattage
+stapm=$((watts * 1000))
+fast=$(( (watts + 5) * 1000 ))  # burst = sustained + 5W headroom
+slow=$stapm
+
+# Scale thermal limit: 70°C at 5W → 100°C at 54W+
+if [ "$watts" -le 15 ]; then
+    tctl=75
+elif [ "$watts" -le 30 ]; then
+    tctl=90
+else
+    tctl=100
+fi
+
+echo "Setting TDP: ${watts}W sustained / $((fast / 1000))W burst / ${tctl}°C limit"
+sudo ryzenadj --stapm-limit=$stapm --fast-limit=$fast --slow-limit=$slow --tctl-temp=$tctl
+
