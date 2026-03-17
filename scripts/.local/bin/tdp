@@ -38,3 +38,7 @@ fi
 echo "Setting TDP: ${watts}W sustained / $((fast / 1000))W burst / ${tctl}°C limit"
 sudo ryzenadj --stapm-limit=$stapm --fast-limit=$fast --slow-limit=$slow --tctl-temp=$tctl
 
+# Track TDP for waybar indicator
+echo "$watts" > /tmp/tdp-state
+pkill -SIGUSR1 -x tdp-watch
+

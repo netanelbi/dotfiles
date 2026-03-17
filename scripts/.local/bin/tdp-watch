@@ -1,0 +1,24 @@
+#!/bin/bash
+# Waybar module: show custom TDP when it differs from profile default
+# Long-running, outputs new JSON on SIGUSR1
+
+show_status() {
+    if [ -f /tmp/tdp-state ]; then
+        watts=$(cat /tmp/tdp-state)
+        printf '{"text": "%sW", "tooltip": "Custom TDP: %sW", "class": "active"}\n' "$watts" "$watts"
+    else
+        printf '{"text": "", "class": ""}\n'
+    fi
+}
+
+# Show initial state
+show_status
+
+# Update on signal
+trap show_status SIGUSR1
+
+# Keep alive, wake on signal
+while true; do
+    sleep infinity &
+    wait $!
+done

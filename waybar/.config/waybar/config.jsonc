@@ -9,7 +9,7 @@
   "height": 30,
 
   "modules-left": ["hyprland/workspaces", "custom/scratchpad", "custom/windows"],
-  "modules-center": ["clock", "hyprland/language", "custom/capslock", "pulseaudio#mic", "power-profiles-daemon"],
+  "modules-center": ["clock", "hyprland/language", "custom/capslock", "pulseaudio#mic", "power-profiles-daemon", "custom/tdp"],
   "modules-right": [
     "tray",
     "bluetooth",
@@ -110,6 +110,11 @@
       "power-saver": "󰌪"
     },
     "tooltip-format": "Power profile: {profile}"
+  },
+
+  "custom/tdp": {
+    "exec": "~/.local/bin/tdp-watch",
+    "return-type": "json"
   },
 
   "custom/scratchpad": {
