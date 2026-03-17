@@ -5,7 +5,7 @@
 set_tdp() {
     case "$1" in
         power-saver)
-            sudo ryzenadj --stapm-limit=10000 --fast-limit=15000 --slow-limit=10000 --tctl-temp=75 2>/dev/null
+            sudo ryzenadj --stapm-limit=15000 --fast-limit=20000 --slow-limit=15000 --tctl-temp=75 2>/dev/null
             ;;
         balanced)
             sudo ryzenadj --stapm-limit=25000 --fast-limit=30000 --slow-limit=25000 --tctl-temp=90 2>/dev/null
@@ -29,10 +29,19 @@ esac
 
 powerprofilesctl set "$new"
 
-notify-send -t 1500 -u "$urgency" \
+notify-send -a power-profile -t 1500 -u "$urgency" \
     -h string:x-canonical-private-synchronous:power \
     "$icon $new"
+
+# Dismiss critical notifications after 2s (swaync ignores timeout for critical)
+if [ "$urgency" = "critical" ]; then
+    (sleep 2 && swaync-client --close-latest) &
+fi
 
 # TDP + freq fix after notification (don't block OSD)
 set_tdp "$new"
 fix_freq_cap
+
+# Clear custom TDP (profile sets default)
+rm -f /tmp/tdp-state
+pkill -SIGUSR1 -x tdp-watch
