@@ -229,6 +229,18 @@ window#waybar {
     margin: 0 4px;
 }
 
+#custom-tdp {
+    padding: 0;
+    margin: 0;
+    color: transparent;
+}
+
+#custom-tdp.active {
+    color: @peach;
+    margin: 0 4px;
+    font-size: 11px;
+}
+
 /* Tooltip */
 tooltip {
     background: @base;
