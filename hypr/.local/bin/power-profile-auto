@@ -29,8 +29,9 @@ else
 fi
 
 # Fix 2GHz frequency cap (firmware bug on AC state change)
-# Wait for firmware to finish its changes, then fix once
+# Toggle amd_pstate driver to force reinitialize — more reliable than writing max freq
 sleep 3
-for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
-    cat "${cpu%scaling_max_freq}cpuinfo_max_freq" > "$cpu" 2>/dev/null
-done
+pstate="/sys/devices/system/cpu/amd_pstate/status"
+echo "passive" > "$pstate" 2>/dev/null
+sleep 0.1
+echo "active" > "$pstate" 2>/dev/null

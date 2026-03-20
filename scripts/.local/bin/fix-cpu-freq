@@ -1,5 +1,10 @@
 #!/bin/bash
-# Reset CPU max frequency to hardware max (fixes 2GHz stuck bug on AC change)
-for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
-    cat "${cpu%scaling_max_freq}cpuinfo_max_freq" > "$cpu"
-done
+# Reset CPU max frequency by toggling amd_pstate driver (fixes 2GHz stuck bug)
+# Just writing scaling_max_freq isn't reliable — toggling active/passive forces
+# the driver to reinitialize and actually unstick the frequency cap.
+
+pstate="/sys/devices/system/cpu/amd_pstate/status"
+
+echo "passive" > "$pstate"
+sleep 0.1
+echo "active" > "$pstate"
