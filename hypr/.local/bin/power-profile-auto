@@ -28,10 +28,12 @@ else
     ryzenadj --stapm-limit=15000 --fast-limit=20000 --slow-limit=15000 --tctl-temp=75 2>/dev/null
 fi
 
-# Fix 2GHz frequency cap (firmware bug on AC state change)
-# Toggle amd_pstate driver to force reinitialize — more reliable than writing max freq
-sleep 3
-pstate="/sys/devices/system/cpu/amd_pstate/status"
-echo "passive" > "$pstate" 2>/dev/null
-sleep 0.1
-echo "active" > "$pstate" 2>/dev/null
+# Fix 2GHz frequency cap only on AC (firmware bug on AC state change)
+# Skip for power-saver — it needs the lower cap
+if [ "$ac_online" = "1" ]; then
+    sleep 3
+    pstate="/sys/devices/system/cpu/amd_pstate/status"
+    echo "passive" > "$pstate" 2>/dev/null
+    sleep 0.1
+    echo "active" > "$pstate" 2>/dev/null
+fi

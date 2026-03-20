@@ -40,7 +40,8 @@ fi
 
 # TDP + freq fix after notification (don't block OSD)
 set_tdp "$new"
-fix_freq_cap
+# Only fix freq cap for balanced/performance — power-saver needs the cap
+[ "$new" != "power-saver" ] && fix_freq_cap
 
 # Clear custom TDP (profile sets default)
 rm -f /tmp/tdp-state
