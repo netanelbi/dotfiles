@@ -1,22 +1,61 @@
 #!/bin/bash
 # Watch capslock LED state via evtest (true event-based)
 
-LED_FILE="/sys/class/leds/input2::capslock/brightness"
 KBD_DEVICE="/dev/input/by-path/platform-i8042-serio-0-event-kbd"
 
-# Emit current state as JSON
-emit_state() {
-    if [ "$(cat "$LED_FILE" 2>/dev/null)" -eq 1 ]; then
-        echo '{"text": "󰪛", "class": "on", "tooltip": "Caps Lock ON"}'
+# Resolve the LED file that belongs to $KBD_DEVICE instead of hardcoding inputN.
+# The sysfs path for the evdev looks like .../input/inputN/eventM, so we grep inputN
+# out of it and look for the matching capslock LED.
+resolve_led_file() {
+    local sys input
+    sys=$(udevadm info -q path -n "$KBD_DEVICE" 2>/dev/null)
+    input=$(printf '%s' "$sys" | grep -oE 'input[0-9]+' | tail -1)
+    if [[ -n "$input" && -r "/sys/class/leds/${input}::capslock/brightness" ]]; then
+        printf '/sys/class/leds/%s::capslock/brightness' "$input"
     else
-        echo '{"text": "", "class": "off", "tooltip": "Caps Lock off"}'
+        # Fallback: take the first capslock LED we can read
+        local f
+        for f in /sys/class/leds/input*::capslock/brightness; do
+            [[ -r "$f" ]] && { printf '%s' "$f"; return; }
+        done
     fi
 }
 
-# Output initial state
+LED_FILE=$(resolve_led_file)
+
+# Kill child processes (evtest / grep) when we exit so waybar restarts don't leak orphans
+cleanup() {
+    [[ -n "${EVTEST_PID:-}" ]] && kill "$EVTEST_PID" 2>/dev/null
+    exit 0
+}
+trap cleanup EXIT INT TERM PIPE
+
+emit_state() {
+    local v
+    v=$(cat "$LED_FILE" 2>/dev/null)
+    if [ "$v" = "1" ]; then
+        echo '{"text": "󰪛", "class": "on", "tooltip": "Caps Lock ON"}' || exit 0
+    else
+        echo '{"text": "", "class": "off", "tooltip": "Caps Lock off"}' || exit 0
+    fi
+}
+
 emit_state
 
-# Watch LED events via evtest
-evtest "$KBD_DEVICE" 2>/dev/null | grep --line-buffered "LED_CAPSL" | while read -r line; do
-    emit_state
+# Retry outer loop so we survive a transient device disappearance (suspend/resume, re-enumeration)
+while :; do
+    if [ ! -e "$KBD_DEVICE" ]; then
+        sleep 2
+        continue
+    fi
+    # Stream evtest as a single child (no pipeline) so $! captures its PID
+    # and our trap can reliably kill it. Filter LED_CAPSL in the read loop instead of via grep.
+    exec 3< <(exec evtest "$KBD_DEVICE" 2>/dev/null)
+    EVTEST_PID=$!
+    while read -r line <&3; do
+        [[ "$line" == *"LED_CAPSL"* ]] && emit_state
+    done
+    exec 3<&-
+    unset EVTEST_PID
+    sleep 1
 done
