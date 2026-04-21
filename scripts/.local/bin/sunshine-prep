@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep"
+MONITOR="eDP-1"
+STREAM_CONFIG="${MONITOR},1920x1080@60,1920x0,1"
+
+mkdir -p "$STATE_DIR"
+
+# Skip save if monitor is already in stream resolution (orphan state from
+# a previous run whose undo didn't fire — keep the earlier saved native state)
+read -r CURRENT_W CURRENT_H < <(hyprctl -j monitors all | jq -r --arg m "$MONITOR" \
+    '.[] | select(.name == $m) | "\(.width) \(.height)"')
+if [[ "$CURRENT_W" != "1920" || "$CURRENT_H" != "1080" ]]; then
+    hyprctl -j monitors all | jq -r --arg m "$MONITOR" '
+      .[] | select(.name == $m) |
+      "\(.name),\(.width)x\(.height)@\(.refreshRate|floor),\(.x)x\(.y),\(.scale)"
+    ' > "$STATE_DIR/monitor.conf"
+fi
+
+pkill -USR1 hyprlock 2>/dev/null || true
+pkill -STOP hypridle 2>/dev/null || true
+
+sleep 0.3
+hyprctl keyword monitor "$STREAM_CONFIG"
