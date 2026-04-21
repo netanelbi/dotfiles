@@ -13,33 +13,45 @@ if [ -z "$SOCKET" ] || [ ! -S "$SOCKET" ]; then
     exit 1
 fi
 
-# Function to get windows in active workspace
-get_windows() {
-    # Check if scratchpad is visible on any monitor
-    scratchpad_visible=$(hyprctl monitors -j | jq -r '[.[] | select(.specialWorkspace.name == "special:magic")] | length > 0')
+# Kill child event source when we exit so waybar restarts don't leak orphans
+cleanup() {
+    [[ -n "${SOCAT_PID:-}" ]] && kill "$SOCAT_PID" 2>/dev/null
+    exit 0
+}
+trap cleanup EXIT INT TERM PIPE
 
-    # Determine which workspace to show
+# Strip chars that break Pango markup parsing (control chars except tab, plus ESC sequences)
+# and escape the five Pango-reserved characters. Window titles can contain anything.
+pango_escape() {
+    local s=$1
+    s=$(printf '%s' "$s" | tr -d '\000-\010\013\014\016-\037\177')
+    s=${s//&/&amp;}
+    s=${s//</&lt;}
+    s=${s//>/&gt;}
+    s=${s//\"/&quot;}
+    s=${s//\'/&apos;}
+    printf '%s' "$s"
+}
+
+get_windows() {
+    local scratchpad_visible ws_name ws_class focused_color unfocused_color focused
+    scratchpad_visible=$(hyprctl monitors -j 2>/dev/null | jq -r '[.[] | select(.specialWorkspace.name == "special:magic")] | length > 0' 2>/dev/null)
+
     if [ "$scratchpad_visible" == "true" ]; then
         ws_name="special:magic"
         ws_class="scratchpad"
+        focused_color="#f9e2af"
     else
-        ws_name=$(hyprctl activeworkspace -j | jq -r '.name')
+        ws_name=$(hyprctl activeworkspace -j 2>/dev/null | jq -r '.name' 2>/dev/null)
         ws_class="workspace"
+        focused_color="#cba6f7"
     fi
+    unfocused_color="#6c7086"
 
-    # Get focused window address
-    focused=$(hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty')
+    focused=$(hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty' 2>/dev/null)
 
-    # Set colors based on workspace type
-    if [ "$ws_class" == "scratchpad" ]; then
-        focused_color="#f9e2af"  # yellow
-    else
-        focused_color="#cba6f7"  # mauve
-    fi
-    unfocused_color="#6c7086"  # overlay0 (dim gray)
-
-    # Get all windows in stable order as JSON array
-    windows_json=$(hyprctl clients -j | jq -c --arg ws "$ws_name" --arg focused "$focused" '
+    local windows_json
+    windows_json=$(hyprctl clients -j 2>/dev/null | jq -c --arg ws "$ws_name" --arg focused "$focused" '
         [.[] | select(.workspace.name == $ws)] |
         sort_by(.pid) |
         map({
@@ -48,15 +60,19 @@ get_windows() {
             full_title: (.title // .class),
             is_focused: (.address == $focused)
         })
-    ')
+    ' 2>/dev/null)
 
-    # Build Pango markup and tooltip in bash
-    windows=""
-    tooltip_lines=()
+    if [[ -z "$windows_json" || "$windows_json" == "null" ]]; then
+        echo '{"text": "", "class": "", "tooltip": ""}' || exit 0
+        return
+    fi
+
+    local windows="" tooltip_lines=() title full_title is_focused
     while IFS= read -r window; do
-        title=$(echo "$window" | jq -r '.title' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&apos;/g')
-        full_title=$(echo "$window" | jq -r '.full_title' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&apos;/g')
-        is_focused=$(echo "$window" | jq -r '.is_focused')
+        [[ -z "$window" ]] && continue
+        title=$(pango_escape "$(jq -r '.title' <<<"$window")")
+        full_title=$(pango_escape "$(jq -r '.full_title' <<<"$window")")
+        is_focused=$(jq -r '.is_focused' <<<"$window")
 
         if [ "$is_focused" == "true" ]; then
             windows+="<span foreground='$focused_color' weight='bold'>$title</span>  │  "
@@ -65,30 +81,32 @@ get_windows() {
             windows+="<span foreground='$unfocused_color'>$title</span>  │  "
             tooltip_lines+=("<span foreground='$unfocused_color'>  $full_title</span>")
         fi
-    done < <(echo "$windows_json" | jq -c '.[]')
+    done < <(jq -c '.[]' <<<"$windows_json")
 
-    # Remove trailing separator
     windows="${windows%  │  }"
 
-    # Join tooltip lines
+    local tooltip
     tooltip=$(printf '%s\n' "${tooltip_lines[@]}")
-    tooltip="${tooltip%$'\n'}"  # Remove final newline
+    tooltip="${tooltip%$'\n'}"
 
     if [ -z "$windows" ]; then
-        echo '{"text": "", "class": "", "tooltip": ""}'
+        echo '{"text": "", "class": "", "tooltip": ""}' || exit 0
     else
-        # Escape text and tooltip for JSON
+        # jq -Rs reliably JSON-encodes the string (handles newlines, quotes, backslashes)
+        local text_escaped tooltip_escaped
         text_escaped=$(printf '%s' "$windows" | jq -Rs .)
-        tooltip_escaped=$(echo -e "$tooltip" | jq -Rs .)
-        echo "{\"text\": ${text_escaped}, \"class\": \"$ws_class\", \"tooltip\": $tooltip_escaped}"
+        tooltip_escaped=$(printf '%s' "$tooltip" | jq -Rs .)
+        echo "{\"text\": ${text_escaped}, \"class\": \"$ws_class\", \"tooltip\": $tooltip_escaped}" || exit 0
     fi
 }
 
-# Output initial state
 get_windows
 
-# Listen to Hyprland events
-socat -u "UNIX-CONNECT:$SOCKET" - | while read -r event; do
+# Stream Hyprland events via a background socat so we can kill it on exit
+exec 3< <(socat -u "UNIX-CONNECT:$SOCKET" -)
+SOCAT_PID=$!
+
+while read -r event <&3; do
     case "$event" in
         workspace*|activewindow*|openwindow*|closewindow*|movewindow*|windowtitle*)
             get_windows
