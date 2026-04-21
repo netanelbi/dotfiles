@@ -1,24 +1,40 @@
 #!/bin/bash
 # Waybar module: show custom TDP when it differs from profile default
-# Long-running, outputs new JSON on SIGUSR1
+# Long-running, re-emits on SIGUSR1 (sent by the `tdp` CLI after updating state)
+
+STATE_FILE=/tmp/tdp-state
+
+# Kill any pending sleep on exit so waybar restarts don't leak orphans
+cleanup() {
+    [[ -n "${SLEEP_PID:-}" ]] && kill "$SLEEP_PID" 2>/dev/null
+    exit 0
+}
+trap cleanup EXIT INT TERM PIPE
 
 show_status() {
-    if [ -f /tmp/tdp-state ]; then
-        watts=$(cat /tmp/tdp-state)
-        printf '{"text": "%sW", "tooltip": "Custom TDP: %sW", "class": "active"}\n' "$watts" "$watts"
+    local watts
+    if [ -f "$STATE_FILE" ]; then
+        # Accept only digits (plus a trailing newline already stripped by $()); other chars would break JSON
+        watts=$(tr -cd '0-9' < "$STATE_FILE" 2>/dev/null)
+    fi
+    if [ -n "$watts" ]; then
+        printf '{"text": "%sW", "tooltip": "Custom TDP: %sW", "class": "active"}\n' "$watts" "$watts" || exit 0
     else
-        printf '{"text": "", "class": ""}\n'
+        printf '{"text": "", "class": ""}\n' || exit 0
     fi
 }
 
-# Show initial state
 show_status
 
-# Update on signal
-trap show_status SIGUSR1
+# SIGUSR1 handler: re-emit and interrupt the current sleep so we loop immediately
+on_signal() {
+    show_status
+    [[ -n "${SLEEP_PID:-}" ]] && kill "$SLEEP_PID" 2>/dev/null
+}
+trap on_signal SIGUSR1
 
-# Keep alive, wake on signal
-while true; do
+while :; do
     sleep infinity &
-    wait $!
+    SLEEP_PID=$!
+    wait "$SLEEP_PID" 2>/dev/null
 done
