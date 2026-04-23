@@ -23,3 +23,5 @@ pkill -STOP hypridle 2>/dev/null || true
 
 sleep 0.3
 hyprctl keyword monitor "$STREAM_CONFIG"
+sleep 0.2
+hyprctl dispatch focusmonitor "$MONITOR"
