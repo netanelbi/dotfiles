@@ -115,6 +115,8 @@ All indicators use event sockets for real-time updates (no polling):
 
 ### Scripts Package
 Located in `scripts/.local/bin/`:
+
+**Hyprland helpers**
 - `hypr-scratchpad-toggle` - Toggle scratchpad with notifications
 - `hypr-scratchpad-move` - Move window to scratchpad with signal
 - `hypr-scratchpad-cycle` - Cycle through scratchpad windows
@@ -123,7 +125,18 @@ Located in `scripts/.local/bin/`:
 - `hypr-focus-or-scratchpad` - Smart focus/cycle based on window type
 - `hypr-windows-watch` - Event-based window list monitoring for waybar
 - `hypr-capslock-watch` - Event-based capslock indicator for waybar
+- `hypr-network-watch` - Event-based network indicator for waybar
 - `hypr-zen-popup-watch` - Watch for Zen browser popup windows
+
+**Power / thermal**
+- `power-profile-cycle` - Cycle power profiles (mapped to `SUPER + B`)
+- `fix-cpu-freq` - Toggle amd_pstate driver to clear 2GHz frequency cap on AC change
+- `tdp` - ryzenadj TDP control
+- `tdp-watch` - Event-based TDP indicator for waybar
+
+**Streaming / misc**
+- `sunshine-prep` / `sunshine-unprep` - Switch monitor to 1920x1080@60 for Moonlight, restore native on disconnect
+- `imv-dir` - Open imv with directory navigation
 
 ## Hyprland 0.53+ Window Rule Syntax
 
@@ -181,6 +194,8 @@ windowrule = move (monitor_w-window_w-50) 50, match:class myapp
    ```
 
 4. **Never install directly** to `~/.config/` or `~/.local/bin/` - always use stow
+
+**Note:** Stow creates symlinks, so editing files in this repo updates the active config immediately — only re-run `stow <pkg>` when adding or removing files.
 
 ### Long-running daemons: systemd vs exec-once
 
@@ -247,25 +262,3 @@ Example:
 - **Gotcha:** `hyprctl clients`'s `idleInhibitMode` field is the *windowrule* setting (`none`/`always`/`focus`/`fullscreen`), not actual Wayland idle-inhibit-v1 protocol state. A `null` value means "no rule set" — it does **not** indicate the client is inhibiting.
 - Never `SIGSTOP` a Wayland client (hypridle, waybar, etc.) — events queue on its socket and the protocol state desyncs after `SIGCONT`. Use D-Bus inhibit instead.
 
-## How Stow Works
-
-**Important**: Stow creates **symlinks**, not copies. Once stowed:
-- Editing files in the repo directly updates the active config (no restow needed)
-- Changes are immediately live
-- Only restow when adding/removing files or initially stowing
-
-## Adding new configs
-
-1. Create `newpkg/.config/newpkg/` structure (or `.local/bin/` for scripts)
-2. Add config files
-3. Run `stow newpkg` (only needed once)
-4. Update this CLAUDE.md with documentation
-
-## Editing existing configs
-
-Just edit files in the repo - changes are live immediately (they're symlinks).
-
-**Only restow when**:
-- Adding new files to a stowed package
-- Removing files from a stowed package
-- Initially stowing a new package
