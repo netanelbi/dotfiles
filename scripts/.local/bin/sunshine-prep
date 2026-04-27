@@ -19,7 +19,6 @@ if [[ "$CURRENT_W" != "1920" || "$CURRENT_H" != "1080" ]]; then
 fi
 
 pkill -USR1 hyprlock 2>/dev/null || true
-pkill -STOP hypridle 2>/dev/null || true
 
 sleep 0.3
 hyprctl keyword monitor "$STREAM_CONFIG"
