@@ -182,6 +182,12 @@ windowrule = move (monitor_w-window_w-50) 50, match:class myapp
 
 4. **Never install directly** to `~/.config/` or `~/.local/bin/` - always use stow
 
+### Long-running daemons: systemd vs exec-once
+
+Prefer a systemd user unit over `exec-once = foo` for any daemon that should auto-restart on crash (waybar, hypridle, swaync, swayosd-server, cliphist watchers, custom watch scripts).
+
+**Gotcha:** Most upstream user units have `Requisite=graphical-session.target`, which Hyprland never raises. Drop-ins can't reset `Requisite=`, so ship a **full-file override** in the relevant stow package (e.g. `waybar/.config/systemd/user/waybar.service`) and start it from `exec-once = systemctl --user start <unit>`. See `waybar.service` for the template.
+
 ### Event-Based Design
 
 **CRITICAL**: Never use polling for status indicators or monitoring.
@@ -229,6 +235,17 @@ Example:
     "escape": false
 }
 ```
+
+## Troubleshooting
+
+### Hyprland log
+`/run/user/$UID/hypr/$HYPRLAND_INSTANCE_SIGNATURE/hyprland.log` — first stop for idle/inhibit/dpms diagnostics. Find via `find /run/user/$UID/hypr -name hyprland.log`.
+
+### Idle / lock not firing
+- hypridle uses `ext-idle-notify-v1` from Hyprland. Restart it (`pkill hypridle; hypridle & disown`) if its event subscription desyncs (e.g. after being SIGSTOP'd or paused for a long time).
+- hypridle owns `org.freedesktop.ScreenSaver` D-Bus — confirm with `busctl --user list | grep -i screensaver`. Its interface exposes only `Inhibit`/`UnInhibit` (no list), so use `dbus-monitor --session "interface='org.freedesktop.ScreenSaver'"` to watch live inhibit calls.
+- **Gotcha:** `hyprctl clients`'s `idleInhibitMode` field is the *windowrule* setting (`none`/`always`/`focus`/`fullscreen`), not actual Wayland idle-inhibit-v1 protocol state. A `null` value means "no rule set" — it does **not** indicate the client is inhibiting.
+- Never `SIGSTOP` a Wayland client (hypridle, waybar, etc.) — events queue on its socket and the protocol state desyncs after `SIGCONT`. Use D-Bus inhibit instead.
 
 ## How Stow Works
 
