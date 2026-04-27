@@ -60,6 +60,7 @@ alias UM="ccropDEV && /home/netanel/Development/CCrop/cCropDev/.venv/bin/python 
 alias nano=micro
 set -gx EDITOR micro
 alias rspeedtest="ssh root@192.168.1.1 'speedtest'"
+alias claude="claude --allow-dangerously-skip-permissions"
 
 # Direnv integration
 direnv hook fish | source
