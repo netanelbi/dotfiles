@@ -184,9 +184,9 @@ windowrule = move (monitor_w-window_w-50) 50, match:class myapp
 
 ### Long-running daemons: systemd vs exec-once
 
-Prefer a systemd user unit over `exec-once = foo` for any daemon that should auto-restart on crash (waybar, hypridle, swaync, swayosd-server, cliphist watchers, custom watch scripts).
+Default is `exec-once`. Only move a daemon to a systemd user unit when there's a concrete reason (observed crash pattern needing `Restart=on-failure`, ordering dependencies, etc.) — see waybar (`680c261`) and sunshine for the precedents.
 
-**Gotcha:** Most upstream user units have `Requisite=graphical-session.target`, which Hyprland never raises. Drop-ins can't reset `Requisite=`, so ship a **full-file override** in the relevant stow package (e.g. `waybar/.config/systemd/user/waybar.service`) and start it from `exec-once = systemctl --user start <unit>`. See `waybar.service` for the template.
+**Gotcha when you do migrate:** Upstream user units typically have `Requisite=graphical-session.target`, which Hyprland never raises. Drop-ins can't reset `Requisite=`, so ship a **full-file override** in the relevant stow package (e.g. `waybar/.config/systemd/user/waybar.service`) and start it from `exec-once = systemctl --user start <unit>`. Use `waybar.service` as the template.
 
 ### Event-Based Design
 
