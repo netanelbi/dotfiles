@@ -1,12 +1,33 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# sunshine-unprep
+# Runs when a Sunshine stream session ends.
+#
+# Releases the screensaver inhibit, restores focus to eDP-1, and disables
+# HEADLESS-2 so it returns to dormant resting state. All operations are
+# wrapped in timeouts so a hung D-Bus or Hyprland call can't wedge the
+# unprep itself (which would leave Sunshine stuck waiting for it to exit).
+#
+# Designed to be idempotent and safe to run multiple times.
+
+set -uo pipefail   # NOTE: no -e — we want to attempt every cleanup step
 
 STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep"
-STATE_FILE="$STATE_DIR/monitor.conf"
+COOKIE_FILE="$STATE_DIR/inhibit-cookie"
 
-if [[ -s "$STATE_FILE" ]]; then
-    hyprctl keyword monitor "$(cat "$STATE_FILE")"
-    rm -f "$STATE_FILE"
-else
-    hyprctl keyword monitor "eDP-1,1920x1200@60,1920x0,1.5"
+# 1. Release the screensaver inhibit (if we still have the cookie)
+if [[ -s "$COOKIE_FILE" ]]; then
+    COOKIE=$(cat "$COOKIE_FILE")
+    timeout 3 busctl --user call \
+        org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver \
+        org.freedesktop.ScreenSaver UnInhibit u "$COOKIE" 2>/dev/null || true
+    rm -f "$COOKIE_FILE"
 fi
+
+# 2. Move focus back to eDP-1 / workspace 1
+timeout 2 hyprctl dispatch focusmonitor eDP-1 2>/dev/null || true
+timeout 2 hyprctl dispatch workspace 1 2>/dev/null || true
+
+# 3. Disable HEADLESS-2 — name:stream workspace gets GC'd when its monitor is gone
+timeout 2 hyprctl keyword monitor "HEADLESS-2,disable" 2>/dev/null || true
+
+exit 0

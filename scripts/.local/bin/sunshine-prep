@@ -1,26 +1,38 @@
 #!/usr/bin/env bash
+# sunshine-prep
+# Runs when a Sunshine stream session starts.
+#
+# Enables the headless display, sends focus to the streaming workspace,
+# and inhibits hypridle so the session doesn't lock during the stream.
+#
+# Counterpart: sunshine-unprep (runs on stream end)
+
 set -euo pipefail
 
 STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep"
-MONITOR="eDP-1"
-STREAM_CONFIG="${MONITOR},1920x1080@60,1920x0,1"
-
 mkdir -p "$STATE_DIR"
 
-# Skip save if monitor is already in stream resolution (orphan state from
-# a previous run whose undo didn't fire — keep the earlier saved native state)
-read -r CURRENT_W CURRENT_H < <(hyprctl -j monitors all | jq -r --arg m "$MONITOR" \
-    '.[] | select(.name == $m) | "\(.width) \(.height)"')
-if [[ "$CURRENT_W" != "1920" || "$CURRENT_H" != "1080" ]]; then
-    hyprctl -j monitors all | jq -r --arg m "$MONITOR" '
-      .[] | select(.name == $m) |
-      "\(.name),\(.width)x\(.height)@\(.refreshRate|floor),\(.x)x\(.y),\(.scale)"
-    ' > "$STATE_DIR/monitor.conf"
-fi
-
+# 0. Dismiss hyprlock if it's currently locking the screen — a remote
+#    Moonlight client can't type the unlock password, so a stream that
+#    starts on a locked session would just show the lock screen.
+#    SIGUSR1 is hyprlock's documented graceful unlock signal.
 pkill -USR1 hyprlock 2>/dev/null || true
 
-sleep 0.3
-hyprctl keyword monitor "$STREAM_CONFIG"
-sleep 0.2
-hyprctl dispatch focusmonitor "$MONITOR"
+# 1. Enable HEADLESS-2 at 1080p60, parked far offscreen so cursor/windows can't drift onto it
+hyprctl keyword monitor "HEADLESS-2,1920x1080@60,4000x0,1"
+
+# 2. Move focus to HEADLESS-2 so the next workspace switch creates name:stream there
+hyprctl dispatch focusmonitor HEADLESS-2
+
+# 3. Create + focus the stream workspace (lands on HEADLESS-2 since that's focused)
+hyprctl dispatch workspace name:stream
+
+# 4. Inhibit the screensaver so hypridle doesn't lock/dpms during the stream
+COOKIE=$(busctl --user --json=short call \
+    org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver \
+    org.freedesktop.ScreenSaver Inhibit ss "sunshine" "active stream" \
+    | jq -r '.data[0]')
+echo "$COOKIE" > "$STATE_DIR/inhibit-cookie"
+
+# Window watcher (focus-corral for late-spawning apps) is intentionally
+# omitted for now — re-enable later if needed for Steam/launcher chains.
