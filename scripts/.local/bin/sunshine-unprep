@@ -30,4 +30,10 @@ timeout 2 hyprctl dispatch workspace 1 2>/dev/null || true
 # 3. Disable HEADLESS-2 — name:stream workspace gets GC'd when its monitor is gone
 timeout 2 hyprctl keyword monitor "HEADLESS-2,disable" 2>/dev/null || true
 
+# 4. Drop the runtime windowrules added by prep (steam_app -> name:stream + fullscreen).
+#    Hyprland has no per-rule unset, so reload is the cleanest way back to the
+#    static config. Otherwise the rules would persist for the rest of the session
+#    and a non-streaming Steam launch would still get redirected to name:stream.
+timeout 3 hyprctl reload 2>/dev/null || true
+
 exit 0
