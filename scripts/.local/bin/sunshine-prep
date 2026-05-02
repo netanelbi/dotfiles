@@ -27,12 +27,17 @@ hyprctl dispatch focusmonitor HEADLESS-2
 # 3. Create + focus the stream workspace (lands on HEADLESS-2 since that's focused)
 hyprctl dispatch workspace name:stream
 
-# 4. Inhibit the screensaver so hypridle doesn't lock/dpms during the stream
+# 4. Pin Steam-launched games to name:stream and auto-fullscreen them.
+#    Wine/Proton cold start can take 30s+; by the time the game window finally
+#    maps, focus has drifted back to eDP-1 and Hyprland places it on whatever
+#    workspace is focused *now*, not where prep left it. These rules bypass the
+#    focus race entirely. Cleared by `hyprctl reload` in sunshine-unprep.
+hyprctl keyword windowrule 'workspace name:stream, match:class ^steam_app'
+hyprctl keyword windowrule 'fullscreen, match:class ^steam_app'
+
+# 5. Inhibit the screensaver so hypridle doesn't lock/dpms during the stream
 COOKIE=$(busctl --user --json=short call \
     org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver \
     org.freedesktop.ScreenSaver Inhibit ss "sunshine" "active stream" \
     | jq -r '.data[0]')
 echo "$COOKIE" > "$STATE_DIR/inhibit-cookie"
-
-# Window watcher (focus-corral for late-spawning apps) is intentionally
-# omitted for now — re-enable later if needed for Steam/launcher chains.
