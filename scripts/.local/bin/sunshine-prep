@@ -33,7 +33,7 @@ hyprctl dispatch workspace name:stream
 #    workspace is focused *now*, not where prep left it. These rules bypass the
 #    focus race entirely. Cleared by `hyprctl reload` in sunshine-unprep.
 hyprctl keyword windowrule 'workspace name:stream, match:class ^steam_app'
-hyprctl keyword windowrule 'fullscreen, match:class ^steam_app'
+hyprctl keyword windowrule 'fullscreen on, match:class ^steam_app'
 
 # 5. Inhibit the screensaver so hypridle doesn't lock/dpms during the stream
 COOKIE=$(busctl --user --json=short call \
