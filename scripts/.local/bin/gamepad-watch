@@ -1,0 +1,77 @@
+#!/bin/bash
+# Waybar module: show connected PS gamepads with battery % colored by their lightbar RGB.
+# Event-driven via udev power_supply events. Pass --once for a single emit (debug).
+
+CONTROLLER_GLOB='/sys/class/power_supply/ps-controller-battery-*'
+ICON='󰊴'
+FALLBACK_COLOR='#888888'
+
+read_lightbar_color() {
+    local dev="$1"
+    local leds_dir="$dev/device/leds"
+    [[ -d "$leds_dir" ]] || { echo "$FALLBACK_COLOR"; return; }
+    local r g b max
+    r=$(cat "$leds_dir"/*:red/brightness 2>/dev/null | head -n1)
+    g=$(cat "$leds_dir"/*:green/brightness 2>/dev/null | head -n1)
+    b=$(cat "$leds_dir"/*:blue/brightness 2>/dev/null | head -n1)
+    r=${r:-0}; g=${g:-0}; b=${b:-0}
+    # Preserve hue, scale brightest channel up to TARGET so dim lightbar
+    # readings (idle DualSense is ~RGB(0,0,64)) are still legible on the bar.
+    local target=230
+    max=$r; (( g > max )) && max=$g; (( b > max )) && max=$b
+    if (( max == 0 )); then
+        echo "$FALLBACK_COLOR"
+        return
+    fi
+    if (( max < target )); then
+        r=$(( r * target / max ))
+        g=$(( g * target / max ))
+        b=$(( b * target / max ))
+    fi
+    printf '#%02x%02x%02x' "$r" "$g" "$b"
+}
+
+emit_status() {
+    local parts=() tip_lines=()
+    shopt -s nullglob
+    for dev in $CONTROLLER_GLOB; do
+        local cap status color
+        cap=$(tr -cd '0-9' < "$dev/capacity" 2>/dev/null)
+        status=$(cat "$dev/status" 2>/dev/null)
+        [[ -z "$cap" ]] && continue
+        color=$(read_lightbar_color "$dev")
+        parts+=("<span foreground='$color' weight='bold'>$ICON ${cap}%</span>")
+        tip_lines+=("${cap}% — ${status:-Unknown} — lightbar ${color}")
+    done
+    shopt -u nullglob
+
+    if [[ ${#parts[@]} -eq 0 ]]; then
+        printf '{"text": "", "class": ""}\n'
+        return
+    fi
+
+    local text tooltip
+    text=$(IFS=' '; echo "${parts[*]}")
+    tooltip=$(IFS=$'\n'; echo "${tip_lines[*]}")
+    tooltip="${tooltip//$'\n'/\\n}"
+    printf '{"text": "%s", "tooltip": "%s", "class": "active"}\n' "$text" "$tooltip"
+}
+
+emit_status
+
+[[ "$1" == "--once" ]] && exit 0
+
+# Re-emit on any power_supply uevent. Use coproc so we hold the udevadm PID and can
+# tear it down when waybar SIGTERMs us — a bare pipeline would orphan udevadm.
+cleanup() {
+    [[ -n "${UMON_PID:-}" ]] && kill -TERM "$UMON_PID" 2>/dev/null
+    exit 0
+}
+trap cleanup EXIT INT TERM HUP
+
+coproc UMON { udevadm monitor --kernel --subsystem-match=power_supply 2>/dev/null; }
+while read -r line <&"${UMON[0]}"; do
+    case "$line" in
+        KERNEL*power_supply*) emit_status ;;
+    esac
+done

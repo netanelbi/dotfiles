@@ -241,6 +241,15 @@ window#waybar {
     font-size: 11px;
 }
 
+#custom-gamepads {
+    padding: 0;
+    margin: 0;
+}
+
+#custom-gamepads.active {
+    margin: 0 6px;
+}
+
 /* Tooltip */
 tooltip {
     background: @base;

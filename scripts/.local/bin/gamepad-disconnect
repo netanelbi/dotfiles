@@ -1,0 +1,9 @@
+#!/bin/bash
+# Disconnect every connected PS controller via Bluetooth.
+# Bound to right-click on the waybar `custom/gamepads` module.
+
+shopt -s nullglob
+for dev in /sys/class/power_supply/ps-controller-battery-*; do
+    mac=${dev##*ps-controller-battery-}
+    bluetoothctl disconnect "$mac" >/dev/null 2>&1
+done

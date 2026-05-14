@@ -9,7 +9,7 @@
   "height": 30,
 
   "modules-left": ["hyprland/workspaces", "custom/scratchpad", "custom/windows"],
-  "modules-center": ["clock", "hyprland/language", "custom/capslock", "pulseaudio#mic", "power-profiles-daemon", "custom/tdp"],
+  "modules-center": ["clock", "hyprland/language", "custom/capslock", "pulseaudio#mic", "power-profiles-daemon", "custom/tdp", "custom/gamepads"],
   "modules-right": [
     "tray",
     "bluetooth",
@@ -68,6 +68,7 @@
   },
 
   "battery": {
+    "bat": "BAT1",
     "format": "{icon} {capacity}%",
     "format-charging": "󰂄 {capacity}%",
     "format-plugged": "󰚥 {capacity}%",
@@ -115,6 +116,15 @@
   "custom/tdp": {
     "exec": "~/.local/bin/tdp-watch",
     "return-type": "json"
+  },
+
+  "custom/gamepads": {
+    "exec": "~/.local/bin/gamepad-watch",
+    "return-type": "json",
+    "format": "{}",
+    "escape": false,
+    "tooltip": true,
+    "on-click-right": "~/.local/bin/gamepad-disconnect"
   },
 
   "custom/scratchpad": {
