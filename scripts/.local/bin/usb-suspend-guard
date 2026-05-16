@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# usb-suspend-guard - hold a sleep inhibitor briefly after racy USB disconnects.
+#
+# Why: pulling the XReal glasses while the lid is closed makes logind suspend
+# immediately (lid switch was previously masked because XReal was the only
+# display). The glasses' cdc_ncm/cdc_ether interfaces are still tearing down
+# at that instant, and on AMD Strix Point that race wedges s2idle - the system
+# enters Modern Standby and never resumes. Holding a sleep inhibit for a few
+# seconds after disconnect lets USB cleanup finish before logind re-evaluates
+# the lid state.
+
+set -euo pipefail
+
+# vendor/product prefixes to guard. PRODUCT format is "vendor/product/bcdDevice"
+# in hex without leading zeros, so "3318/436/" matches XReal vid 0x3318 pid 0x0436.
+GUARDED_PREFIXES=(
+    "3318/436/"   # XREAL One Pro
+)
+GRACE_SECONDS="${USB_SUSPEND_GUARD_GRACE:-10}"
+
+# Singleton: silently exit if another instance is already running.
+LOCKFILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/usb-suspend-guard.lock"
+exec 200>"$LOCKFILE"
+flock -n 200 || exit 0
+
+cleanup() {
+    [[ -n "${MON_PID:-}" ]] && kill "$MON_PID" 2>/dev/null
+    exit 0
+}
+trap cleanup EXIT INT TERM
+
+is_guarded() {
+    local product="$1" prefix
+    for prefix in "${GUARDED_PREFIXES[@]}"; do
+        [[ "$product" == "$prefix"* ]] && return 0
+    done
+    return 1
+}
+
+exec 3< <(udevadm monitor --kernel --subsystem-match=usb --property)
+MON_PID=$!
+
+action=""
+product=""
+while IFS= read -r line <&3; do
+    if [[ -z "$line" ]]; then
+        if [[ "$action" == "remove" ]] && is_guarded "$product"; then
+            # setsid so the inhibitor survives even if this watcher is restarted.
+            setsid systemd-inhibit \
+                --what=sleep \
+                --who=usb-suspend-guard \
+                --why="USB teardown grace period" \
+                sleep "$GRACE_SECONDS" </dev/null >/dev/null 2>&1 &
+        fi
+        action=""
+        product=""
+    elif [[ "$line" =~ ^KERNEL\[.+\][[:space:]]+([a-z]+)[[:space:]] ]]; then
+        action="${BASH_REMATCH[1]}"
+    elif [[ "$line" == "PRODUCT="* ]]; then
+        product="${line#PRODUCT=}"
+    fi
+done
