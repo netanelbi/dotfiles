@@ -12,6 +12,23 @@ set -euo pipefail
 STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep"
 mkdir -p "$STATE_DIR"
 
+# Hyprland 0.55 stopped auto-importing HYPRLAND_INSTANCE_SIGNATURE into the
+# systemd user manager environment, so daemons launched via
+# `exec-once = systemctl --user start <svc>` (e.g. sunshine) inherit a
+# missing HIS and every `hyprctl` call exits 1 — taking this script down via
+# `set -e`. Discover the live instance from $XDG_RUNTIME_DIR/hypr/ as a fallback.
+if [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
+    for dir in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hypr/"*/; do
+        lock="$dir/hyprland.lock"
+        [[ -r "$lock" ]] || continue
+        pid=$(head -n1 "$lock" 2>/dev/null || true)
+        [[ -n "$pid" && -d "/proc/$pid" ]] || continue
+        HYPRLAND_INSTANCE_SIGNATURE=$(basename "$dir")
+        export HYPRLAND_INSTANCE_SIGNATURE
+        break
+    done
+fi
+
 # 0. Dismiss hyprlock if it's currently locking the screen — a remote
 #    Moonlight client can't type the unlock password, so a stream that
 #    starts on a locked session would just show the lock screen.
@@ -21,21 +38,27 @@ pkill -USR1 hyprlock 2>/dev/null || true
 # 1. Enable HEADLESS-2 at 1080p60, parked far offscreen so cursor/windows can't drift onto it
 hyprctl keyword monitor "HEADLESS-2,1920x1080@60,4000x0,1"
 
-# 2. Move focus to HEADLESS-2 so the next workspace switch creates name:stream there
-hyprctl dispatch focusmonitor HEADLESS-2
-
-# 3. Create + focus the stream workspace (lands on HEADLESS-2 since that's focused)
+# 2. Switch to the stream workspace. The static `workspace = name:stream,
+#    monitor:HEADLESS-2` binding in hyprland.conf is what pins it to the
+#    headless output — earlier versions relied on a `focusmonitor` call here,
+#    but Hyprland 0.55 doesn't register the freshly-enabled monitor in time
+#    and that call no-ops with "Monitor not found".
 hyprctl dispatch workspace name:stream
 
-# 4. Pin Steam-launched games to name:stream and auto-fullscreen them.
+# 3. Pin game windows to name:stream and auto-fullscreen them.
 #    Wine/Proton cold start can take 30s+; by the time the game window finally
 #    maps, focus has drifted back to eDP-1 and Hyprland places it on whatever
 #    workspace is focused *now*, not where prep left it. These rules bypass the
 #    focus race entirely. Cleared by `hyprctl reload` in sunshine-unprep.
+#    `steam_app` covers native Steam games; `gamescope` covers anything launched
+#    via the Steam entry's gamescope wrapper AND Heroic games whose runner uses
+#    gamescope (e.g. Hot Wheels).
 hyprctl keyword windowrule 'workspace name:stream, match:class ^steam_app'
 hyprctl keyword windowrule 'fullscreen on, match:class ^steam_app'
+hyprctl keyword windowrule 'workspace name:stream, match:class ^gamescope'
+hyprctl keyword windowrule 'fullscreen on, match:class ^gamescope'
 
-# 5. Inhibit the screensaver so hypridle doesn't lock/dpms during the stream
+# 4. Inhibit the screensaver so hypridle doesn't lock/dpms during the stream
 COOKIE=$(busctl --user --json=short call \
     org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver \
     org.freedesktop.ScreenSaver Inhibit ss "sunshine" "active stream" \
