@@ -14,6 +14,21 @@ set -uo pipefail   # NOTE: no -e — we want to attempt every cleanup step
 STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep"
 COOKIE_FILE="$STATE_DIR/inhibit-cookie"
 
+# Hyprland 0.55 no longer reliably imports HYPRLAND_INSTANCE_SIGNATURE into
+# the systemd user manager env, so sunshine-spawned cleanup may lack it and
+# every hyprctl call would no-op. See sunshine-prep for full notes.
+if [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
+    for dir in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hypr/"*/; do
+        lock="$dir/hyprland.lock"
+        [[ -r "$lock" ]] || continue
+        pid=$(head -n1 "$lock" 2>/dev/null || true)
+        [[ -n "$pid" && -d "/proc/$pid" ]] || continue
+        HYPRLAND_INSTANCE_SIGNATURE=$(basename "$dir")
+        export HYPRLAND_INSTANCE_SIGNATURE
+        break
+    done
+fi
+
 # 1. Release the screensaver inhibit (if we still have the cookie)
 if [[ -s "$COOKIE_FILE" ]]; then
     COOKIE=$(cat "$COOKIE_FILE")
