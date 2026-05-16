@@ -1,14 +1,67 @@
 #!/bin/bash
-# Simple webapp installer - creates a .desktop file for a website as an app
+# Simple webapp installer - creates a .desktop file for a website as an app.
+# Two backends:
+#   zen       Zen Browser into a dedicated chromeless profile (default profile:
+#             ~/.zen/webapps, which carries the userChrome.css that hides all
+#             browser chrome).
+#   chromium  Chromium --app=URL.
 
-APP_NAME="$1"
-APP_URL="$2"
-ICON_URL="$3"
+BACKEND=zen
+PROFILE=
+
+POSITIONAL=()
+while (( $# )); do
+    case "$1" in
+        --backend)       BACKEND="$2"; shift 2 ;;
+        --backend=*)     BACKEND="${1#*=}"; shift ;;
+        --profile)       PROFILE="$2"; shift 2 ;;
+        --profile=*)     PROFILE="${1#*=}"; shift ;;
+        -h|--help)
+            cat <<EOF
+Usage: webapp-install [options] <name> <url> [icon-url]
+
+Options:
+  --backend zen|chromium   Browser backend (default: zen)
+  --profile <path>         Profile dir (zen) or user-data dir (chromium)
+                           Zen default: ~/.zen/webapps
+
+Examples:
+  webapp-install IPTV http://ottp.eu.org/f/pc/
+  webapp-install --backend chromium IPTV http://ottp.eu.org/f/pc/
+  webapp-install --profile ~/.zen/work Slack https://app.slack.com
+EOF
+            exit 0
+            ;;
+        *) POSITIONAL+=("$1"); shift ;;
+    esac
+done
+
+APP_NAME="${POSITIONAL[0]}"
+APP_URL="${POSITIONAL[1]}"
+ICON_URL="${POSITIONAL[2]}"
 
 if [[ -z "$APP_NAME" || -z "$APP_URL" ]]; then
-    echo "Usage: webapp-install <name> <url> [icon-url]"
-    echo "Example: webapp-install YouTube https://youtube.com https://example.com/icon.png"
+    echo "Usage: webapp-install [options] <name> <url> [icon-url]"
+    echo "Try: webapp-install --help"
     exit 1
+fi
+
+case "$BACKEND" in
+    zen|chromium) ;;
+    *) echo "Error: --backend must be 'zen' or 'chromium' (got: $BACKEND)" >&2; exit 1 ;;
+esac
+
+# Profile defaults / validation
+if [[ "$BACKEND" == zen ]]; then
+    PROFILE="${PROFILE:-$HOME/.zen/webapps}"
+    PROFILE="${PROFILE/#\~/$HOME}"
+    if [[ ! -d "$PROFILE" ]]; then
+        echo "Error: Zen profile not found at $PROFILE" >&2
+        echo "Create it once with: zen-browser --profile $PROFILE --new-instance about:blank" >&2
+        exit 1
+    fi
+elif [[ -n "$PROFILE" ]]; then
+    PROFILE="${PROFILE/#\~/$HOME}"
 fi
 
 ICON_DIR="$HOME/.local/share/icons/webapps"
@@ -52,13 +105,26 @@ fi
 
 echo "Icon: $ICON_PATH"
 
+# Build Exec line based on backend
+case "$BACKEND" in
+    zen)
+        EXEC="zen-browser --profile $PROFILE --new-window $APP_URL"
+        ;;
+    chromium)
+        EXEC="chromium --app=$APP_URL --disable-features=HttpsUpgrades,MixedContentAutoupgrade"
+        if [[ -n "$PROFILE" ]]; then
+            EXEC="chromium --app=$APP_URL --user-data-dir=$PROFILE --disable-features=HttpsUpgrades,MixedContentAutoupgrade"
+        fi
+        ;;
+esac
+
 # Create .desktop file
 cat > "$DESKTOP_DIR/$APP_NAME.desktop" << EOF
 [Desktop Entry]
 Version=1.0
 Name=$APP_NAME
 Comment=$APP_NAME Web App
-Exec=chromium --app=$APP_URL
+Exec=$EXEC
 Terminal=false
 Type=Application
 Icon=$ICON_PATH
@@ -67,5 +133,5 @@ Categories=Network;WebApp;
 EOF
 
 chmod +x "$DESKTOP_DIR/$APP_NAME.desktop"
-echo "Created webapp: $APP_NAME"
+echo "Created webapp: $APP_NAME (backend: $BACKEND)"
 echo "Launch it from rofi (SUPER+D)"
