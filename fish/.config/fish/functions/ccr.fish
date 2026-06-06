@@ -6,10 +6,13 @@ function ccr --description "Launch Claude Code with custom endpoint and model (w
     argparse --ignore-unknown 'haiku=' 'sonnet=' 'opus=' 'subagent=' 'max-tokens=' 'all=' -- $argv
     or return 1
 
-    # Export fixed base auth / endpoint (preserve existing behavior)
-    set -x ANTHROPIC_AUTH_TOKEN "***REMOVED***"
-    set -x ANTHROPIC_BASE_URL "***REMOVED***"
-    # set -x ANTHROPIC_BASE_URL "http://localhost:4141"
+    # Auth / endpoint come from secrets.fish (gitignored). See CCR_AUTH_TOKEN / CCR_BASE_URL.
+    if not set -q CCR_AUTH_TOKEN
+        echo "ccr: CCR_AUTH_TOKEN not set — define it in fish/.config/fish/conf.d/secrets.fish" >&2
+        return 1
+    end
+    set -x ANTHROPIC_AUTH_TOKEN $CCR_AUTH_TOKEN
+    set -x ANTHROPIC_BASE_URL (set -q CCR_BASE_URL; and echo $CCR_BASE_URL; or echo "http://localhost:4141")
 
     # Set default values for each model
     set -l default_haiku "grok-code-fast-1"
