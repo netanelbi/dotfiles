@@ -1,12 +1,13 @@
 #!/bin/bash
 # Waybar module: show custom TDP when it differs from profile default
-# Long-running, re-emits on SIGUSR1 (sent by the `tdp` CLI after updating state)
+# Re-emits whenever /tmp/tdp-state is written or removed
+# (the `tdp` CLI writes the file; `power-profile-cycle` removes it)
 
 STATE_FILE=/tmp/tdp-state
 
-# Kill any pending sleep on exit so waybar restarts don't leak orphans
+# Kill the inotifywait child on exit so waybar restarts don't leak orphans
 cleanup() {
-    [[ -n "${SLEEP_PID:-}" ]] && kill "$SLEEP_PID" 2>/dev/null
+    [[ -n "${IW_PID:-}" ]] && kill "$IW_PID" 2>/dev/null
     exit 0
 }
 trap cleanup EXIT INT TERM PIPE
@@ -14,7 +15,7 @@ trap cleanup EXIT INT TERM PIPE
 show_status() {
     local watts
     if [ -f "$STATE_FILE" ]; then
-        # Accept only digits (plus a trailing newline already stripped by $()); other chars would break JSON
+        # Accept only digits; other chars would break JSON
         watts=$(tr -cd '0-9' < "$STATE_FILE" 2>/dev/null)
     fi
     if [ -n "$watts" ]; then
@@ -26,15 +27,11 @@ show_status() {
 
 show_status
 
-# SIGUSR1 handler: re-emit and interrupt the current sleep so we loop immediately
-on_signal() {
-    show_status
-    [[ -n "${SLEEP_PID:-}" ]] && kill "$SLEEP_PID" 2>/dev/null
-}
-trap on_signal SIGUSR1
-
-while :; do
-    sleep infinity &
-    SLEEP_PID=$!
-    wait "$SLEEP_PID" 2>/dev/null
+# Watch the parent dir filtered by filename: survives unlinking, which a direct
+# file watch does not (IN_IGNORED kills the watch silently).
+# Background process so $! captures inotifywait's PID for cleanup.
+exec 3< <(exec inotifywait -m -q --format '%f' -e close_write -e delete /tmp)
+IW_PID=$!
+while read -r name <&3; do
+    [[ "$name" == "tdp-state" ]] && show_status
 done

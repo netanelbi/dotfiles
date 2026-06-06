@@ -1,8 +1,12 @@
 #!/bin/bash
-# Hyprland monitor hotplug handler
+# Hyprland event handler — monitor hotplug + (while streaming) game-window routing
 
 SOCKET="/run/user/$(id -u)/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
 WALLPAPER="/usr/share/hypr/wall2.png"
+# Set by sunshine-prep for the duration of a stream. While present, a
+# monitorremoved is an intentional panel-disable (prep blanks eDP-1/DP-2),
+# not a real unplug — so we must NOT bounce focus off the stream workspace.
+STREAM_MARKER="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep/stream-active"
 
 socat -U - UNIX-CONNECT:"$SOCKET" | while read -r line; do
     case "$line" in
@@ -12,8 +16,44 @@ socat -U - UNIX-CONNECT:"$SOCKET" | while read -r line; do
             awww img "$WALLPAPER"
             ;;
         monitorremoved*)
-            # External monitor disconnected - switch to workspace 1
+            # External monitor disconnected - switch to workspace 1.
+            # Skipped during a stream: prep disables the panels on purpose and
+            # the bounce would steal focus from the name:stream workspace.
+            [[ -f "$STREAM_MARKER" ]] && continue
             hyprctl dispatch workspace 1
+            ;;
+        openwindow*)
+            # Stream window router. ONLY active while a Sunshine stream is live
+            # (marker present) — otherwise normal local windows are left alone.
+            #
+            # When a window maps during a stream, move it onto name:stream AND
+            # focus it, so it lands on the captured output (HEADLESS-2) and
+            # receives Moonlight's keyboard/gamepad input (input follows focus).
+            # This is class-agnostic (Heroic --no-gui, gamescope, Wine/Proton all
+            # report different/unpredictable classes), fires whenever the window
+            # actually maps (even 30s+ into a Wine cold start), and works by
+            # window address — so it does NOT depend on the other panels being
+            # disabled. Replaces the old `match:class` windowrules, which used
+            # invalid syntax and never matched.
+            #
+            # Event: openwindow>>ADDRESS,WORKSPACENAME,CLASS,TITLE
+            # (ADDRESS has no 0x prefix in the event; dispatchers need it.)
+            [[ -f "$STREAM_MARKER" ]] || continue
+            data="${line#openwindow>>}"
+            addr="${data%%,*}"
+            class="$(cut -d',' -f3 <<<"$data")"
+            # Skip obvious non-game utility/popup windows.
+            case "$class" in
+                ""|rofi|Rofi|waybar|swaync|dunst|mako|hyprpaper|xdg-desktop-portal*|*[Pp]olkit*) continue ;;
+            esac
+            hyprctl dispatch movetoworkspacesilent "name:stream,address:0x$addr" >/dev/null 2>&1
+            sleep 0.2
+            is_fs=$(hyprctl clients -j | jq -r ".[] | select(.address == \"0x$addr\") | .fullscreen" 2>/dev/null || echo "0")
+            if [[ "$is_fs" == "0" || -z "$is_fs" ]]; then
+                hyprctl --batch "dispatch focuswindow address:0x$addr ; dispatch fullscreen 0" >/dev/null 2>&1
+            else
+                hyprctl dispatch focuswindow "address:0x$addr" >/dev/null 2>&1
+            fi
             ;;
     esac
 done

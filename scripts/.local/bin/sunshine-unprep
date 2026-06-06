@@ -38,17 +38,38 @@ if [[ -s "$COOKIE_FILE" ]]; then
     rm -f "$COOKIE_FILE"
 fi
 
-# 2. Move focus back to eDP-1 / workspace 1
+# 2. Re-enable the physical panels prep disabled — BEFORE focusing eDP-1, otherwise
+#    focusmonitor hits "Monitor not found". The `hyprctl reload` below also restores
+#    them from hyprland.conf; these explicit calls are the safety net (and no-op
+#    harmlessly if a panel like DP-2 isn't connected).
+timeout 2 hyprctl keyword monitor "eDP-1,1920x1200@60,1920x0,1.5" 2>/dev/null || true
+timeout 2 hyprctl keyword monitor "DP-2,1920x1080@60,0x0,1" 2>/dev/null || true
+
+# 3. Move focus back to eDP-1 / workspace 1
 timeout 2 hyprctl dispatch focusmonitor eDP-1 2>/dev/null || true
 timeout 2 hyprctl dispatch workspace 1 2>/dev/null || true
 
-# 3. Disable HEADLESS-2 — name:stream workspace gets GC'd when its monitor is gone
+# 4. Disable HEADLESS-2 — name:stream workspace gets GC'd when its monitor is gone
 timeout 2 hyprctl keyword monitor "HEADLESS-2,disable" 2>/dev/null || true
 
-# 4. Drop the runtime windowrules added by prep (steam_app -> name:stream + fullscreen).
-#    Hyprland has no per-rule unset, so reload is the cleanest way back to the
-#    static config. Otherwise the rules would persist for the rest of the session
-#    and a non-streaming Steam launch would still get redirected to name:stream.
+# 4. Reload to restore the static config (monitors/workspaces) as a safety net.
+#    (prep no longer adds runtime windowrules — placement is the openwindow
+#    router in hypr-monitor-handler, scoped by the stream-active marker, so
+#    there are no per-stream rules left to clear here.)
 timeout 3 hyprctl reload 2>/dev/null || true
+
+# 5. Revert the power profile to balanced if prep boosted it (docked streams only).
+#    Mirrors power-profile-cycle's balanced preset (25W stapm / 30W fast / 90C) + freq fix.
+if [[ -f "$STATE_DIR/profile-boosted" ]]; then
+    powerprofilesctl set balanced 2>/dev/null || true
+    sudo -n /usr/bin/ryzenadj --stapm-limit=25000 --fast-limit=30000 --slow-limit=25000 --tctl-temp=90 >/dev/null 2>&1 || true
+    sudo -n /home/netanel/.local/bin/fix-cpu-freq >/dev/null 2>&1 || true
+    rm -f "$STATE_DIR/profile-boosted"
+fi
+
+# 6. Clear the stream-active marker LAST, so monitorremoved events fired during
+#    this teardown (HEADLESS-2 disable above) stay suppressed — unprep already
+#    handles focus itself. From here on, real unplugs bounce to workspace 1 again.
+rm -f "$STATE_DIR/stream-active"
 
 exit 0
