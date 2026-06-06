@@ -12,6 +12,10 @@ set -euo pipefail
 STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep"
 mkdir -p "$STATE_DIR"
 
+# Mark the stream as active so hypr-monitor-handler ignores the panel-disable
+# (step 6) and doesn't bounce focus off name:stream. Cleared by sunshine-unprep.
+touch "$STATE_DIR/stream-active"
+
 # Hyprland 0.55 stopped auto-importing HYPRLAND_INSTANCE_SIGNATURE into the
 # systemd user manager environment, so daemons launched via
 # `exec-once = systemctl --user start <svc>` (e.g. sunshine) inherit a
@@ -36,7 +40,7 @@ fi
 pkill -USR1 hyprlock 2>/dev/null || true
 
 # 1. Enable HEADLESS-2 at 1080p60, parked far offscreen so cursor/windows can't drift onto it
-hyprctl keyword monitor "HEADLESS-2,1920x1080@60,4000x0,1"
+hyprctl keyword monitor "HEADLESS-2,1920x1080@120,4000x0,1"
 
 # 2. Switch to the stream workspace. The static `workspace = name:stream,
 #    monitor:HEADLESS-2` binding in hyprland.conf is what pins it to the
@@ -45,18 +49,14 @@ hyprctl keyword monitor "HEADLESS-2,1920x1080@60,4000x0,1"
 #    and that call no-ops with "Monitor not found".
 hyprctl dispatch workspace name:stream
 
-# 3. Pin game windows to name:stream and auto-fullscreen them.
-#    Wine/Proton cold start can take 30s+; by the time the game window finally
-#    maps, focus has drifted back to eDP-1 and Hyprland places it on whatever
-#    workspace is focused *now*, not where prep left it. These rules bypass the
-#    focus race entirely. Cleared by `hyprctl reload` in sunshine-unprep.
-#    `steam_app` covers native Steam games; `gamescope` covers anything launched
-#    via the Steam entry's gamescope wrapper AND Heroic games whose runner uses
-#    gamescope (e.g. Hot Wheels).
-hyprctl keyword windowrule 'workspace name:stream, match:class ^steam_app'
-hyprctl keyword windowrule 'fullscreen on, match:class ^steam_app'
-hyprctl keyword windowrule 'workspace name:stream, match:class ^gamescope'
-hyprctl keyword windowrule 'fullscreen on, match:class ^gamescope'
+# 3. Game-window placement is handled by hypr-monitor-handler's openwindow
+#    router (gated on the stream-active marker above), NOT by windowrules.
+#    When the game window finally maps — even 30s+ into a Wine/Proton/Heroic
+#    cold start — the router moves it onto name:stream AND focuses it, by
+#    address, so it lands on the captured output and receives remote input.
+#    This is class-agnostic and works whether or not the panels are disabled.
+#    (The previous `windowrule ... match:class ...` lines used invalid syntax
+#    and silently never matched — that was a big part of the unreliability.)
 
 # 4. Inhibit the screensaver so hypridle doesn't lock/dpms during the stream
 COOKIE=$(busctl --user --json=short call \
@@ -64,3 +64,24 @@ COOKIE=$(busctl --user --json=short call \
     org.freedesktop.ScreenSaver Inhibit ss "sunshine" "active stream" \
     | jq -r '.data[0]')
 echo "$COOKIE" > "$STATE_DIR/inhibit-cookie"
+
+# 5. Boost to performance profile + TDP for the stream — ONLY when docked (on AC)
+#    and not deliberately on power-saver. Mirrors power-profile-cycle's perf preset
+#    (54W stapm / 65W fast / 100C) + the freq-cap fix. ryzenadj/fix-cpu-freq run via
+#    NOPASSWD sudo. The marker file tells unprep to revert to balanced afterwards.
+ac_online=$(cat /sys/class/power_supply/ACAD/online 2>/dev/null || echo 0)
+cur_profile=$(powerprofilesctl get 2>/dev/null || echo "")
+if [[ "$ac_online" == "1" && -n "$cur_profile" && "$cur_profile" != "power-saver" ]]; then
+    powerprofilesctl set performance 2>/dev/null || true
+    sudo -n /usr/bin/ryzenadj --stapm-limit=54000 --fast-limit=65000 --slow-limit=54000 --tctl-temp=100 >/dev/null 2>&1 || true
+    sudo -n /home/netanel/.local/bin/fix-cpu-freq >/dev/null 2>&1 || true
+    touch "$STATE_DIR/profile-boosted"
+fi
+
+# 6. Disable the physical panels for the stream's duration — on this APU they only
+#    add compositing + memory-bandwidth load (the real bottleneck) and show nothing
+#    useful while streaming to a remote client. Done LAST so an earlier failure can't
+#    leave the screens off. Re-enabled by sunshine-unprep, and recoverable any time
+#    via SUPER+ALT+D (or `hyprctl reload`). Guarded so neither call can abort prep.
+hyprctl keyword monitor "eDP-1,disable" || true
+hyprctl keyword monitor "DP-2,disable" || true

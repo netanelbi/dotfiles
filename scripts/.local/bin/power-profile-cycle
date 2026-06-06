@@ -43,6 +43,5 @@ set_tdp "$new"
 # Only fix freq cap for balanced/performance — power-saver needs the cap
 [ "$new" != "power-saver" ] && fix_freq_cap
 
-# Clear custom TDP (profile sets default)
+# Clear custom TDP (profile sets default); tdp-watch picks this up via inotify
 rm -f /tmp/tdp-state
-pkill -SIGUSR1 -x tdp-watch

@@ -1,0 +1,13 @@
+[Unit]
+Description=Hyprland idle daemon (auto-restart on crash)
+Documentation=https://wiki.hyprland.org/Hypr-Ecosystem/hypridle
+
+[Service]
+ExecStart=/usr/bin/hypridle
+Restart=on-failure
+RestartSec=1
+StartLimitBurst=10
+StartLimitIntervalSec=60
+
+[Install]
+WantedBy=default.target
