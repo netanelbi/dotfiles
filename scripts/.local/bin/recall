@@ -1,0 +1,532 @@
+#!/usr/bin/env python3
+"""
+recall — fast lexical search over Claude Code memory + session transcripts.
+
+"Like RAG, but faster and no embeddings": a SQLite FTS5 inverted index with
+BM25 ranking. Lexical (keyword) relevance, not semantic — builds in seconds,
+queries in milliseconds, zero models, stdlib only. Global tool (searches every
+project), so it lives in ~/.dotfiles and is symlinked onto PATH.
+
+Corpus:
+  - ~/.claude/projects/*/memory/*.md    (curated memory; ts = file mtime)
+  - ~/.claude/projects/**/*.jsonl       (session + subagent transcripts)
+Curated memory hits are boosted in ranking and tagged [MEM] — they're authoritative.
+
+Index at ~/.cache/recall/index.db (machine-local, derived). Incremental by mtime.
+The currently-active session (files written in the last ~2 min) is NOT indexed, so
+a live conversation never contaminates its own search results.
+
+Matching: each query word becomes a prefix term (word*) OR-combined, ranked by
+BM25 — extra/partial words don't zero the result, more/rarer matches rank higher.
+--all requires every word (strict AND). NOTE: there is no phrase search, and for
+curated memory the whole file is one document (so --all can match words from
+different sections of the same note).
+
+Usage:
+  recall <query...>                 search (default)
+  recall search <query...>          same
+  recall around <#ID> [-C N]        expand context around a hit (preferred form)
+  recall around <ref> <seq> [-C N]  expand by session ref + message index
+  recall index [--full]             (re)build the index
+  recall list                       cross-project memory index (descriptions)
+  recall help | -h | --help         this help
+
+Search flags:
+  -n N            max results (default 15)
+  --all           require every word (strict AND) instead of OR-ranking
+  --context N     also print N messages before/after each hit (same session)
+  --kind K        filter: memory | transcript
+  --project P     substring-match the (derived) project name
+  --since DATE    only docs at/after DATE  (bare YYYY-MM-DD = start of day)
+  --before DATE   only docs at/before DATE (bare YYYY-MM-DD = end of day, inclusive)
+  --json          machine-readable JSON (implies --no-color; [] on empty; error
+                  envelope + exit 1 on failure)
+  --no-color      never emit ANSI (also auto-off when stdout is not a TTY)
+  --no-dedup      keep near-identical hits (default collapses them with "+N similar")
+  --full          don't truncate message text (search --context / around)
+  --              end of flags; everything after is a literal query term
+
+Each hit prints a content-addressed  #ID  (stable across reindexes, unambiguous
+across projects) plus the human ref@seq. Pass `recall around #ID` to read the
+surrounding conversation; `--context N` inlines that directly in search results.
+"""
+
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+PROJECTS = Path.home() / ".claude" / "projects"
+DB = Path.home() / ".cache" / "recall" / "index.db"
+HOME_PREFIX = "-home-netanel-"
+SCHEMA = 3
+ACTIVE_WINDOW = 120  # seconds: files written this recently = active session, skip
+
+USE_COLOR = True  # decided in main()
+
+KNOWN_FLAGS = {
+    "-n", "--limit", "--all", "--context", "-C", "--kind", "--project",
+    "--since", "--before", "--json", "--no-color", "--no-dedup", "--full", "--",
+}
+
+
+def col(code, s):
+    return f"\x1b[{code}m{s}\x1b[0m" if USE_COLOR else str(s)
+
+
+def die(msg, as_json=False, code=1):
+    if as_json:
+        print(json.dumps({"error": msg}))
+    else:
+        print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def pretty_project(dirname: str) -> str:
+    if dirname.startswith(HOME_PREFIX):
+        rest = dirname[len(HOME_PREFIX):]
+        return rest or "home"
+    return dirname.lstrip("-")
+
+
+def iso(mtime: float) -> str:
+    return datetime.fromtimestamp(mtime, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def make_did(source: str, seq: int) -> str:
+    """Content-addressed locator: deterministic from (file, message index), so it
+    survives reindexes and never collides across projects."""
+    return hashlib.blake2s(f"{source}\x00{seq}".encode(), digest_size=5).hexdigest()
+
+
+def norm_date(d, end_of_day=False):
+    """Bare YYYY-MM-DD → inclusive day boundary so string compare on ISO ts works."""
+    if d and re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+        return d + ("T23:59:59Z" if end_of_day else "")
+    return d
+
+
+def connect() -> sqlite3.Connection:
+    DB.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(DB, timeout=15)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA busy_timeout=15000")
+    con.execute("CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)")
+    ver = con.execute("SELECT v FROM meta WHERE k='schema'").fetchone()
+    need_rebuild = ver is None or int(ver[0]) != SCHEMA
+    if need_rebuild:
+        con.execute("DROP TABLE IF EXISTS docs")
+        con.execute("DROP TABLE IF EXISTS files")
+    con.execute("CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, mtime REAL)")
+    con.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5("
+        "  text,"
+        "  kind UNINDEXED, project UNINDEXED, source UNINDEXED,"
+        "  ref UNINDEXED, role UNINDEXED, ts UNINDEXED, seq UNINDEXED, did UNINDEXED,"
+        "  tokenize='porter unicode61')"
+    )
+    if need_rebuild:
+        con.execute("INSERT OR REPLACE INTO meta(k,v) VALUES('schema',?)", (str(SCHEMA),))
+        con.commit()
+    return con
+
+
+def extract_transcript(path: Path):
+    try:
+        fh = path.open(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                o = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if o.get("type") not in ("user", "assistant"):
+                continue
+            m = o.get("message")
+            if not isinstance(m, dict):
+                continue
+            role = m.get("role", o.get("type"))
+            ts = o.get("timestamp", "")
+            c = m.get("content")
+            parts = []
+            if isinstance(c, str):
+                parts.append(c)
+            elif isinstance(c, list):
+                for b in c:
+                    if not isinstance(b, dict):
+                        continue
+                    bt = b.get("type")
+                    if bt == "text":
+                        parts.append(b.get("text", ""))
+                    elif bt == "tool_result":
+                        rc = b.get("content")
+                        if isinstance(rc, str):
+                            parts.append(rc[:1000])
+                        elif isinstance(rc, list):
+                            for rb in rc:
+                                if isinstance(rb, dict) and rb.get("type") == "text":
+                                    parts.append(rb.get("text", "")[:1000])
+            text = "\n".join(p for p in parts if p).strip()
+            if text:
+                yield role, ts, text
+
+
+def index(con: sqlite3.Connection, full: bool = False):
+    if full:
+        con.execute("DELETE FROM docs")
+        con.execute("DELETE FROM files")
+    known = dict(con.execute("SELECT path, mtime FROM files").fetchall())
+    now = time.time()
+    seen = set()
+    n_files = n_docs = 0
+
+    targets = []
+    for proj in sorted(PROJECTS.glob("*")):
+        if not proj.is_dir():
+            continue
+        proj_name = pretty_project(proj.name)
+        for md in (proj / "memory").glob("*.md"):
+            targets.append((md, proj_name, "memory"))
+        for js in proj.rglob("*.jsonl"):
+            targets.append((js, proj_name, "transcript"))
+
+    total = len(targets)
+    for i, (path, proj_name, kind) in enumerate(targets):
+        sp = str(path)
+        seen.add(sp)  # mark seen even if skipped, so it isn't pruned as stale
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        # Skip files still being written (the live session) — don't let an
+        # active conversation index and rank its own messages above the corpus.
+        if (now - mtime) < ACTIVE_WINDOW:
+            continue
+        if not full and known.get(sp) == mtime:
+            continue
+
+        con.execute("DELETE FROM docs WHERE source=?", (sp,))
+        if kind == "memory":
+            try:
+                txt = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            con.execute(
+                "INSERT INTO docs(text,kind,project,source,ref,role,ts,seq,did) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (txt, "memory", proj_name, sp, path.stem, "", iso(mtime), 0,
+                 make_did(sp, 0)),
+            )
+            n_docs += 1
+        else:
+            ref = path.stem[:8]
+            rows = [
+                (text, "transcript", proj_name, sp, ref, role, ts, seq, make_did(sp, seq))
+                for seq, (role, ts, text) in enumerate(extract_transcript(path))
+            ]
+            if rows:
+                con.executemany(
+                    "INSERT INTO docs(text,kind,project,source,ref,role,ts,seq,did) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)", rows,
+                )
+                n_docs += len(rows)
+
+        con.execute(
+            "INSERT INTO files(path,mtime) VALUES(?,?) "
+            "ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime", (sp, mtime),
+        )
+        n_files += 1
+        if n_files % 50 == 0:
+            con.commit()
+            print(f"  indexed {n_files} changed files ({i+1}/{total} scanned)…",
+                  file=sys.stderr)
+
+    for old in set(known) - seen:
+        con.execute("DELETE FROM docs WHERE source=?", (old,))
+        con.execute("DELETE FROM files WHERE path=?", (old,))
+
+    con.commit()
+    return n_files, n_docs
+
+
+def build_match(terms, strict=False):
+    toks = [f"{t}*" for t in re.findall(r"[A-Za-z0-9_]+", " ".join(terms)) if t]
+    if not toks:
+        return ""
+    return (" AND " if strict else " OR ").join(toks)
+
+
+def clip(text, n=220, full=False):
+    t = " ".join((text or "").split())
+    if full or len(t) <= n:
+        return t, False
+    return t[:n], True
+
+
+def fetch_context(con, source, center_seq, ctx):
+    return con.execute(
+        "SELECT seq, role, text FROM docs WHERE source=? AND seq BETWEEN ? AND ? "
+        "ORDER BY seq", (source, center_seq - ctx, center_seq + ctx),
+    ).fetchall()
+
+
+def print_context(con, source, center_seq, ctx, full=False):
+    truncated = False
+    for seq, role, text in fetch_context(con, source, center_seq, ctx):
+        mark = col("33", "▶") if seq == center_seq else " "
+        body, cut = clip(text, 220, full)
+        truncated = truncated or cut
+        print(f"      {mark} {col('2', f'[{seq} {role}]')} {body}")
+    if truncated and not full:
+        print(col("2", "      … (truncated — add --full for complete text)"))
+
+
+def run_search(con, terms, limit=15, kind=None, project=None, strict=False,
+               since=None, before=None, context=0, as_json=False, dedup=True, full=False):
+    match = build_match(terms, strict=strict)
+    if not match:
+        die("empty query", as_json=as_json)
+    where = ["docs MATCH ?"]
+    args = [match]
+    if kind:
+        where.append("kind = ?"); args.append(kind)
+    if project:
+        where.append("project LIKE ?"); args.append(f"%{project}%")
+    if since:
+        where.append("ts >= ?"); args.append(norm_date(since))
+    if before:
+        where.append("ts <= ?"); args.append(norm_date(before, end_of_day=True))
+    hi = ("\x1b[1;33m", "\x1b[0m") if (USE_COLOR and not as_json) else ("", "")
+    fetch = limit * 4 if dedup else limit
+    # boost curated memory (bm25 is negative; *2 ranks it ahead of transcripts)
+    sql = (
+        "SELECT did, project, kind, ts, ref, role, seq, source, bm25(docs) AS score, "
+        "  snippet(docs, 0, ?, ?, ' … ', 14) AS snip "
+        "FROM docs WHERE " + " AND ".join(where) +
+        " ORDER BY (CASE kind WHEN 'memory' THEN bm25(docs)*2 ELSE bm25(docs) END) LIMIT ?"
+    )
+    try:
+        rows = con.execute(sql, [hi[0], hi[1]] + args + [fetch]).fetchall()
+    except sqlite3.OperationalError as e:
+        die(f"query error: {e}", as_json=as_json)
+
+    out, seen, extra = [], {}, {}
+    for r in rows:
+        if -float(r[8]) <= 0.0:  # drop zero-weight (stopword) noise
+            continue
+        key = re.sub(r"\s+", " ", (r[9] or "")).strip().lower()[:160]
+        if dedup and key in seen:
+            extra[seen[key]] = extra.get(seen[key], 0) + 1
+            continue
+        seen[key] = r[0]
+        out.append(r)
+        if len(out) >= limit:
+            break
+
+    if as_json:
+        result = []
+        for (did, proj, kind_, ts, ref, role, seq, source, score, snip) in out:
+            obj = {
+                "id": did, "project": proj, "kind": kind_, "role": role,
+                "date": (ts or "")[:10], "ts": ts, "ref": ref, "seq": seq,
+                "score": round(-float(score), 2), "path": source,
+                "snippet": " ".join((snip or "").split()),
+                "similar_collapsed": extra.get(did, 0),
+            }
+            if context:
+                obj["context"] = [
+                    {"seq": s, "role": rl, "text": tx}
+                    for s, rl, tx in fetch_context(con, source, seq, context)
+                ]
+            result.append(obj)
+        print(json.dumps(result, indent=2))
+        return
+
+    if not out:
+        hint = "all of those words" if strict else "any of those words"
+        print(f"no matches (no indexed doc contains {hint})", file=sys.stderr)
+        return
+    for i, (did, proj, kind_, ts, ref, role, seq, source, score, snip) in enumerate(out, 1):
+        date = (ts or "")[:10]
+        memtag = col("1;32", "[MEM] ") if kind_ == "memory" else ""
+        tag = kind_ + (f"/{role}" if role else "")
+        rel = -float(score)
+        meta = f"{proj} · {tag}" + (f" · {date}" if date else "")
+        dup = f" (+{extra[did]} similar)" if extra.get(did) else ""
+        print(f"{col('36', f'{i:>2}.')} {memtag}{col('2', meta + f' · r={rel:.1f} ·')} "
+              f"{col('35', '#' + did)} {col('2', f'{ref}@{seq}{dup}')}")
+        print(f"    {' '.join(snip.split())}")
+        if context:
+            print_context(con, source, seq, context, full=full)
+        print()
+
+
+def around(con, ident, seq=None, ctx=3, full=False, as_json=False):
+    ident = ident[1:] if ident.startswith("#") else ident
+    if seq is None:
+        row = con.execute(
+            "SELECT source, seq FROM docs WHERE did=?", (ident,)
+        ).fetchone()
+        if not row:
+            die(f"no hit with id #{ident} (ids change only on `index --full`; re-search)",
+                as_json=as_json)
+        source, center = row[0], row[1]
+    else:
+        cands = con.execute(
+            "SELECT DISTINCT source FROM docs WHERE ref=? LIMIT 5", (ident,)
+        ).fetchall()
+        if not cands:
+            die(f"no session with ref '{ident}'", as_json=as_json)
+        if len(cands) > 1:
+            die(f"ref '{ident}' is ambiguous ({len(cands)} sessions). "
+                f"Use the #ID locator from search instead.", as_json=as_json)
+        source, center = cands[0][0], seq
+
+    maxseq = con.execute("SELECT MAX(seq) FROM docs WHERE source=?", (source,)).fetchone()[0]
+    if maxseq is None or center < 0 or center > maxseq:
+        die(f"seq {center} out of range for this session (0..{maxseq})", as_json=as_json)
+
+    rows = fetch_context(con, source, center, ctx)
+    if as_json:
+        print(json.dumps({
+            "id": make_did(source, center), "path": source, "center_seq": center,
+            "max_seq": maxseq,
+            "messages": [{"seq": s, "role": r, "text": t} for s, r, t in rows],
+        }, indent=2))
+        return
+    proj = con.execute("SELECT project FROM docs WHERE source=? LIMIT 1", (source,)).fetchone()
+    print(col("2", f"{proj[0] if proj else '?'} · {Path(source).stem[:8]} · "
+                   f"messages {max(0, center-ctx)}–{center+ctx} (of {maxseq})") + "\n")
+    print_context(con, source, center, ctx, full=full)
+
+
+def list_memory(con, as_json=False):
+    rows = con.execute(
+        "SELECT project, ref, did, text FROM docs WHERE kind='memory' ORDER BY project, ref"
+    ).fetchall()
+    items = []
+    for proj, ref, did, text in rows:
+        desc = ""
+        for ln in text.splitlines():
+            if ln.startswith("description:"):
+                desc = ln.split(":", 1)[1].strip(); break
+        items.append({"project": proj, "ref": ref, "id": did, "description": desc})
+    if as_json:
+        print(json.dumps(items, indent=2))
+        return
+    cur = None
+    for it in items:
+        if it["project"] != cur:
+            print(f"\n{col('1', it['project'])}"); cur = it["project"]
+        d = f" — {it['description']}" if it["description"] else ""
+        print(f"  {col('36', it['ref'])}{d}")
+
+
+def main():
+    global USE_COLOR
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("help", "-h", "--help"):
+        print(__doc__.strip()); return
+
+    as_json = "--json" in argv
+    USE_COLOR = sys.stdout.isatty() and "--no-color" not in argv and not as_json
+
+    cmd = argv[0]
+    rest = argv[1:]
+    con = connect()
+
+    if cmd == "index":
+        print("indexing…", file=sys.stderr)
+        nf, nd = index(con, full="--full" in rest)
+        print(f"done: {nf} files (re)indexed, {nd} docs touched."
+              + (" (#IDs unchanged — content-addressed)" if "--full" in rest else ""),
+              file=sys.stderr)
+        return
+
+    try:
+        index(con)  # best-effort refresh; readers tolerate a concurrent writer
+    except sqlite3.OperationalError:
+        pass
+
+    if cmd == "list":
+        list_memory(con, as_json=as_json); return
+
+    if cmd == "around":
+        pos, ctx, full = [], 3, False
+        it = iter(rest)
+        for tok in it:
+            if tok in ("-C", "--context"):
+                try: ctx = int(next(it, "3") or 3)
+                except ValueError: ctx = 3
+            elif tok == "--full":
+                full = True
+            elif tok in ("--json", "--no-color"):
+                continue
+            elif tok.startswith("-") and tok != "--":
+                continue
+            else:
+                pos.append(tok)
+        if not pos:
+            die("usage: recall around <#ID>  |  recall around <ref> <seq>", as_json=as_json)
+        ident = pos[0]
+        seq = int(pos[1]) if len(pos) > 1 and pos[1].lstrip("-").isdigit() else None
+        around(con, ident, seq, ctx, full=full, as_json=as_json)
+        return
+
+    if cmd not in ("search",):
+        rest = argv
+
+    limit, kind, project, strict, since, before, context, full, dedup, terms = \
+        15, None, None, False, None, None, 0, False, True, []
+    it = iter(rest)
+    end_flags = False
+    for tok in it:
+        if end_flags:
+            terms.append(tok); continue
+        if tok == "--":
+            end_flags = True
+        elif tok in ("-n", "--limit"):
+            limit = int(next(it, "15") or 15)
+        elif tok in ("-C", "--context"):
+            context = int(next(it, "0") or 0)
+        elif tok == "--kind":
+            kind = next(it, None)
+        elif tok == "--project":
+            project = next(it, None)
+        elif tok == "--since":
+            since = next(it, None)
+        elif tok == "--before":
+            before = next(it, None)
+        elif tok == "--all":
+            strict = True
+        elif tok == "--full":
+            full = True
+        elif tok == "--no-dedup":
+            dedup = False
+        elif tok in ("--json", "--no-color", "search"):
+            continue
+        elif tok.startswith("-") and tok not in KNOWN_FLAGS:
+            die(f"unknown flag: {tok}  (see `recall --help`; use -- to search literal -terms)",
+                as_json=as_json)
+        else:
+            terms.append(tok)
+    run_search(con, terms, limit=limit, kind=kind, project=project, strict=strict,
+               since=since, before=before, context=context, as_json=as_json,
+               dedup=dedup, full=full)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass
