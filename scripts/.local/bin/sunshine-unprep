@@ -40,8 +40,8 @@ fi
 
 # 2. Re-enable the physical panels prep disabled — BEFORE focusing eDP-1, otherwise
 #    focusmonitor hits "Monitor not found". The `hyprctl reload` below also restores
-#    them from hyprland.conf; these explicit calls are the safety net (and no-op
-#    harmlessly if a panel like DP-2 isn't connected).
+#    them from config; these explicit calls are the safety net (and no-op harmlessly
+#    if a panel like DP-2 isn't connected).
 timeout 2 hyprctl keyword monitor "eDP-1,1920x1200@60,1920x0,1.5" 2>/dev/null || true
 timeout 2 hyprctl keyword monitor "DP-2,1920x1080@60,0x0,1" 2>/dev/null || true
 

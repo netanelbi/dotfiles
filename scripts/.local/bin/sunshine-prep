@@ -38,9 +38,22 @@ fi
 #    starts on a locked session would just show the lock screen.
 #    SIGUSR1 is hyprlock's documented graceful unlock signal.
 pkill -USR1 hyprlock 2>/dev/null || true
+# Let the unlock actually land before reconfiguring outputs — starting a stream
+# from a locked+blanked session (via SUPER+O) otherwise races the unlock and can
+# leave HEADLESS-2 mis-registered.
+for _ in $(seq 1 10); do pgrep -x hyprlock >/dev/null 2>&1 || break; sleep 0.1; done
 
 # 1. Enable HEADLESS-2 at 1080p60, parked far offscreen so cursor/windows can't drift onto it
 hyprctl keyword monitor "HEADLESS-2,1920x1080@120,4000x0,1"
+# Block until HEADLESS-2 is actually registered before returning. Sunshine waits
+# for this prep to finish, THEN enumerates outputs and matches output_name. If we
+# return too early (notably cold-starting from a locked/DPMS-off session) the
+# headless isn't up yet and Sunshine falls back to streaming a physical panel
+# (eDP-1) instead of HEADLESS-2.
+for _ in $(seq 1 20); do
+    hyprctl monitors -j | jq -e 'any(.[]; .name == "HEADLESS-2")' >/dev/null 2>&1 && break
+    sleep 0.1
+done
 
 # 2. Switch to the stream workspace. The static `workspace = name:stream,
 #    monitor:HEADLESS-2` binding in hyprland.conf is what pins it to the
@@ -58,7 +71,16 @@ hyprctl dispatch workspace name:stream
 #    (The previous `windowrule ... match:class ...` lines used invalid syntax
 #    and silently never matched — that was a big part of the unreliability.)
 
-# 4. Inhibit the screensaver so hypridle doesn't lock/dpms during the stream
+# 4. Inhibit the screensaver so hypridle doesn't lock/dpms during the stream.
+#    Release any prior inhibitor first: Sunshine re-runs prep ("do") when a stream
+#    restarts without a clean "undo", and without this a double-prep would leak the
+#    old cookie — orphaned inhibitors keep idle/lock suppressed forever, even after
+#    streaming ends. unprep only knows about the latest cookie.
+if [[ -s "$STATE_DIR/inhibit-cookie" ]]; then
+    busctl --user call \
+        org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver \
+        org.freedesktop.ScreenSaver UnInhibit u "$(cat "$STATE_DIR/inhibit-cookie")" 2>/dev/null || true
+fi
 COOKIE=$(busctl --user --json=short call \
     org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver \
     org.freedesktop.ScreenSaver Inhibit ss "sunshine" "active stream" \
@@ -80,8 +102,15 @@ fi
 
 # 6. Disable the physical panels for the stream's duration — on this APU they only
 #    add compositing + memory-bandwidth load (the real bottleneck) and show nothing
-#    useful while streaming to a remote client. Done LAST so an earlier failure can't
-#    leave the screens off. Re-enabled by sunshine-unprep, and recoverable any time
-#    via SUPER+ALT+D (or `hyprctl reload`). Guarded so neither call can abort prep.
+#    useful to a remote client. Done LAST so an earlier failure can't leave the
+#    screens off. Re-enabled by sunshine-unprep (and recoverable via SUPER+O, which
+#    reloads when a panel is left disabled).
+#
+#    monitor,disable (NOT dpms off): removing the outputs entirely means Sunshine
+#    can't enumerate eDP-1/DP-2, so its flaky output_name matcher can't fall back to
+#    streaming the laptop panel — HEADLESS-2 is the only output left, so it captures
+#    that. (DPMS-off left the panels enumerable and Sunshine picked them ~80% of the
+#    time.) Requires Hyprland >= 0.55.4 — the reload this triggers segfaulted on
+#    0.55.3 (fixed in 0.55.4; reboot after a Hyprland package update).
 hyprctl keyword monitor "eDP-1,disable" || true
 hyprctl keyword monitor "DP-2,disable" || true
