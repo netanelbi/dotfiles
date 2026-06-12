@@ -1,0 +1,36 @@
+#!/bin/bash
+# hypr-display-toggle — SUPER+O: rescue + DPMS toggle for the PHYSICAL displays.
+#
+#   1. RESCUE (only when not streaming): if a physical panel is left DISABLED — e.g.
+#      a Sunshine stream ended badly without unprep re-enabling it — `hyprctl reload`
+#      restores everything from config. Skipped during a stream: the panels are
+#      disabled on purpose then, and a reload would also disable HEADLESS-2 and kill
+#      the stream.
+#   2. DPMS TOGGLE on the physical panels (when they're enabled):
+#        on  -> lock the session (unless streaming) then DPMS-off
+#        off -> DPMS-on
+#
+# Never touches HEADLESS-* outputs, so it won't blank a Sunshine capture target.
+# bindl so it fires while locked. The lock is skipped during a stream so hyprlock
+# doesn't appear on HEADLESS-2 and interrupt the remote client.
+
+STREAM_MARKER="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep/stream-active"
+
+# 1. Rescue (not while streaming): a non-headless output disabled -> restore config.
+if [[ ! -f "$STREAM_MARKER" ]] && \
+   hyprctl monitors all -j | jq -e 'any(.[]; .disabled and (.name | startswith("HEADLESS") | not))' >/dev/null 2>&1; then
+    hyprctl reload
+    exit 0
+fi
+
+# 2. DPMS toggle on the enabled physical panels.
+panels=$(hyprctl monitors -j | jq -r '.[] | select(.name | startswith("HEADLESS") | not) | .name')
+[[ -z "$panels" ]] && exit 0   # nothing to toggle (e.g. mid-stream the panels are disabled)
+
+if hyprctl monitors -j | jq -e 'any(.[]; (.name | startswith("HEADLESS") | not) and .dpmsStatus)' >/dev/null; then
+    [[ -f "$STREAM_MARKER" ]] || loginctl lock-session
+    sleep 0.5   # let the keypress settle so it doesn't race the dpms-off
+    for m in $panels; do hyprctl dispatch dpms off "$m"; done
+else
+    for m in $panels; do hyprctl dispatch dpms on "$m"; done
+fi
