@@ -1,0 +1,27 @@
+#!/bin/bash
+# hypr-lid-switch — lid open/close monitor handling.
+#
+# Only disable the internal panel (eDP-1) on lid close when an EXTERNAL monitor
+# is connected (clamshell/docked). Disabling the *last* remaining monitor sends
+# Hyprland 0.55 into an unsafe-state headless transition that segfaults
+# (performMonitorReload -> enterUnsafeState -> headless commit -> recheckSolitary
+# -> getViewsForWorkspace, SIGSEGV), taking the whole session down and restarting
+# into a bare config. When undocked, do nothing: logind's HandleLidSwitch=suspend
+# already handles the close.
+
+INTERNAL="eDP-1"
+
+case "$1" in
+    close)
+        # Count enabled monitors that aren't the internal panel or a headless sink.
+        externals=$(hyprctl monitors -j | jq '[.[]
+            | select(.name != "'"$INTERNAL"'" and (.name | startswith("HEADLESS") | not))]
+            | length')
+        if [ "${externals:-0}" -gt 0 ]; then
+            hyprctl keyword monitor "$INTERNAL,disable"
+        fi
+        ;;
+    open)
+        hyprctl keyword monitor "$INTERNAL,1920x1200@60,1920x0,1.5"
+        ;;
+esac
