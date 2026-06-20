@@ -1,0 +1,13 @@
+# Full-file override (stowed via hypr package).
+# Upstream 1.22.0 adds Requisite=graphical-session.target, which Hyprland
+# (no uwsm/session target) never raises, so D-Bus activation of the portal
+# fails and screen sharing breaks. Drop-ins can't reset Requisite=, so this
+# is a full-file copy with the graphical-session.target coupling removed.
+[Unit]
+Description=Portal service
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.portal.Desktop
+ExecStart=/usr/lib/xdg-desktop-portal
+Slice=session.slice

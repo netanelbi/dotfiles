@@ -4,3 +4,7 @@ fish/.config/fish/conf.d/secrets.fish
 # Editor / stow restore leftovers
 *.bak
 *.backup
+
+# Python bytecode
+__pycache__/
+*.pyc
