@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# kbd-rainbow — smooth software hue-cycle across the keyboard RGB (VRGB / ITE5570).
+#
+# The Vivobook S14 M5406 controller has no hardware rainbow (`vrgb rainbow` reports
+# unsupported), so this drives it in software: walk the hue wheel and push each colour
+# via `vrgb set`. Runs in the foreground; Ctrl+C stops it and restores the static colour
+# that was set beforehand.
+#
+# Usage:  kbd-rainbow [delay]
+#   delay = seconds between frames (default 0.04; larger = slower). `vrgb` spawn time
+#           already paces it, so 0 is fine too.
+#
+# Requires: vrgb, brightnessctl. Part of the dotfiles `scripts` package.
+
+set -uo pipefail
+
+DELAY="${1:-0.04}"
+STEP=4                       # hue degrees per frame (smaller = finer, slower cycle)
+LED='asus::kbd_backlight'
+
+# `vrgb set` overwrites the saved colour each frame, so grab the current one NOW to
+# restore on exit. ("Saved color: #rrggbb" -> "rrggbb")
+orig=$(vrgb status 2>/dev/null | sed -n 's/^Saved color:[[:space:]]*#\?//p' | head -1)
+
+cleanup() {
+    [[ -n "${orig:-}" ]] && vrgb set "$orig" >/dev/null 2>&1
+    exit 0
+}
+trap cleanup INT TERM
+
+# Master backlight must be on, or the colours just cycle in the dark.
+brightnessctl -d "$LED" set 3 >/dev/null 2>&1 || true
+
+while true; do
+    for ((h = 0; h < 360; h += STEP)); do
+        s=$((h / 60)); f=$((h % 60)); u=$((f * 255 / 60)); d=$((255 - u))
+        case $s in
+            0) r=255; g=$u;  b=0   ;;
+            1) r=$d;  g=255; b=0   ;;
+            2) r=0;   g=255; b=$u  ;;
+            3) r=0;   g=$d;  b=255 ;;
+            4) r=$u;  g=0;   b=255 ;;
+            5) r=255; g=0;   b=$d  ;;
+        esac
+        vrgb set "$(printf '%02x%02x%02x' "$r" "$g" "$b")" >/dev/null 2>&1 || true
+        sleep "$DELAY"
+    done
+done
