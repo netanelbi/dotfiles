@@ -10,6 +10,10 @@
 # already handles the close.
 
 INTERNAL="eDP-1"
+# eDP re-enable spec is machine-specific (panel resolution/scale). Sourced from the
+# machine stow package; fall back to a sane default if absent.
+EDP_SPEC="1920x1080@60,0x0,1.3333"
+[ -f ~/.config/hypr/lid-switch.env ] && . ~/.config/hypr/lid-switch.env
 
 case "$1" in
     close)
@@ -22,6 +26,6 @@ case "$1" in
         fi
         ;;
     open)
-        hyprctl keyword monitor "$INTERNAL,1920x1200@60,1920x0,1.5"
+        hyprctl keyword monitor "$INTERNAL,$EDP_SPEC"
         ;;
 esac
