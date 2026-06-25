@@ -1,0 +1,26 @@
+#!/bin/bash
+# power-profile-tdp-hook — vivo (AMD) only. Installed by the vivo/ stow package.
+#
+# Sets ryzenadj TDP per power profile and fixes the 2GHz amd_pstate freq cap.
+# Called only if present (presence-checked by the caller) from:
+#   - power-profile-auto   (udev, runs as root)
+#   - power-profile-cycle  (keybinding, runs as user)
+# Intel machines don't install this file, so those scripts skip it cleanly.
+# (sunshine-prep/unprep are vivo-only and apply TDP inline, not via this hook.)
+#
+# Usage: power-profile-tdp-hook <power-saver|balanced|performance>
+
+profile="$1"
+
+# Run ryzenadj/fix-cpu-freq as root when invoked by udev, via sudo -n when invoked
+# by a user keybind (NOPASSWD sudoers expected; -n avoids hanging on a prompt).
+if [ "$(id -u)" = 0 ]; then ASROOT=; else ASROOT="sudo -n"; fi
+
+case "$profile" in
+    power-saver) $ASROOT ryzenadj --stapm-limit=15000 --fast-limit=20000 --slow-limit=15000 --tctl-temp=75 2>/dev/null ;;
+    balanced)    $ASROOT ryzenadj --stapm-limit=25000 --fast-limit=30000 --slow-limit=25000 --tctl-temp=90 2>/dev/null ;;
+    performance) $ASROOT ryzenadj --stapm-limit=54000 --fast-limit=65000 --slow-limit=54000 --tctl-temp=100 2>/dev/null ;;
+esac
+
+# Fix the 2GHz amd_pstate cap for balanced/performance only (power-saver needs the lower cap)
+[ "$profile" != "power-saver" ] && $ASROOT /home/netanel/.local/bin/fix-cpu-freq 2>/dev/null
