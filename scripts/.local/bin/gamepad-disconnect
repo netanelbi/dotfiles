@@ -1,9 +1,17 @@
 #!/bin/bash
-# Disconnect every connected PS controller via Bluetooth.
+# Disconnect every connected Bluetooth gamepad.
 # Bound to right-click on the waybar `custom/gamepads` module.
+#
+# Matches any power_supply node with a joystick (js*) child — same detection as
+# gamepad-watch — then pulls the MAC out of the node name (covers Sony's
+# ps-controller-battery-<MAC> and 8BitDo's hid-<MAC>-battery) and tells BlueZ to
+# drop the link. USB/dongle pads carry no MAC, so they're left untouched.
 
 shopt -s nullglob
-for dev in /sys/class/power_supply/ps-controller-battery-*; do
-    mac=${dev##*ps-controller-battery-}
-    bluetoothctl disconnect "$mac" >/dev/null 2>&1
+for dev in /sys/class/power_supply/*; do
+    [[ -e "$dev/capacity" ]] || continue
+    [[ -n "$(find -L "$dev/device" -maxdepth 4 -name 'js*' -print -quit 2>/dev/null)" ]] || continue
+    base=$(basename "$dev")
+    [[ "$base" =~ ([0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}) ]] || continue
+    bluetoothctl disconnect "${BASH_REMATCH[1]^^}" >/dev/null 2>&1
 done

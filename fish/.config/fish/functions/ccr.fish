@@ -1,107 +1,71 @@
-function ccr --description "Launch Claude Code with custom endpoint and model (wrapper forwards extra args to claude)"
-    # Preserve a copy of original arguments (to detect explicit --)
-    set -l __orig_argv $argv
-
-    # Parse wrapper flags (known options). argparse will remove recognized flags from $argv.
-    argparse --ignore-unknown 'haiku=' 'sonnet=' 'opus=' 'subagent=' 'max-tokens=' 'all=' -- $argv
+function ccr --description "Launch Claude Code against ollama-shim (systemd, localhost:11435) -> Ollama Cloud, with model mapping + 1M context"
+    # Thin wrapper: the ollama-shim proxy is managed by systemd (ollama-shim.service),
+    # so ccr only wires env vars and forwards to claude. No process management here.
+    argparse --ignore-unknown 'haiku=' 'sonnet=' 'opus=' 'subagent=' 'max-tokens=' 'all=' 'base-url=' -- $argv
     or return 1
 
-    # Auth / endpoint come from secrets.fish (gitignored). See CCR_AUTH_TOKEN / CCR_BASE_URL.
-    if not set -q CCR_AUTH_TOKEN
-        echo "ccr: CCR_AUTH_TOKEN not set — define it in fish/.config/fish/conf.d/secrets.fish" >&2
+    # --- Endpoint: ollama-shim on localhost (or --base-url to bypass it) ---
+    if set -q _flag_base_url
+        set -x ANTHROPIC_BASE_URL $_flag_base_url
+    else
+        set -l proxy_port (set -q CCR_PROXY_PORT; and echo $CCR_PROXY_PORT; or echo 11435)
+        set -x ANTHROPIC_BASE_URL "http://localhost:$proxy_port"
+    end
+
+    # --- Auth: OLLAMA_API_KEY (set in secrets.fish) ---
+    if set -q OLLAMA_API_KEY
+        set -x ANTHROPIC_AUTH_TOKEN $OLLAMA_API_KEY
+    else if set -q CCR_AUTH_TOKEN
+        set -x ANTHROPIC_AUTH_TOKEN $CCR_AUTH_TOKEN
+    else
+        echo "ccr: OLLAMA_API_KEY not set - define it in ~/.config/fish/conf.d/secrets.fish" >&2
         return 1
     end
-    set -x ANTHROPIC_AUTH_TOKEN $CCR_AUTH_TOKEN
-    set -x ANTHROPIC_BASE_URL (set -q CCR_BASE_URL; and echo $CCR_BASE_URL; or echo "http://localhost:4141")
 
-    # Set default values for each model
-    set -l default_haiku "grok-code-fast-1"
-    set -l default_sonnet "gpt-5-mini"
-    set -l default_opus "claude-sonnet-4.5"
-    set -l default_subagent "grok-code-fast-1"
-
-    # If --all provided, override all model envs
+    # --- Model mapping: Claude Code tiers -> Ollama Cloud models ---
+    # opus (main) -> glm-5.2[1m]  (1M context window by default; drop [1m] for default context)
+    # sonnet      -> deepseek-v4-pro
+    # haiku       -> deepseek-v4-flash
+    # subagents   -> deepseek-v4-flash
     if set -q _flag_all
-        set -x ANTHROPIC_DEFAULT_HAIKU_MODEL $_flag_all
+        set -x ANTHROPIC_DEFAULT_HAIKU_MODEL   $_flag_all
         set -x ANTHROPIC_DEFAULT_SONNET_MODEL $_flag_all
-        set -x ANTHROPIC_DEFAULT_OPUS_MODEL $_flag_all
-        set -x CLAUDE_CODE_SUBAGENT_MODEL $_flag_all
+        set -x ANTHROPIC_DEFAULT_OPUS_MODEL   $_flag_all
+        set -x CLAUDE_CODE_SUBAGENT_MODEL     $_flag_all
     else
-        if set -q _flag_haiku
-            set -x ANTHROPIC_DEFAULT_HAIKU_MODEL $_flag_haiku
-        else
-            set -x ANTHROPIC_DEFAULT_HAIKU_MODEL $default_haiku
-        end
-
-        if set -q _flag_sonnet
-            set -x ANTHROPIC_DEFAULT_SONNET_MODEL $_flag_sonnet
-        else
-            set -x ANTHROPIC_DEFAULT_SONNET_MODEL $default_sonnet
-        end
-
-        if set -q _flag_opus
-            set -x ANTHROPIC_DEFAULT_OPUS_MODEL $_flag_opus
-        else
-            set -x ANTHROPIC_DEFAULT_OPUS_MODEL $default_opus
-        end
-
-        if set -q _flag_subagent
-            set -x CLAUDE_CODE_SUBAGENT_MODEL $_flag_subagent
-        else
-            set -x CLAUDE_CODE_SUBAGENT_MODEL $default_subagent
-        end
+        set -x ANTHROPIC_DEFAULT_HAIKU_MODEL   (set -q _flag_haiku;    and echo $_flag_haiku;    or echo "deepseek-v4-flash")
+        set -x ANTHROPIC_DEFAULT_SONNET_MODEL  (set -q _flag_sonnet;  and echo $_flag_sonnet;  or echo "deepseek-v4-pro")
+        set -x ANTHROPIC_DEFAULT_OPUS_MODEL    (set -q _flag_opus;    and echo $_flag_opus;    or echo "glm-5.2[1m]")
+        set -x CLAUDE_CODE_SUBAGENT_MODEL      (set -q _flag_subagent; and echo $_flag_subagent; or echo "deepseek-v4-flash")
     end
 
-    # Set max input tokens if provided
     if set -q _flag_max_tokens
         set -x MAX_THINKING_TOKENS $_flag_max_tokens
     end
 
-    # Determine forwarded args:
-    # - If original argv contains a literal --, forward only tokens after the first --
-    # - Otherwise forward the remaining $argv left after argparse
+    # --- Forward remaining args to claude (tokens after a literal --, else leftover argv) ---
     set -l forwarded_args
-
-    # Find position of -- in the original args, if any
-    set -l idx 1
-    set -l found_index 0
-    for token in $__orig_argv
+    set -l idx 1; set -l found_index 0
+    for token in $argv
         if test "$token" = '--'
-            set found_index $idx
-            break
+            set found_index $idx; break
         end
         set idx (math $idx + 1)
     end
-
     if test $found_index -gt 0
-        # Collect tokens after the first '--'
-        # fish lists are 1-based: tokens after found_index:
-        set forwarded_args $__orig_argv[(math $found_index + 1)..-1]  # slice from found_index+1 to end
+        set forwarded_args $argv[(math $found_index + 1)..-1]
     else
-        # No explicit --: forward leftover $argv produced by argparse
         set forwarded_args $argv
     end
 
-    # Support dry-run mode to print the effective command instead of executing.
-    # This is helpful for verifying quoting. Mask auth token for safety in printed output.
+    # --- Dry-run ---
     if test -n "$CCR_DRY_RUN"
-        # Build printable representation with proper single-quoting of each arg
-        set -l printable "command claude --disallowedTools WebSearch"
-        for a in $forwarded_args
-            # Single-quote arg and escape any single quotes inside it (POSIX style)
-            # Replace each ' with '"'"' for safe printing
-            set -l escaped (string replace "'" "'\"'\"'" -- $a)
-            set printable "$printable '$escaped'"
-        end
-
-        # Mask auth token in printed envs
-        set -l masked_token "*****"
-        printf '%s\n' "DRY-RUN: will run (with ANTHROPIC_AUTH_TOKEN masked):"
-        printf '%s\n' "    ANTHROPIC_AUTH_TOKEN=$masked_token ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"
-        printf '%s\n' "    $printable"
+        printf '%s\n' "DRY-RUN (token masked):"
+        printf '%s\n' "    ANTHROPIC_AUTH_TOKEN=***** ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"
+        printf '%s\n' "    HAIKU=$ANTHROPIC_DEFAULT_HAIKU_MODEL SONNET=$ANTHROPIC_DEFAULT_SONNET_MODEL OPUS=$ANTHROPIC_DEFAULT_OPUS_MODEL SUBAGENT=$CLAUDE_CODE_SUBAGENT_MODEL"
+        printf '%s\n' "    claude --allow-dangerously-skip-permissions $forwarded_args"
         return 0
     end
 
-    # Execute claude with forwarded args. Use 'command' to avoid recursive function calls named claude.
-    command claude --disallowedTools WebSearch $forwarded_args
+    command claude --allow-dangerously-skip-permissions $forwarded_args
 end
