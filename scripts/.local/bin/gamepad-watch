@@ -2,9 +2,22 @@
 # Waybar module: show connected PS gamepads with battery % colored by their lightbar RGB.
 # Event-driven via udev power_supply events. Pass --once for a single emit (debug).
 
-CONTROLLER_GLOB='/sys/class/power_supply/ps-controller-battery-*'
 ICON='󰊴'
 FALLBACK_COLOR='#888888'
+
+# Any power_supply whose device tree exposes a joystick (js*) node is a gamepad
+# battery. Matching on the js* node rather than a name prefix covers every mode
+# the same pad can enumerate in — Sony ps-controller-battery-*, 8BitDo hid-*
+# over BT, xpad* in XInput — while skipping laptop/mouse/headset batteries.
+gamepad_batteries() {
+    shopt -s nullglob
+    local dev
+    for dev in /sys/class/power_supply/*; do
+        [[ -e "$dev/capacity" ]] || continue
+        [[ -n "$(find -L "$dev/device" -maxdepth 4 -name 'js*' -print -quit 2>/dev/null)" ]] && echo "$dev"
+    done
+    shopt -u nullglob
+}
 
 read_lightbar_color() {
     local dev="$1"
@@ -31,19 +44,43 @@ read_lightbar_color() {
     printf '#%02x%02x%02x' "$r" "$g" "$b"
 }
 
+# Battery percentage for a power_supply dir. For Bluetooth pads the kernel HID
+# power_supply node is often stuck at 0 (8BitDo); BlueZ exposes the real GATT
+# Battery Service value over D-Bus, so prefer that when the node name carries a
+# MAC. Falls back to the sysfs capacity for USB/dongle pads with no BlueZ object.
+battery_percent() {
+    local dev="$1" mac path pct
+    if [[ "$(basename "$dev")" =~ ^hid-([0-9a-fA-F:]{17})-battery$ ]]; then
+        mac=${BASH_REMATCH[1]^^}
+        path=/org/bluez/hci0/dev_${mac//:/_}
+        pct=$(busctl get-property org.bluez "$path" org.bluez.Battery1 Percentage 2>/dev/null)
+        pct=${pct#y }
+        [[ "$pct" =~ ^[0-9]+$ ]] && { echo "$pct"; return; }
+    fi
+    tr -cd '0-9' < "$dev/capacity" 2>/dev/null
+}
+
 emit_status() {
     local parts=() tip_lines=()
-    shopt -s nullglob
-    for dev in $CONTROLLER_GLOB; do
-        local cap status color
-        cap=$(tr -cd '0-9' < "$dev/capacity" 2>/dev/null)
+    local dev
+    while IFS= read -r dev; do
+        local cap status color name
+        cap=$(battery_percent "$dev")
         status=$(cat "$dev/status" 2>/dev/null)
         [[ -z "$cap" ]] && continue
+        name=$(cat "$dev/model_name" 2>/dev/null)
         color=$(read_lightbar_color "$dev")
-        parts+=("<span foreground='$color' weight='bold'>$ICON ${cap}%</span>")
-        tip_lines+=("${cap}% — ${status:-Unknown} — lightbar ${color}")
-    done
-    shopt -u nullglob
+        # Some pads (e.g. 8BitDo over Bluetooth) report a bogus flat 0% — the HID
+        # battery field is just unpopulated. Show the icon alone in that case so
+        # the bar reads "connected, charge unknown" instead of a misleading 0%.
+        if [[ "$cap" == "0" ]]; then
+            parts+=("<span foreground='$color' weight='bold'>$ICON</span>")
+            tip_lines+=("${name:-Gamepad}: charge not reported")
+        else
+            parts+=("<span foreground='$color' weight='bold'>$ICON ${cap}%</span>")
+            tip_lines+=("${name:-Gamepad}: ${cap}% — ${status:-Unknown}")
+        fi
+    done < <(gamepad_batteries)
 
     if [[ ${#parts[@]} -eq 0 ]]; then
         printf '{"text": "", "class": ""}\n'
@@ -61,17 +98,32 @@ emit_status
 
 [[ "$1" == "--once" ]] && exit 0
 
-# Re-emit on any power_supply uevent. Use coproc so we hold the udevadm PID and can
-# tear it down when waybar SIGTERMs us — a bare pipeline would orphan udevadm.
+# Re-emit on two event sources, funneled through one FIFO:
+#  - power_supply uevents: pad connect/disconnect (covers USB/dongle pads too).
+#  - BlueZ Battery1 PropertiesChanged: the GATT battery % for BT pads lands a
+#    beat *after* the power_supply node appears, so a udev-only trigger reads a
+#    stale 0 at connect and never refreshes. This is the D-Bus signal that fixes
+#    the "battery stops showing after off/on" case.
+FIFO=$(mktemp -u)
+mkfifo "$FIFO"
+
 cleanup() {
-    [[ -n "${UMON_PID:-}" ]] && kill -TERM "$UMON_PID" 2>/dev/null
+    [[ -n "${UDEV_PID:-}" ]] && kill -TERM "$UDEV_PID" 2>/dev/null
+    [[ -n "${DBUS_PID:-}" ]] && kill -TERM "$DBUS_PID" 2>/dev/null
+    rm -f "$FIFO"
     exit 0
 }
 trap cleanup EXIT INT TERM HUP
 
-coproc UMON { udevadm monitor --kernel --subsystem-match=power_supply 2>/dev/null; }
-while read -r line <&"${UMON[0]}"; do
+udevadm monitor --kernel --subsystem-match=power_supply >"$FIFO" 2>/dev/null &
+UDEV_PID=$!
+dbus-monitor --system \
+    "type='signal',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',arg0='org.bluez.Battery1'" \
+    >"$FIFO" 2>/dev/null &
+DBUS_PID=$!
+
+while read -r line; do
     case "$line" in
-        KERNEL*power_supply*) emit_status ;;
+        KERNEL*power_supply*|*member=PropertiesChanged*) emit_status ;;
     esac
-done
+done < "$FIFO"
