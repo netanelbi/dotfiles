@@ -43,6 +43,29 @@ function ccr --description "Launch Claude Code against ollama-shim (systemd, loc
         set -x MAX_THINKING_TOKENS $_flag_max_tokens
     end
 
+    # --- Settings env block (for background agents) ---
+    # As of Claude Code v2.1.174, background sessions (claude --bg / agent view) do NOT
+    # inherit ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN from the shell — only from a
+    # settings `env` block. The shell exports above still cover foreground sessions and
+    # the ANTHROPIC_DEFAULT_*_MODEL aliases (which bg DOES read from the dispatching
+    # shell), but the gateway URL + token must ride in --settings to reach bg agents.
+    # --settings is a global flag, passed through to every session dispatched from
+    # agent view, so ccr-launched background agents hit the proxy too. (No global
+    # ~/.claude/settings.json change — opt-in per ccr invocation.)
+    set -l settings_json (jq -nc \
+        --arg base "$ANTHROPIC_BASE_URL" \
+        --arg token "$ANTHROPIC_AUTH_TOKEN" \
+        --arg haiku "$ANTHROPIC_DEFAULT_HAIKU_MODEL" \
+        --arg sonnet "$ANTHROPIC_DEFAULT_SONNET_MODEL" \
+        --arg opus "$ANTHROPIC_DEFAULT_OPUS_MODEL" \
+        --arg sub "$CLAUDE_CODE_SUBAGENT_MODEL" \
+        '{env: {ANTHROPIC_BASE_URL:$base, ANTHROPIC_AUTH_TOKEN:$token,
+            ANTHROPIC_DEFAULT_HAIKU_MODEL:$haiku, ANTHROPIC_DEFAULT_SONNET_MODEL:$sonnet,
+            ANTHROPIC_DEFAULT_OPUS_MODEL:$opus, CLAUDE_CODE_SUBAGENT_MODEL:$sub}}')
+    if set -q _flag_max_tokens
+        set settings_json (echo "$settings_json" | jq --arg m "$MAX_THINKING_TOKENS" '.env.MAX_THINKING_TOKENS=$m')
+    end
+
     # --- Forward remaining args to claude (tokens after a literal --, else leftover argv) ---
     set -l forwarded_args
     set -l idx 1; set -l found_index 0
@@ -63,9 +86,10 @@ function ccr --description "Launch Claude Code against ollama-shim (systemd, loc
         printf '%s\n' "DRY-RUN (token masked):"
         printf '%s\n' "    ANTHROPIC_AUTH_TOKEN=***** ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"
         printf '%s\n' "    HAIKU=$ANTHROPIC_DEFAULT_HAIKU_MODEL SONNET=$ANTHROPIC_DEFAULT_SONNET_MODEL OPUS=$ANTHROPIC_DEFAULT_OPUS_MODEL SUBAGENT=$CLAUDE_CODE_SUBAGENT_MODEL"
-        printf '%s\n' "    claude --allow-dangerously-skip-permissions $forwarded_args"
+        printf '%s\n' "    --settings env: "(echo "$settings_json" | jq -r '.env | to_entries | map("\(.key)=\(.value)") | join("  ")' | string replace -r 'ANTHROPIC_AUTH_TOKEN=[^ ]*' 'ANTHROPIC_AUTH_TOKEN=*****')
+        printf '%s\n' "    claude --allow-dangerously-skip-permissions --settings <env-json> $forwarded_args"
         return 0
     end
 
-    command claude --allow-dangerously-skip-permissions $forwarded_args
+    command claude --allow-dangerously-skip-permissions --settings $settings_json $forwarded_args
 end
