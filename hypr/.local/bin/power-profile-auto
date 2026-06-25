@@ -1,5 +1,5 @@
 #!/bin/bash
-# Auto-switch power profile + TDP on AC power change
+# Auto-switch power profile on AC power change
 # Triggered by udev rule on plug/unplug
 
 sleep 1  # let firmware settle after AC state change
@@ -19,21 +19,20 @@ else
     done
 fi
 
-# Set profile + TDP first
+# Set profile based on AC state
 if [ "$ac_online" = "1" ]; then
     powerprofilesctl set balanced
-    ryzenadj --stapm-limit=25000 --fast-limit=30000 --slow-limit=25000 --tctl-temp=90 2>/dev/null
+    profile=balanced
 else
     powerprofilesctl set power-saver
-    ryzenadj --stapm-limit=15000 --fast-limit=20000 --slow-limit=15000 --tctl-temp=75 2>/dev/null
+    profile=power-saver
 fi
 
-# Fix 2GHz frequency cap only on AC (firmware bug on AC state change)
-# Skip for power-saver — it needs the lower cap
-if [ "$ac_online" = "1" ]; then
-    sleep 3
-    pstate="/sys/devices/system/cpu/amd_pstate/status"
-    echo "passive" > "$pstate" 2>/dev/null
-    sleep 0.1
-    echo "active" > "$pstate" 2>/dev/null
+# vivo (AMD) applies per-profile TDP + the 2GHz amd_pstate freq-cap fix via an
+# optional hook (power-profile-tdp-hook, installed by the vivo/ stow package).
+# Intel machines don't install it, so this is a clean no-op there. Runs as root
+# from udev; the hook drops privileges handling internally.
+if [ -x /home/netanel/.local/bin/power-profile-tdp-hook ]; then
+    [ "$ac_online" = "1" ] && sleep 3  # let firmware settle before the pstate fix
+    /home/netanel/.local/bin/power-profile-tdp-hook "$profile"
 fi

@@ -27,12 +27,28 @@ package/.config/package/ -> ~/.config/package
 | gtk | GTK theme settings |
 | qt | Qt theme settings |
 | scripts | Utility scripts for Hyprland/Waybar |
+| vivo | vivo (AMD/1200p Vivobook, the main driver) — AMD TDP scripts, keyboard RGB, Sunshine streaming, per-machine Hyprland/waybar fragments |
+| lenovo | lenovo (Intel/1080p laptop) — per-machine Hyprland/waybar fragments | |
+
+## Multi-machine model
+
+This repo is single-branch (`master`); machine differences live in **stow packages**, not branches. Stow the shared packages plus your machine's package:
+
+```bash
+# on vivo (main driver):
+stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop gtk qt scripts vivo
+# on lenovo:
+stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop gtk qt scripts lenovo
+```
+
+A file lives in **either** a shared package **or** a machine package (never both — stow would conflict). Files that differ per machine but both need use a shared base that `source`s/`include`s a machine fragment (e.g. `hyprland.conf` sources `monitor.conf`/`machine.conf`). vivo-only extras (AMD TDP, keyboard RGB, Sunshine) live in `vivo/` so lenovo doesn't carry them.
 
 ## Install
 
 ```bash
 cd ~/.dotfiles
-stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop gtk qt scripts
+stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop gtk qt scripts vivo   # on vivo
+# replace `vivo` with `lenovo` on the lenovo machine
 ```
 
 ## Uninstall a package
@@ -128,13 +144,19 @@ Located in `scripts/.local/bin/`:
 - `hypr-network-watch` - Event-based network indicator for waybar
 - `hypr-zen-popup-watch` - Watch for Zen browser popup windows
 
-**Power / thermal**
-- `power-profile-cycle` - Cycle power profiles (mapped to `SUPER + B`)
+**Power / thermal** (shared)
+- `power-profile-cycle` - Cycle power profiles (mapped to `SUPER + B`); calls the
+  optional `power-profile-tdp-hook` for per-profile TDP + freq-cap fix (vivo only)
+- `power-profile-auto` - udev-triggered AC profile switch; same optional hook
+
+**Power / thermal** (vivo-only, in the `vivo/` stow package)
 - `fix-cpu-freq` - Toggle amd_pstate driver to clear 2GHz frequency cap on AC change
 - `tdp` - ryzenadj TDP control
 - `tdp-watch` - Event-based TDP indicator for waybar
+- `power-profile-tdp-hook` - Per-profile ryzenadj TDP + `fix-cpu-freq`; called by
+  `power-profile-auto`/`power-profile-cycle` when present (no-op on Intel)
 
-**Streaming / misc**
+**Streaming / misc** (vivo-only, in the `vivo/` stow package)
 - `sunshine-prep` / `sunshine-unprep` - Switch monitor to 1920x1080@60 for Moonlight, restore native on disconnect
 - `imv-dir` - Open imv with directory navigation
 

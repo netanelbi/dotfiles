@@ -1,24 +1,7 @@
 #!/bin/bash
 # Cycle power profiles: power-saver → balanced → performance
-# Combines powerprofilesctl + ryzenadj TDP limits + frequency cap fix
-
-set_tdp() {
-    case "$1" in
-        power-saver)
-            sudo ryzenadj --stapm-limit=15000 --fast-limit=20000 --slow-limit=15000 --tctl-temp=75 2>/dev/null
-            ;;
-        balanced)
-            sudo ryzenadj --stapm-limit=25000 --fast-limit=30000 --slow-limit=25000 --tctl-temp=90 2>/dev/null
-            ;;
-        performance)
-            sudo ryzenadj --stapm-limit=54000 --fast-limit=65000 --slow-limit=54000 --tctl-temp=100 2>/dev/null
-            ;;
-    esac
-}
-
-fix_freq_cap() {
-    sudo /home/netanel/.local/bin/fix-cpu-freq
-}
+# vivo (AMD) additionally applies per-profile TDP + the 2GHz freq-cap fix via an
+# optional hook (power-profile-tdp-hook, vivo/ stow package); Intel skips it.
 
 current=$(powerprofilesctl get)
 case "$current" in
@@ -38,10 +21,8 @@ if [ "$urgency" = "critical" ]; then
     (sleep 2 && swaync-client --close-latest) &
 fi
 
-# TDP + freq fix after notification (don't block OSD)
-set_tdp "$new"
-# Only fix freq cap for balanced/performance — power-saver needs the cap
-[ "$new" != "power-saver" ] && fix_freq_cap
+# TDP + freq fix after notification (don't block OSD); vivo-only hook, no-op on Intel
+[ -x /home/netanel/.local/bin/power-profile-tdp-hook ] && /home/netanel/.local/bin/power-profile-tdp-hook "$new"
 
-# Clear custom TDP (profile sets default); tdp-watch picks this up via inotify
+# Clear custom TDP (profile sets default); tdp-watch picks this up via inotify (vivo)
 rm -f /tmp/tdp-state
