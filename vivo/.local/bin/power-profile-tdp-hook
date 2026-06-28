@@ -12,6 +12,18 @@
 
 profile="$1"
 
+# Serialize all SMU access. Concurrent runs — spamming SUPER+B, or a keybind
+# cycle overlapping the udev AC handler — fire overlapping ryzenadj writes to
+# the single SMU mailbox, desyncing it. The SMU then stops responding
+# ("amdgpu: SMU: No response") and the whole machine hard-freezes (gfx ring +
+# ACPI + xhci death). World-writable lock so both the user (keybind) and root
+# (udev) callers share it; non-blocking so extra invocations are dropped, not
+# queued. See memory: ryzenadj_smu_freeze.
+LOCK=/tmp/power-profile-tdp-hook.lock
+[ -e "$LOCK" ] || (umask 0; : > "$LOCK")
+exec 9>>"$LOCK"
+flock -n 9 || exit 0
+
 # Run ryzenadj/fix-cpu-freq as root when invoked by udev, via sudo -n when invoked
 # by a user keybind (NOPASSWD sudoers expected; -n avoids hanging on a prompt).
 if [ "$(id -u)" = 0 ]; then ASROOT=; else ASROOT="sudo -n"; fi
