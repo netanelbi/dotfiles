@@ -1,0 +1,12 @@
+[Unit]
+Description=Fsync kernel log to ~/kernel-crash.log (dpms-off reboot hunt)
+# No graphical-session dep: we want this up as early and as long as possible.
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/kernel-crash-logger
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
