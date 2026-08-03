@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# ADM — launch the admin-console local stack (API + frontend) against a chosen env.
+#
+#   ADM              # dev (default)
+#   ADM stg          # positional, or: ADM --env prd / ADM -e stg
+#
+# API      = bun run dev:api:<env>   (tsx watch :5181, pinned to .env.<env>)
+# Frontend = bun run dev             (vite :5180, proxies /api → :5181)
+# One Ctrl-C stops both. Refuses to start if the ports are already taken.
+set -euo pipefail
+
+REPO="$HOME/Development/admin-console"
+ENV=dev
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -e|--env) ENV="${2:?ADM: --env needs a value}"; shift 2 ;;
+    --env=*)  ENV="${1#--env=}"; shift ;;
+    dev|stg|prd) ENV="$1"; shift ;;
+    -h|--help) sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "ADM: unknown argument '$1' — usage: ADM [dev|stg|prd] or --env <env>" >&2; exit 2 ;;
+  esac
+done
+
+[[ "$ENV" =~ ^(dev|stg|prd)$ ]] || { echo "ADM: env must be dev, stg or prd (got '$ENV')" >&2; exit 2; }
+[[ -f "$REPO/.env.$ENV" ]] || { echo "ADM: $REPO/.env.$ENV is missing" >&2; exit 1; }
+
+for port in 5181 5180; do
+  if pids=$(lsof -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null) && [[ -n "$pids" ]]; then
+    echo "ADM: port $port is already in use (pid $pids) — a stack is already running; stop it first" >&2
+    exit 1
+  fi
+done
+
+cd "$REPO"
+
+# setsid gives the API tree its own process group so cleanup can kill the whole
+# bun→tsx→node chain without pkill-by-name (which famously matches the shell).
+setsid bun run "dev:api:$ENV" > >(sed 's/^/[api]  /') 2>&1 &
+API_PID=$!
+cleanup() { kill -- "-$API_PID" 2>/dev/null || true; }
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+health=""
+for _ in $(seq 1 40); do
+  health=$(curl -sf --max-time 1 http://localhost:5181/api/health 2>/dev/null) && break
+  kill -0 "$API_PID" 2>/dev/null || { echo "ADM: API process died during startup" >&2; exit 1; }
+  sleep 0.5
+done
+[[ -n "$health" ]] || { echo "ADM: API did not come up on :5181 within 20s" >&2; exit 1; }
+
+got=$(sed -n 's/.*"environment":"\([^"]*\)".*/\1/p' <<<"$health")
+echo "ADM: api up · environment=$got · opening frontend on http://localhost:5180"
+[[ "$got" == "$ENV" ]] || echo "ADM: ⚠ requested '$ENV' but the API reports '$got' — check $REPO/.env.$ENV" >&2
+
+bun run dev
