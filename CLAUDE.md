@@ -41,7 +41,7 @@ stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop gtk qt s
 stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop gtk qt scripts lenovo
 ```
 
-A file lives in **either** a shared package **or** a machine package (never both — stow would conflict). Files that differ per machine but both need use a shared base that `source`s/`include`s a machine fragment (e.g. `hyprland.conf` sources `monitor.conf`/`machine.conf`). vivo-only extras (AMD TDP, keyboard RGB, Sunshine) live in `vivo/` so lenovo doesn't carry them.
+A file lives in **either** a shared package **or** a machine package (never both — stow would conflict). Files that differ per machine but both need use a shared base that `source`s/`include`s/`require`s a machine fragment (e.g. `hyprland.lua` requires `monitor.lua`/`machine.lua`). vivo-only extras (AMD TDP, keyboard RGB, Sunshine) live in `vivo/` so lenovo doesn't carry them.
 
 ## Install
 
@@ -160,40 +160,57 @@ Located in `scripts/.local/bin/`:
 - `sunshine-prep` / `sunshine-unprep` - Switch monitor to 1920x1080@60 for Moonlight, restore native on disconnect
 - `imv-dir` - Open imv with directory navigation
 
-## Hyprland 0.53+ Window Rule Syntax
+## Hyprland Lua config (0.56+)
 
-The windowrule syntax changed significantly in Hyprland 0.53. Key differences:
+Hyprland 0.56 added a Lua config manager and **`.conf` support is removed in 0.57**. The
+compositor config is Lua: `hyprland.lua` requires `vars`/`monitor`/`input`/`machine`. The
+`.conf` files are kept only as a rollback — Hyprland prefers `hyprland.lua` when present, so
+reverting is `mv ~/.config/hypr/hyprland.lua{,.off}`.
 
-### Basic Format
-```ini
-# New syntax: rule first, then match:field pattern
-windowrule = float on, match:class myapp
-windowrule = size 800 600, match:class myapp
-windowrule = pin on, match:class myapp
+Only the compositor moved. `hyprlock`/`hypridle`/`hyprsunset`/`xdph` are separate binaries
+with their own hyprlang parsers and still use `.conf`.
 
-# Boolean rules need "on/off"
-windowrule = float on, match:class myapp    # not just "float"
-windowrule = pin on, match:class myapp      # not just "pin"
-windowrule = center on, match:class myapp   # not just "center"
+### Verify before you restart
+```bash
+Hyprland --verify-config -c ~/.config/hypr/hyprland.lua
 ```
+It is strict — unknown rule fields and config keys are errors, and dispatcher errors
+enumerate the valid arguments. Always run it after editing; a Lua error that registers zero
+binds trips **Emergency mode**, leaving only `SUPER + Q` bound.
 
-### Positioning with Expressions
-The old `100%-550` syntax no longer works. Use expression variables instead:
-```ini
-# Position window 50px from right edge, 50px from top
-windowrule = move (monitor_w-window_w-50) 50, match:class myapp
+### Gotchas
+- **`package.path` comes from the file's realpath**, which under stow is
+  `~/.dotfiles/hypr/.config/hypr/` — where the machine fragments deliberately do not live.
+  `hyprland.lua` prepends `~/.config/hypr/?.lua` (the stow convergence point) so
+  `require("machine")` picks up whichever machine package is stowed. Don't remove that line.
+- **Long strings collide with shell `[[ ]]` tests.** A bind body containing `[[ $x -eq 1 ]]`
+  terminates a `[[...]]` Lua literal early — use `[==[...]==]`.
+- **Modifiers need `+` separators**: `SUPER + SHIFT + left`, not `SUPER SHIFT + left`.
+- **Autostart goes in `hl.on("hyprland.start", ...)`**, not a bare `hl.exec_cmd` at top level —
+  that keeps `exec-once` semantics, so `hyprctl reload` doesn't re-spawn daemons.
 
-# Available variables: monitor_w, monitor_h, window_w, window_h, cursor_x, cursor_y
+### Rule/dispatcher mapping
+```lua
+-- windowrule = float on, match:class myapp   ->  one rule carries all props:
+hl.window_rule({ name = "myapp", match = { class = "myapp" },
+    float = true, size = "800 600", pin = true,
+    move = "(monitor_w-window_w-50) 50" })   -- expression vars still apply
 ```
+Expression variables: `monitor_w`, `monitor_h`, `window_w`, `window_h`, `cursor_x`, `cursor_y`.
+Match fields: `class`, `title`, `workspace` (`special:name` for special workspaces).
 
-### Match Fields
-- `match:class` - window class
-- `match:title` - window title
-- `match:workspace` - workspace (use `special:name` for special workspaces)
+| hyprlang | Lua |
+|---|---|
+| `bind`/`binde`/`bindl`/`bindm` | `hl.bind(keys, dsp, { repeating/locked/mouse = true })` |
+| `killactive` / `exit` | `hl.dsp.window.close()` / `hl.dsp.exit()` |
+| `togglefloating` / `fullscreen` | `hl.dsp.window.float({action="toggle"})` / `hl.dsp.window.fullscreen()` |
+| `workspace, N` / `movetoworkspace, N` | `hl.dsp.focus({workspace=N})` / `hl.dsp.window.move({workspace=N})` |
+| `swapwindow, l` / `layoutmsg, x` | `hl.dsp.window.swap({direction="l"})` / `hl.dsp.layout("x")` |
+| `focusurgentorlast` | `hl.dsp.focus({ urgent_or_last = true })` |
+| `monitor =` / `workspace =` | `hl.monitor{}` / `hl.workspace_rule{}` |
 
-### Rule Names Changed
-- `bordercolor` -> `border_color`
-- `noblur` -> `no_blur on`
+The full API stub (autogenerated, 1777 lines) ships at `/usr/share/hypr/stubs/hl.meta.lua`;
+a reference config at `/usr/share/hypr/hyprland.lua`.
 
 ## Development Guidelines
 
