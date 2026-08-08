@@ -3,7 +3,7 @@
 # Runs when a Sunshine stream session ends.
 #
 # Releases the screensaver inhibit, restores focus to eDP-1, and disables
-# HEADLESS-2 so it returns to dormant resting state. All operations are
+# HEADLESS-1 so it returns to dormant resting state. All operations are
 # wrapped in timeouts so a hung D-Bus or Hyprland call can't wedge the
 # unprep itself (which would leave Sunshine stuck waiting for it to exit).
 #
@@ -49,8 +49,8 @@ timeout 2 hyprctl keyword monitor "DP-2,1920x1080@60,0x0,1" 2>/dev/null || true
 timeout 2 hyprctl dispatch focusmonitor eDP-1 2>/dev/null || true
 timeout 2 hyprctl dispatch workspace 1 2>/dev/null || true
 
-# 4. Disable HEADLESS-2 — name:stream workspace gets GC'd when its monitor is gone
-timeout 2 hyprctl keyword monitor "HEADLESS-2,disable" 2>/dev/null || true
+# 4. Disable HEADLESS-1 — name:stream workspace gets GC'd when its monitor is gone
+timeout 2 hyprctl keyword monitor "HEADLESS-1,disable" 2>/dev/null || true
 
 # 4. Reload to restore the static config (monitors/workspaces) as a safety net.
 #    (prep no longer adds runtime windowrules — placement is the openwindow
@@ -68,7 +68,7 @@ if [[ -f "$STATE_DIR/profile-boosted" ]]; then
 fi
 
 # 6. Clear the stream-active marker LAST, so monitorremoved events fired during
-#    this teardown (HEADLESS-2 disable above) stay suppressed — unprep already
+#    this teardown (HEADLESS-1 disable above) stay suppressed — unprep already
 #    handles focus itself. From here on, real unplugs bounce to workspace 1 again.
 rm -f "$STATE_DIR/stream-active"
 
