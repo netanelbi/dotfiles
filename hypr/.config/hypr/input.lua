@@ -1,0 +1,17 @@
+-- Input configuration (shared) — required by hyprland.lua
+
+hl.config({
+    input = {
+        kb_layout          = "us,il",
+        kb_options         = "compose:caps,grp:alt_shift_toggle",
+        follow_mouse       = 1,
+        repeat_rate        = 40,
+        repeat_delay       = 600,
+        numlock_by_default = true,
+
+        touchpad = {
+            natural_scroll = false,
+            scroll_factor  = 0.4,
+        },
+    },
+})
