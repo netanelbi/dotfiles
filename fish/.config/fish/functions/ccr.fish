@@ -24,7 +24,7 @@ function ccr --description "Launch Claude Code against ollama-shim (systemd, loc
 
     # --- Model mapping: Claude Code tiers -> Ollama Cloud models ---
     # opus (main) -> glm-5.2[1m]  (1M context window by default; drop [1m] for default context)
-    # sonnet      -> deepseek-v4-pro
+    # sonnet      -> deepseek-v4-flash:0731[1m]  (surpassed v4-pro; pinned tag + 1M ctx)
     # haiku       -> deepseek-v4-flash:0731  (pinned tag; the bare name is the older build)
     # subagents   -> deepseek-v4-flash:0731
     if set -q _flag_all
@@ -34,7 +34,7 @@ function ccr --description "Launch Claude Code against ollama-shim (systemd, loc
         set -x CLAUDE_CODE_SUBAGENT_MODEL     $_flag_all
     else
         set -x ANTHROPIC_DEFAULT_HAIKU_MODEL   (set -q _flag_haiku;    and echo $_flag_haiku;    or echo "deepseek-v4-flash:0731")
-        set -x ANTHROPIC_DEFAULT_SONNET_MODEL  (set -q _flag_sonnet;  and echo $_flag_sonnet;  or echo "deepseek-v4-pro")
+        set -x ANTHROPIC_DEFAULT_SONNET_MODEL  (set -q _flag_sonnet;  and echo $_flag_sonnet;  or echo "deepseek-v4-flash:0731[1m]")
         set -x ANTHROPIC_DEFAULT_OPUS_MODEL    (set -q _flag_opus;    and echo $_flag_opus;    or echo "glm-5.2[1m]")
         set -x CLAUDE_CODE_SUBAGENT_MODEL      (set -q _flag_subagent; and echo $_flag_subagent; or echo "deepseek-v4-flash:0731")
     end
