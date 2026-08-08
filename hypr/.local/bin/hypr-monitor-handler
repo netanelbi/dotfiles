@@ -27,7 +27,7 @@ socat -U - UNIX-CONNECT:"$SOCKET" | while read -r line; do
             # (marker present) — otherwise normal local windows are left alone.
             #
             # When a window maps during a stream, move it onto name:stream AND
-            # focus it, so it lands on the captured output (HEADLESS-2) and
+            # focus it, so it lands on the captured output (HEADLESS-1) and
             # receives Moonlight's keyboard/gamepad input (input follows focus).
             # This is class-agnostic (Heroic --no-gui, gamescope, Wine/Proton all
             # report different/unpredictable classes), fires whenever the window

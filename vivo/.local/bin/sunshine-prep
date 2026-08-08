@@ -40,23 +40,23 @@ fi
 pkill -USR1 hyprlock 2>/dev/null || true
 # Let the unlock actually land before reconfiguring outputs — starting a stream
 # from a locked+blanked session (via SUPER+O) otherwise races the unlock and can
-# leave HEADLESS-2 mis-registered.
+# leave HEADLESS-1 mis-registered.
 for _ in $(seq 1 10); do pgrep -x hyprlock >/dev/null 2>&1 || break; sleep 0.1; done
 
-# 1. Enable HEADLESS-2 at 1080p60, parked far offscreen so cursor/windows can't drift onto it
-hyprctl keyword monitor "HEADLESS-2,1920x1080@120,4000x0,1"
-# Block until HEADLESS-2 is actually registered before returning. Sunshine waits
+# 1. Enable HEADLESS-1 at 1080p60, parked far offscreen so cursor/windows can't drift onto it
+hyprctl keyword monitor "HEADLESS-1,1920x1080@120,4000x0,1"
+# Block until HEADLESS-1 is actually registered before returning. Sunshine waits
 # for this prep to finish, THEN enumerates outputs and matches output_name. If we
 # return too early (notably cold-starting from a locked/DPMS-off session) the
 # headless isn't up yet and Sunshine falls back to streaming a physical panel
-# (eDP-1) instead of HEADLESS-2.
+# (eDP-1) instead of HEADLESS-1.
 for _ in $(seq 1 20); do
-    hyprctl monitors -j | jq -e 'any(.[]; .name == "HEADLESS-2")' >/dev/null 2>&1 && break
+    hyprctl monitors -j | jq -e 'any(.[]; .name == "HEADLESS-1")' >/dev/null 2>&1 && break
     sleep 0.1
 done
 
-# 2. Switch to the stream workspace. The static `workspace = name:stream,
-#    monitor:HEADLESS-2` binding in hyprland.conf is what pins it to the
+# 2. Switch to the stream workspace. The static `hl.workspace_rule({ workspace =
+#    "name:stream", monitor = "HEADLESS-1" })` in machine.lua is what pins it to the
 #    headless output — earlier versions relied on a `focusmonitor` call here,
 #    but Hyprland 0.55 doesn't register the freshly-enabled monitor in time
 #    and that call no-ops with "Monitor not found".
@@ -108,7 +108,7 @@ fi
 #
 #    monitor,disable (NOT dpms off): removing the outputs entirely means Sunshine
 #    can't enumerate eDP-1/DP-2, so its flaky output_name matcher can't fall back to
-#    streaming the laptop panel — HEADLESS-2 is the only output left, so it captures
+#    streaming the laptop panel — HEADLESS-1 is the only output left, so it captures
 #    that. (DPMS-off left the panels enumerable and Sunshine picked them ~80% of the
 #    time.) Requires Hyprland >= 0.55.4 — the reload this triggers segfaulted on
 #    0.55.3 (fixed in 0.55.4; reboot after a Hyprland package update).

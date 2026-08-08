@@ -4,7 +4,7 @@
 #   1. RESCUE (only when not streaming): if a physical panel is left DISABLED — e.g.
 #      a Sunshine stream ended badly without unprep re-enabling it — `hyprctl reload`
 #      restores everything from config. Skipped during a stream: the panels are
-#      disabled on purpose then, and a reload would also disable HEADLESS-2 and kill
+#      disabled on purpose then, and a reload would also disable HEADLESS-1 and kill
 #      the stream.
 #   2. DPMS TOGGLE on the physical panels (when they're enabled):
 #        on  -> lock the session (unless streaming) then DPMS-off
@@ -12,7 +12,7 @@
 #
 # Never touches HEADLESS-* outputs, so it won't blank a Sunshine capture target.
 # bindl so it fires while locked. The lock is skipped during a stream so hyprlock
-# doesn't appear on HEADLESS-2 and interrupt the remote client.
+# doesn't appear on HEADLESS-1 and interrupt the remote client.
 
 STREAM_MARKER="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep/stream-active"
 
