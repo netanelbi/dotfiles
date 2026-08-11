@@ -60,7 +60,7 @@ done
 #    headless output — earlier versions relied on a `focusmonitor` call here,
 #    but Hyprland 0.55 doesn't register the freshly-enabled monitor in time
 #    and that call no-ops with "Monitor not found".
-hyprctl dispatch workspace name:stream
+hyprctl dispatch 'hl.dsp.focus({ workspace = "name:stream" })'
 
 # 3. Game-window placement is handled by hypr-monitor-handler's openwindow
 #    router (gated on the stream-active marker above), NOT by windowrules.

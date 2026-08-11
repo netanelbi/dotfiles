@@ -139,8 +139,8 @@ end
 hl.bind(mainMod .. " + Tab", hl.dsp.exec_cmd("~/.local/bin/hypr-focus-or-scratchpad r"))
 
 -- Move workspace to other monitor
-hl.bind(mainMod .. " + CTRL + left",  hl.dsp.exec_cmd("hyprctl dispatch moveworkspacetomonitor $(hyprctl activeworkspace -j | jq '.id') -1"))
-hl.bind(mainMod .. " + CTRL + right", hl.dsp.exec_cmd("hyprctl dispatch moveworkspacetomonitor $(hyprctl activeworkspace -j | jq '.id') +1"))
+hl.bind(mainMod .. " + CTRL + left",  hl.dsp.exec_cmd([==[hyprctl dispatch "hl.dsp.workspace.move({ workspace = $(hyprctl activeworkspace -j | jq .id), monitor = '-1' })"]==]))
+hl.bind(mainMod .. " + CTRL + right", hl.dsp.exec_cmd([==[hyprctl dispatch "hl.dsp.workspace.move({ workspace = $(hyprctl activeworkspace -j | jq .id), monitor = '+1' })"]==]))
 
 -- Cycle workspaces
 hl.bind(mainMod .. " + period",         hl.dsp.focus({ workspace = "e+1" }))
@@ -200,7 +200,10 @@ hl.bind("XF86Bluetooth", hl.dsp.exec_cmd("rofi -modi emoji -show emoji"))
 hl.bind(mainMod .. " + K", hl.dsp.exec_cmd([[rofi -show calc -modi calc -plugin-path /usr/lib/rofi -no-show-match -no-sort -no-history -calc-command "echo -n '{result}' | wl-copy" -theme ~/.config/rofi/calc.rasi]]))
 
 -- Resize cycle (tiled: 33%->50%->67%, floating: 90% centered)
-hl.bind(mainMod .. " + R", hl.dsp.exec_cmd([==[bash -c 'w=$(hyprctl activewindow -j); [[ "$w" == "null" ]] && exit; if [[ $(echo "$w"|jq ".floating") == "true" ]]; then hyprctl dispatch resizeactive "exact 90% 80%" && hyprctl dispatch centerwindow; else f=/tmp/hypr-resize-state; r=$(cat $f 2>/dev/null); case $r in 33) r=50;; 50) r=67;; *) r=33;; esac; echo $r > $f; hyprctl dispatch resizeactive "exact ${r}% ${r}%"; fi']==]))
+-- Percent sizes have no typed equivalent in the 0.55+ Lua dispatchers (x/y are
+-- numeric px), so the monitor's logical size is resolved here and the resize is
+-- issued in pixels.
+hl.bind(mainMod .. " + R", hl.dsp.exec_cmd([==[bash -c 'w=$(hyprctl activewindow -j); [[ "$w" == "null" ]] && exit; read mw mh < <(hyprctl monitors -j | jq -r "first(.[]|select(.focused)) | [(.width/.scale|floor),(.height/.scale|floor)] | @tsv"); [[ -z "$mw" ]] && exit; if [[ $(echo "$w"|jq ".floating") == "true" ]]; then hyprctl dispatch "hl.dsp.window.resize({ x = $((mw*90/100)), y = $((mh*80/100)) })" && hyprctl dispatch "hl.dsp.window.center()"; else f=/tmp/hypr-resize-state; r=$(cat $f 2>/dev/null); case $r in 33) r=50;; 50) r=67;; *) r=33;; esac; echo $r > $f; hyprctl dispatch "hl.dsp.window.resize({ x = $((mw*r/100)), y = $((mh*r/100)) })"; fi']==]))
 
 -- Power menu
 hl.bind(mainMod .. " + Escape", hl.dsp.exec_cmd("pkill -x rofi || ~/.local/bin/powermenu"))

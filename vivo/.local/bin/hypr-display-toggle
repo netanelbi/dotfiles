@@ -30,7 +30,7 @@ panels=$(hyprctl monitors -j | jq -r '.[] | select(.name | startswith("HEADLESS"
 if hyprctl monitors -j | jq -e 'any(.[]; (.name | startswith("HEADLESS") | not) and .dpmsStatus)' >/dev/null; then
     [[ -f "$STREAM_MARKER" ]] || loginctl lock-session
     sleep 0.5   # let the keypress settle so it doesn't race the dpms-off
-    for m in $panels; do hyprctl dispatch dpms off "$m"; done
+    for m in $panels; do hyprctl dispatch "hl.dsp.dpms({ action = \"off\", monitor = \"$m\" })"; done
 else
-    for m in $panels; do hyprctl dispatch dpms on "$m"; done
+    for m in $panels; do hyprctl dispatch "hl.dsp.dpms({ action = \"on\", monitor = \"$m\" })"; done
 fi

@@ -54,5 +54,5 @@ fi
 next_window="${win_array[$next_idx]}"
 
 # Focus and raise the next window
-hyprctl dispatch focuswindow "address:$next_window"
-hyprctl dispatch alterzorder "top,address:$next_window"
+hyprctl dispatch "hl.dsp.focus({ window = \"address:$next_window\" })"
+hyprctl dispatch "hl.dsp.window.alter_zorder({ mode = \"top\", window = \"address:$next_window\" })"
