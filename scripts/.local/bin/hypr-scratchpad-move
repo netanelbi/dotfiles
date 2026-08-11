@@ -4,9 +4,9 @@
 silent="$1"
 
 if [ "$silent" == "silent" ]; then
-    hyprctl dispatch movetoworkspacesilent special:magic
+    hyprctl dispatch 'hl.dsp.window.move({ workspace = "special:magic", follow = false })'
 else
-    hyprctl dispatch movetoworkspace special:magic
+    hyprctl dispatch 'hl.dsp.window.move({ workspace = "special:magic" })'
 fi
 
 # Update waybar indicator

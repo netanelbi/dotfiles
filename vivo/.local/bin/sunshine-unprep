@@ -46,8 +46,8 @@ timeout 2 hyprctl keyword monitor "eDP-1,1920x1200@60,1920x0,1.5" 2>/dev/null ||
 timeout 2 hyprctl keyword monitor "DP-2,1920x1080@60,0x0,1" 2>/dev/null || true
 
 # 3. Move focus back to eDP-1 / workspace 1
-timeout 2 hyprctl dispatch focusmonitor eDP-1 2>/dev/null || true
-timeout 2 hyprctl dispatch workspace 1 2>/dev/null || true
+timeout 2 hyprctl dispatch 'hl.dsp.focus({ monitor = "eDP-1" })' 2>/dev/null || true
+timeout 2 hyprctl dispatch 'hl.dsp.focus({ workspace = 1 })' 2>/dev/null || true
 
 # 4. Disable HEADLESS-1 — name:stream workspace gets GC'd when its monitor is gone
 timeout 2 hyprctl keyword monitor "HEADLESS-1,disable" 2>/dev/null || true

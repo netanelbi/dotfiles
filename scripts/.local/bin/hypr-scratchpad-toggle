@@ -5,7 +5,7 @@
 was_visible=$(hyprctl monitors -j | jq -r '[.[] | select(.specialWorkspace.name == "special:magic")] | length > 0')
 
 # Toggle the scratchpad
-hyprctl dispatch togglespecialworkspace magic
+hyprctl dispatch 'hl.dsp.workspace.toggle_special("magic")'
 
 # Update waybar indicator immediately
 pkill -RTMIN+8 waybar

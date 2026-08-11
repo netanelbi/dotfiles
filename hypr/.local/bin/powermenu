@@ -9,7 +9,7 @@ case "$selected" in
         hyprlock
         ;;
     *"Logout"*)
-        hyprctl dispatch exit
+        hyprctl dispatch 'hl.dsp.exit()'
         ;;
     *"Sleep"*)
         systemctl suspend

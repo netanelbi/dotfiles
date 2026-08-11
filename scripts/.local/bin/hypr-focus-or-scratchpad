@@ -19,5 +19,5 @@ if [[ "$is_floating" == "true" ]]; then
     esac
 else
     # Tiled window, do regular focus movement
-    hyprctl dispatch movefocus "$direction"
+    hyprctl dispatch "hl.dsp.focus({ direction = \"$direction\" })"
 fi

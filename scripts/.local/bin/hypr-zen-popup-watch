@@ -14,12 +14,12 @@ while read -r event; do
 
         # Float Zen extension popups
         if [[ "$class" == "zen" && "$title" == Extension:* ]]; then
-            hyprctl dispatch setfloating address:0x$addr
+            hyprctl dispatch "hl.dsp.window.float({ action = \"set\", window = \"address:0x$addr\" })"
 
             # Bitwarden: set size and center
             if [[ "$title" == *Bitwarden* ]]; then
-                hyprctl dispatch resizewindowpixel exact 375 609,address:0x$addr
-                hyprctl dispatch centerwindow
+                hyprctl dispatch "hl.dsp.window.resize({ x = 375, y = 609, window = \"address:0x$addr\" })"
+                hyprctl dispatch 'hl.dsp.window.center()'
             fi
         fi
     fi
