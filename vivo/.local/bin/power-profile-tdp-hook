@@ -17,12 +17,18 @@ profile="$1"
 # the single SMU mailbox, desyncing it. The SMU then stops responding
 # ("amdgpu: SMU: No response") and the whole machine hard-freezes (gfx ring +
 # ACPI + xhci death). World-writable lock so both the user (keybind) and root
-# (udev) callers share it; non-blocking so extra invocations are dropped, not
-# queued. See memory: ryzenadj_smu_freeze.
+# (udev) callers share it. See memory: ryzenadj_smu_freeze.
+#
+# Waits for the lock rather than dropping (this was `flock -n 9 || exit 0`).
+# Serialization is the property that prevents the freeze — queuing preserves it,
+# and each run takes well under a second. Dropping was fine for a keybind, where
+# a lost press is harmless, but ppd-tdp-watch and the resume hook are the only
+# things that apply TDP for boot/resume/auto-switch: a silent drop there leaves
+# the machine on firmware defaults with no indication anything went wrong.
 LOCK=/tmp/power-profile-tdp-hook.lock
 [ -e "$LOCK" ] || (umask 0; : > "$LOCK")
 exec 9>>"$LOCK"
-flock -n 9 || exit 0
+flock -w 10 9 || { logger -t power-profile-tdp-hook "lock timeout, TDP NOT applied"; exit 0; }
 
 # Run ryzenadj/fix-cpu-freq as root when invoked by udev, via sudo -n when invoked
 # by a user keybind (NOPASSWD sudoers expected; -n avoids hanging on a prompt).

@@ -1,0 +1,17 @@
+[Unit]
+Description=Re-apply ryzenadj TDP whenever the power profile changes (vivo)
+Documentation=man:powerprofilesctl(1)
+# No graphical-session dep: TDP should be correct from login onward, and this
+# needs nothing from the compositor.
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/ppd-tdp-watch
+# The watcher exits non-zero if gdbus dies; always come back.
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

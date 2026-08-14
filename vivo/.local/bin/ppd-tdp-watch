@@ -1,0 +1,46 @@
+#!/bin/bash
+# ppd-tdp-watch — vivo (AMD) only. Keeps the ryzenadj TDP limits in sync with the
+# active power profile.
+#
+# Why this exists: powerprofilesctl resets the SMU power limits to firmware
+# defaults on every profile change, so the limits must be re-applied afterwards or
+# the machine silently runs at ~43W/tctl 100. Only power-profile-cycle (SUPER+B)
+# and the udev AC handler ever did that, which left two holes:
+#   - at boot/login nothing applied TDP at all
+#   - ppd's own switches (low-battery auto-profile, applets, a bare
+#     `powerprofilesctl set`) bypassed the hook entirely
+# Watching the daemon's own state covers every case instead of patching callers
+# one at a time.
+#
+# NOT covered here, deliberately: resume. amd-pstate-fix.sh re-selects the profile
+# the machine already had, and ppd emits no PropertiesChanged when the value does
+# not actually change — so that path keeps its own explicit hook call.
+
+HOOK="$HOME/.local/bin/power-profile-tdp-hook"
+[ -x "$HOOK" ] || { echo "no $HOOK — nothing to do (Intel machine?)"; exit 0; }
+
+apply() {
+    local p
+    p=$(powerprofilesctl get 2>/dev/null) || return 0
+    "$HOOK" "$p"
+    logger -t ppd-tdp-watch "applied TDP for profile=$p"
+}
+
+# Startup: nothing else applies TDP at boot/login.
+apply
+
+# ppd publishes each change on BOTH /net/hadess/PowerProfiles and the
+# /org/freedesktop/UPower/PowerProfiles compatibility alias. Match one path only,
+# or every switch fires the hook twice.
+#
+# Re-reading the profile with `get` rather than parsing it out of the signal keeps
+# rapid switches correct: whatever the daemon settled on is what gets applied.
+gdbus monitor --system --dest net.hadess.PowerProfiles 2>/dev/null |
+while read -r line; do
+    case "$line" in
+        /net/hadess/PowerProfiles:*ActiveProfile*) apply ;;
+    esac
+done
+
+# gdbus exiting drops us here; the unit's Restart=always brings it back.
+exit 1
