@@ -1,0 +1,53 @@
+#!/bin/bash
+# post-resume-check — vivo (AMD) only. Runs ~20s after resume, driven by
+# post-resume-check.service (After=suspend.target).
+#
+# Deliberately NOT a /usr/lib/systemd/system-sleep/ hook. Sleep hooks run inside
+# systemd-suspend.service, in the window immediately after "PM: suspend exit",
+# and toggling amd_pstate there oopsed the kernel on 2026-08-14:
+#
+#     BUG: kernel NULL pointer dereference, address: 0000000000000000
+#     #PF: supervisor instruction fetch in kernel mode
+#     Comm: amd-pstate-fix.
+#
+# A supervisor instruction fetch at NULL means the kernel jumped through a NULL
+# function pointer — the mode switch raced the driver's own resume. As a normal
+# unit ordered after suspend.target, this runs well clear of that window.
+#
+# What it does:
+#   1. REPORTS whether the 2GHz frequency cap survived the resume. Read-only —
+#      it writes nothing to the driver and cannot repeat that oops. The cap bug
+#      is unreproducible and the hook meant to fix it turned out to have never
+#      executed, so there is no evidence it is still live. Observe first; if a
+#      capped=yes ever shows up in the journal, that is the reproduction and
+#      the fix can be written then, knowing it is needed.
+#   2. Re-applies the ryzenadj TDP limits, which a suspend/resume clears. This
+#      is the part that actually needs doing on every resume. --no-freq-fix
+#      keeps it away from the amd_pstate toggle.
+
+sleep 20
+
+CPU=/sys/devices/system/cpu/cpu0/cpufreq
+HOOK=/home/netanel/.local/bin/power-profile-tdp-hook
+
+profile=$(powerprofilesctl get 2>/dev/null) || profile=unknown
+want=$(cat "$CPU/cpuinfo_max_freq" 2>/dev/null)
+have=$(cat "$CPU/scaling_max_freq" 2>/dev/null)
+
+# power-saver caps at 2GHz on purpose, so it is never "stuck" there.
+capped=no
+if [ -n "$want" ] && [ -n "$have" ] && [ "$have" -lt "$want" ] && [ "$profile" != "power-saver" ]; then
+    capped=yes
+fi
+
+if [ "$capped" = yes ]; then
+    logger -t post-resume -p daemon.warning \
+      "FREQ CAP SURVIVED RESUME: profile=$profile maxfreq=$have want=$want — run fix-cpu-freq or press SUPER+B"
+else
+    logger -t post-resume "profile=$profile maxfreq=$have capped=no"
+fi
+
+if [ -x "$HOOK" ]; then
+    "$HOOK" "$profile" --no-freq-fix
+    logger -t post-resume "TDP re-applied for profile=$profile"
+fi

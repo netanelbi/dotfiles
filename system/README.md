@@ -5,7 +5,20 @@ The tree mirrors the absolute install path; copy files into place with sudo.
 
 Do **not** run `stow system` — it would symlink this tree into `~/usr/...`.
 
-Currently empty. See the note below before adding a resume hook back.
+## Install
+
+```bash
+sudo install -Dm644 system/etc/systemd/system/post-resume-check.service \
+                    /etc/systemd/system/post-resume-check.service
+sudo systemctl daemon-reload
+sudo systemctl enable post-resume-check.service
+```
+
+## Contents
+
+| file | why |
+|---|---|
+| `etc/systemd/system/post-resume-check.service` | Runs `post-resume-check` ~20s after resume, ordered `After=suspend.target` so it is an ordinary unit rather than a sleep hook. Re-applies the ryzenadj TDP limits (a suspend clears them) and read-only *reports* whether the 2GHz frequency cap survived. |
 
 ## Do not re-add `amd-pstate-fix.sh`
 

@@ -1,0 +1,14 @@
+[Unit]
+Description=Post-resume freq check + TDP re-apply (vivo)
+# Ordered AFTER suspend.target so this runs as an ordinary unit on the way back
+# up, NOT inside systemd-suspend.service. A /usr/lib/systemd/system-sleep/ hook
+# runs in the window right after "PM: suspend exit", and touching amd_pstate
+# there oopsed the kernel on 2026-08-14. Never move this back into a sleep hook.
+After=suspend.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/netanel/.local/bin/post-resume-check
+
+[Install]
+WantedBy=suspend.target
