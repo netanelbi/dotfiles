@@ -1,0 +1,396 @@
+#!/bin/sh
+# claude-sub — swap the Claude Code account (auth only) with one command.
+#
+# Everything else in ~/.claude stays exactly as it is: settings, skills, agents,
+# memory, projects, history. The ONLY things swapped are:
+#   ~/.claude/.credentials.json  ->  .claudeAiOauth   (the tokens)
+#   ~/.claude.json               ->  .oauthAccount    (the account metadata)
+#
+# Saved accounts live in ~/.claude/auth/<name>.json (mode 600).
+#
+#   claude-sub                 status: accounts + live rate-limit windows
+#   claude-sub -q              status without the network probe
+#   claude-sub save <name>     snapshot the CURRENT login as <name>
+#   claude-sub <name>          switch to <name>
+#   claude-sub refresh [name]  renew the stored token(s) so usage is readable
+#   claude-sub rm <name>       forget <name>
+#
+# First-time setup:
+#   claude-sub save personal   # snapshot who you are right now
+#   claude   -> /login         # log in with the other account
+#   claude-sub save work       # snapshot that one too
+#   claude-sub personal        # ...and from now on, one command to swap
+#
+# Switching affects NEW claude sessions; a running session keeps its token.
+#
+# NO_COLOR=1 disables colour; CLICOLOR_FORCE=1 keeps it when piping.
+
+set -e
+
+STORE="$HOME/.claude/auth"
+ACTIVE="$STORE/.active"
+
+if [ -n "$CLAUDE_CONFIG_DIR" ]; then
+    CREDS="$CLAUDE_CONFIG_DIR/.credentials.json"
+    CONFIG="$CLAUDE_CONFIG_DIR/.claude.json"
+else
+    CREDS="$HOME/.claude/.credentials.json"
+    CONFIG="$HOME/.claude.json"
+fi
+
+die() { printf '%s\n' "$*" >&2; exit 1; }
+
+command -v jq >/dev/null 2>&1 || die "claude-sub needs jq"
+
+# ─── colour ───────────────────────────────────────────────────────────────────
+if { [ -t 1 ] || [ -n "$CLICOLOR_FORCE" ]; } && [ -z "$NO_COLOR" ]; then
+    E=$(printf '\033')
+    R="$E[0m"; B="$E[1m"; D="$E[2m"
+    RED="$E[31m"; GRN="$E[32m"; YEL="$E[33m"; BLU="$E[34m"; CYA="$E[36m"
+else
+    R=; B=; D=; RED=; GRN=; YEL=; BLU=; CYA=
+fi
+
+# colour for a utilisation percentage
+pct_colour() {
+    if   [ "$1" -ge 80 ]; then printf '%s' "$RED"
+    elif [ "$1" -ge 50 ]; then printf '%s' "$YEL"
+    else                       printf '%s' "$GRN"
+    fi
+}
+
+# bar <percent> — ten-cell meter, coloured by severity
+bar() {
+    _bf=$((($1 + 9) / 10)); [ "$_bf" -gt 10 ] && _bf=10
+    _bi=0; _bs=""
+    while [ "$_bi" -lt 10 ]; do
+        if [ "$_bi" -lt "$_bf" ]; then _bs="$_bs█"; else _bs="$_bs·"; fi
+        _bi=$((_bi + 1))
+    done
+    printf '%s%s%s' "$(pct_colour "$1")" "$_bs" "$R"
+}
+
+live_email() { jq -r '.oauthAccount.emailAddress // empty' "$CONFIG" 2>/dev/null; }
+
+# "<email> (<org type>, <tier>)" for a saved profile file, or for the live login
+describe_file() {
+    jq -r '[(.oauthAccount.emailAddress // "?"),
+            " (", ((.oauthAccount.organizationType // "?")),
+            ", ", ((.credentials.rateLimitTier // .credentials.subscriptionType // "?")), ")"]
+           | join("")' "$1" 2>/dev/null
+}
+describe_live() {
+    [ -f "$CREDS" ] || { echo "not logged in"; return; }
+    printf '%s (%s, %s)\n' \
+        "$(jq -r '.oauthAccount.emailAddress // "?"' "$CONFIG" 2>/dev/null)" \
+        "$(jq -r '.oauthAccount.organizationType // "?"' "$CONFIG" 2>/dev/null)" \
+        "$(jq -r '.claudeAiOauth.rateLimitTier // .claudeAiOauth.subscriptionType // "?"' "$CREDS" 2>/dev/null)"
+}
+
+# ─── usage windows ────────────────────────────────────────────────────────────
+# GET /api/oauth/usage returns every rate-limit window for the subscription that
+# owns the token — the same source Claude Code's own status line reads. It needs
+# no API key: the OAuth access token we already store IS the credential, plus the
+# oauth beta header, without which the endpoint refuses an OAuth token.
+#
+# This is why status probes the SAVED accounts too, not just the live one: the
+# question a swap answers is "which sub has room left", and that is unanswerable
+# if you can only see the one you are already on.
+USAGE_URL='https://api.anthropic.com/api/oauth/usage'
+USAGE_UA='claude-code/2.1.228'
+
+# A saved profile's access token expires in hours, so every account you are not
+# currently on is stale and its usage unreadable. We refresh it ourselves with
+# the stored refresh token — the same exchange the CLI does — and write the
+# result back. Only SAVED profiles: the active one is kept fresh by the running
+# CLI, and racing it on .credentials.json is how you lose a login.
+# CLAUDE_SUB_NO_REFRESH=1 disables it.
+TOKEN_URL='https://platform.claude.com/v1/oauth/token'
+CLIENT_ID='9d1c250a-e61b-44d9-88ed-5944d1962f5e'
+CLI_UA='claude-cli/2.1.232 (external, cli)'
+
+now_ms() { echo $(( $(date +%s) * 1000 )); }
+
+# expired <expiresAtMs> — true if missing, or within 60s of expiry
+expired() {
+    [ -n "$1" ] && [ "$1" != null ] || return 0
+    [ "$1" -lt "$(( $(now_ms) + 60000 ))" ] 2>/dev/null
+}
+
+# refresh_profile <name> — exchange the stored refresh token for a fresh access
+# token and write it back into the profile. Silent; non-zero on failure.
+refresh_profile() {
+    _rf="$STORE/$1.json"
+    [ -f "$_rf" ] || return 1
+    command -v curl >/dev/null 2>&1 || return 1
+    _rt=$(jq -r '.credentials.refreshToken // empty' "$_rf") || return 1
+    [ -n "$_rt" ] || return 1
+    # A dead refresh token is not something we can fix — only /login is.
+    _rte=$(jq -r '.credentials.refreshTokenExpiresAt // empty' "$_rf")
+    if [ -n "$_rte" ] && [ "$_rte" != null ]; then
+        [ "$_rte" -gt "$(now_ms)" ] 2>/dev/null || return 1
+    fi
+
+    _rreq=$(jq -n --arg t "$_rt" --arg c "$CLIENT_ID" \
+                  --argjson s "$(jq -c '.credentials.scopes // []' "$_rf")" \
+        '{grant_type:"refresh_token", refresh_token:$t, client_id:$c, scope:($s|join(" "))}')
+    # All four headers matter: without the beta + x-app + a claude-cli UA the
+    # token endpoint answers 429 rate_limit_error rather than refusing outright.
+    _rresp=$(curl -sS --max-time 20 -X POST -w '\n%{http_code}' \
+        -H 'Content-Type: application/json' \
+        -H 'anthropic-beta: oauth-2025-04-20' \
+        -H 'x-app: cli' \
+        -H "User-Agent: $CLI_UA" \
+        -d "$_rreq" "$TOKEN_URL" 2>/dev/null) || return 1
+    [ "$(printf '%s' "$_rresp" | tail -n1)" = 200 ] || return 1
+    _rbody=$(printf '%s' "$_rresp" | sed '$d')
+    [ "$(printf '%s' "$_rbody" | jq -r '.access_token // empty')" ] || return 1
+
+    # The refresh token may be rotated; if we drop the new one the profile is
+    # dead, so persist both together, atomically, keeping one backup.
+    umask 077
+    _rtmp="$STORE/.$1.refresh.$$"
+    printf '%s' "$_rbody" | jq --slurpfile p "$_rf" '
+        . as $r | $p[0]
+        | .credentials.accessToken  = $r.access_token
+        | .credentials.refreshToken = ($r.refresh_token // .credentials.refreshToken)
+        | .credentials.expiresAt    = ((now * 1000 | floor) + (($r.expires_in // 3600) * 1000))
+        | .credentials.refreshTokenExpiresAt =
+            (if $r.refresh_token_expires_in
+             then (now * 1000 | floor) + ($r.refresh_token_expires_in * 1000)
+             else .credentials.refreshTokenExpiresAt end)
+    ' > "$_rtmp" 2>/dev/null || { rm -f "$_rtmp"; return 1; }
+    [ "$(jq -r '.credentials.accessToken // empty' "$_rtmp")" ] || { rm -f "$_rtmp"; return 1; }
+    chmod 600 "$_rtmp"
+    cp -p "$_rf" "$_rf.bak" 2>/dev/null || :
+    mv "$_rtmp" "$_rf"
+}
+
+# reset_at <iso8601> → "resets 14:30" / "resets Fri 06:00"; empty if null
+reset_at() {
+    [ -n "$1" ] && [ "$1" != null ] || return 0
+    _rs=$(date -d "$1" +%s 2>/dev/null) || return 0
+    _now=$(date +%s)
+    if [ $((_rs - _now)) -lt 86400 ]; then
+        printf 'resets %s' "$(date -d "$1" +%H:%M)"
+    else
+        printf 'resets %s' "$(date -d "$1" '+%a %H:%M')"
+    fi
+}
+
+note() { printf '    %s%s%s\n' "$D" "$1" "$R"; }
+
+# usage_block <accessToken> <expiresAtMs> — prints the account's windows, indented
+usage_block() {
+    command -v curl >/dev/null 2>&1 || { note "curl not installed"; return; }
+    if [ -n "$2" ] && [ "$2" != null ] && [ "$2" -lt "$(( $(date +%s) * 1000 ))" ] 2>/dev/null; then
+        printf '    %stoken expired — swap in and run claude to refresh%s\n' "$YEL" "$R"
+        return
+    fi
+    _resp=$(curl -sS --max-time 10 -w '\n%{http_code}' \
+        -H "Authorization: Bearer $1" \
+        -H 'anthropic-beta: oauth-2025-04-20' \
+        -H "User-Agent: $USAGE_UA" \
+        -H 'Content-Type: application/json' \
+        "$USAGE_URL" 2>/dev/null) || { note "usage unreachable"; return; }
+    _code=$(printf '%s' "$_resp" | tail -n1)
+    _body=$(printf '%s' "$_resp" | sed '$d')
+    case "$_code" in
+        200) ;;
+        401|403) printf '    %stoken rejected (HTTP %s) — swap in and run claude to refresh%s\n' "$YEL" "$_code" "$R"; return ;;
+        *) note "usage unavailable (HTTP $_code)"; return ;;
+    esac
+
+    # Prefer the `limits` array: it carries per-model weekly windows that the
+    # named top-level keys leave null on some plans. Fall back to the named ones.
+    _out=$(printf '%s' "$_body" | jq -r '
+        def lbl(l):
+          (if   l.kind == "session"       then "5h"
+           elif l.kind == "weekly_all"    then "7d"
+           elif l.kind == "weekly_scoped" then "7d " + ((l.scope.model.display_name) // "scoped")
+           else l.kind end);
+        if (.limits | type) == "array" and (.limits | length) > 0
+        then .limits[]
+             # Fable has its own weekly window; it is noise here.
+             | select((.scope.model.display_name // "") != "Fable")
+             | "\(lbl(.))|\(.percent // 0)|\(.resets_at // "")|\(.severity // "")"
+        else ({"5h": .five_hour, "7d": .seven_day, "7d opus": .seven_day_opus}
+              | to_entries[] | select(.value != null)
+              | "\(.key)|\(.value.utilization // 0)|\(.value.resets_at // "")|")
+        end' 2>/dev/null)
+    [ -n "$_out" ] || { note "no windows reported"; return; }
+
+    # Heredoc, not a pipe: a `while read` on the right of a pipe runs in a
+    # subshell, and anything it accumulates is lost.
+    while IFS='|' read -r _l _p _r _sev; do
+        [ -n "$_l" ] || continue
+        _p=${_p%.*}
+        _flag=""
+        [ "$_sev" = warning ] && _flag=" $YEL!$R"
+        [ "$_sev" = critical ] && _flag=" $RED!!$R"
+        printf '    %-9s %s %s%3s%%%s%s  %s%s%s\n' \
+            "$_l" "$(bar "$_p")" "$(pct_colour "$_p")" "$_p" "$R" "$_flag" \
+            "$D" "$(reset_at "$_r")" "$R"
+    done <<EOF
+$_out
+EOF
+    [ "$(printf '%s' "$_body" | jq -r '.extra_usage.is_enabled // false')" = true ] &&
+        printf '    %soverage: extra usage ENABLED%s\n' "$YEL" "$R"
+    return 0
+}
+
+# usage_for <profile-name|__live__> — uses the live token for the active profile,
+# since that file is the one the CLI keeps refreshed.
+usage_for() {
+    if [ "$1" = "__live__" ]; then
+        [ -f "$CREDS" ] || return 0
+        usage_block "$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDS")" \
+                    "$(jq -r '.claudeAiOauth.expiresAt // empty' "$CREDS")"
+        return
+    fi
+    if [ -f "$ACTIVE" ] && [ "$(cat "$ACTIVE")" = "$1" ] && [ -f "$CREDS" ]; then
+        usage_for __live__
+        return
+    fi
+    if expired "$(jq -r '.credentials.expiresAt // empty' "$STORE/$1.json")" &&
+       [ "$CLAUDE_SUB_NO_REFRESH" != 1 ] && ! refresh_profile "$1"; then
+        printf '    %stoken expired and refresh failed — swap in and run claude%s\n' "$YEL" "$R"
+        return 0
+    fi
+    usage_block "$(jq -r '.credentials.accessToken // empty' "$STORE/$1.json")" \
+                "$(jq -r '.credentials.expiresAt // empty' "$STORE/$1.json")"
+}
+
+snapshot() {  # snapshot <name> — capture live auth into the store
+    _sn=$1
+    [ -f "$CREDS" ] || die "No live login found at $CREDS — run claude and /login first."
+    mkdir -p "$STORE"; chmod 700 "$STORE"
+    _sntmp="$STORE/.$_sn.tmp.$$"
+    jq -n --slurpfile c "$CREDS" --slurpfile g "$CONFIG" \
+        '{credentials: $c[0].claudeAiOauth, oauthAccount: $g[0].oauthAccount}' > "$_sntmp"
+    [ "$(jq -r '.credentials.accessToken // empty' "$_sntmp")" ] || { rm -f "$_sntmp"; die "No accessToken in $CREDS"; }
+    chmod 600 "$_sntmp"
+    mv "$_sntmp" "$STORE/$_sn.json"
+}
+
+# Fold the freshest tokens back into the profile they belong to, so a refresh
+# that happened since the last switch isn't lost. Skipped if the live account is
+# not the one we think is active (e.g. you /login'd to someone else).
+stash_active() {
+    [ -f "$ACTIVE" ] || return 0
+    prev=$(cat "$ACTIVE")
+    [ -f "$STORE/$prev.json" ] || return 0
+    stored=$(jq -r '.oauthAccount.emailAddress // empty' "$STORE/$prev.json")
+    now=$(live_email)
+    if [ -n "$now" ] && [ "$stored" != "$now" ]; then
+        printf '%snote: live login is %s but active profile is %s — not overwriting %s%s\n' \
+            "$YEL" "$now" "$prev" "$prev.json" "$R" >&2
+        return 0
+    fi
+    snapshot "$prev"
+}
+
+warn_running() {
+    if pgrep -x claude >/dev/null 2>&1; then
+        printf '%swarning:%s a claude session is running — it keeps its old account, and may\n' "$YEL" "$R" >&2
+        printf '         write its refreshed token back over this swap. Quit it first.\n' >&2
+    fi
+}
+
+status() {
+    printf '%sClaude accounts%s   %slive: %s%s\n\n' "$B" "$R" "$D" "$(describe_live)" "$R"
+    if ! { [ -d "$STORE" ] && ls "$STORE"/*.json >/dev/null 2>&1; }; then
+        printf 'no saved accounts yet — run: %sclaude-sub save <name>%s\n\n' "$B" "$R"
+        [ "$NO_USAGE" = 1 ] || usage_for __live__
+        return 0
+    fi
+    for f in "$STORE"/*.json; do
+        n=$(basename "$f" .json)
+        if [ -f "$ACTIVE" ] && [ "$n" = "$(cat "$ACTIVE")" ]; then
+            printf '%s%s●%s %s%-10s%s %s\n' "$B" "$GRN" "$R" "$B" "$n" "$R" \
+                "$(jq -r '.oauthAccount.emailAddress // "?"' "$f")"
+        else
+            printf '%s○%s %-10s %s%s%s\n' "$D" "$R" "$n" "$D" \
+                "$(jq -r '.oauthAccount.emailAddress // "?"' "$f")" "$R"
+        fi
+        printf '    %s%s · %s%s\n' "$D" \
+            "$(jq -r '.oauthAccount.organizationType // "?"' "$f")" \
+            "$(jq -r '.credentials.rateLimitTier // .credentials.subscriptionType // "?"' "$f")" "$R"
+        [ "$NO_USAGE" = 1 ] || usage_for "$n"
+        echo
+    done
+    printf '%sswap:%s claude-sub <name>   %ssave current login:%s claude-sub save <name>\n' \
+        "$CYA" "$R" "$CYA" "$R"
+}
+
+NO_USAGE=0
+case "$1" in
+    -q|--no-usage) NO_USAGE=1; set -- "${2:-}" ;;
+esac
+
+case "$1" in
+    ""|status)
+        status
+        ;;
+    -h|--help|help)
+        sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+    save)
+        [ -n "$2" ] || die "Usage: claude-sub save <name>"
+        snapshot "$2"
+        mkdir -p "$STORE"; printf '%s\n' "$2" > "$ACTIVE"
+        printf '%sSaved%s %s%-10s%s %s\n' "$GRN" "$R" "$B" "$2" "$R" "$(describe_file "$STORE/$2.json")"
+        ;;
+    refresh)
+        if [ -n "$2" ]; then
+            [ -f "$STORE/$2.json" ] || die "No such saved account: $2"
+            targets="$STORE/$2.json"
+        else
+            targets=$(ls "$STORE"/*.json 2>/dev/null) || die "no saved accounts"
+        fi
+        for f in $targets; do
+            n=$(basename "$f" .json)
+            if [ -f "$ACTIVE" ] && [ "$n" = "$(cat "$ACTIVE")" ]; then
+                printf '%s%-10s%s %sactive — the CLI keeps this one fresh%s\n' "$B" "$n" "$R" "$D" "$R"
+            elif refresh_profile "$n"; then
+                printf '%s%-10s%s %srefreshed%s\n' "$B" "$n" "$R" "$GRN" "$R"
+            else
+                printf '%s%-10s%s %sfailed — swap in and run claude to re-login%s\n' "$B" "$n" "$R" "$YEL" "$R"
+            fi
+        done
+        ;;
+    rm)
+        [ -n "$2" ] || die "Usage: claude-sub rm <name>"
+        [ -f "$STORE/$2.json" ] || die "No such saved account: $2"
+        rm -f "$STORE/$2.json"
+        echo "Removed $2"
+        ;;
+    *)
+        name=$1
+        [ -f "$STORE/$name.json" ] || {
+            printf '%sNo such saved account: %s%s\n\n' "$RED" "$name" "$R" >&2
+            NO_USAGE=1 status >&2
+            exit 1
+        }
+        [ -f "$ACTIVE" ] && [ "$(cat "$ACTIVE")" = "$name" ] && [ "$(live_email)" = \
+            "$(jq -r '.oauthAccount.emailAddress // empty' "$STORE/$name.json")" ] && {
+            printf 'Already on %s%s%s (%s)\n' "$B" "$name" "$R" "$(describe_live)"
+            exit 0
+        }
+
+        stash_active
+
+        umask 077
+        tmp="$CREDS.tmp.$$"
+        jq '{claudeAiOauth: .credentials}' "$STORE/$name.json" > "$tmp"
+        mv "$tmp" "$CREDS"
+
+        tmp="$CONFIG.tmp.$$"
+        jq --slurpfile p "$STORE/$name.json" '.oauthAccount = $p[0].oauthAccount' "$CONFIG" > "$tmp"
+        mv "$tmp" "$CONFIG"
+
+        mkdir -p "$STORE"; printf '%s\n' "$name" > "$ACTIVE"
+        printf '%sSwapped to%s %s%-10s%s %s\n' "$GRN" "$R" "$B" "$name" "$R" "$(describe_live)"
+        warn_running
+        ;;
+esac
