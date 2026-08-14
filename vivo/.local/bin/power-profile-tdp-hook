@@ -53,5 +53,15 @@ case "$profile" in
     performance) $ASROOT ryzenadj --stapm-limit=45000 --fast-limit=51000 --slow-limit=45000 --tctl-temp=92 ;;
 esac
 
-# Fix the 2GHz amd_pstate cap for balanced/performance only (power-saver needs the lower cap)
-[ "$profile" != "power-saver" ] && $ASROOT /home/netanel/.local/bin/fix-cpu-freq 2>/dev/null
+# Fix the 2GHz amd_pstate cap for balanced/performance only (power-saver needs the lower cap).
+#
+# Skipped when called with --no-freq-fix. fix-cpu-freq toggles the amd_pstate
+# driver passive->active, and doing that in the window after a resume oopsed the
+# kernel on 2026-08-14 — a NULL *instruction* fetch, i.e. jumping through a NULL
+# function pointer, because the mode switch races the driver's own resume. It is
+# safe during normal operation (this is how the cap gets cleared on every profile
+# change); it is only the resume path that must not touch it. post-resume-check
+# passes the flag so it can re-apply TDP without going near the driver.
+if [ "$2" != "--no-freq-fix" ] && [ "$profile" != "power-saver" ]; then
+    $ASROOT /home/netanel/.local/bin/fix-cpu-freq 2>/dev/null
+fi
