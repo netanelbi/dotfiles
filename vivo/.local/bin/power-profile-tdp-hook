@@ -28,10 +28,23 @@ flock -n 9 || exit 0
 # by a user keybind (NOPASSWD sudoers expected; -n avoids hanging on a prompt).
 if [ "$(id -u)" = 0 ]; then ASROOT=; else ASROOT="sudo -n"; fi
 
+# Limits below are measured, not guessed (24-thread sustained load, 2026-08-14):
+#   45W is this chassis's hard package ceiling — with stapm/fast/slow all at 65000
+#   and tctl 90/95/100, the SMU delivers 45.00W and ~89C every time. The old 54W
+#   setting was unreachable, and at tctl 100 it ran 96C for LESS clock than 45W
+#   (thermal throttling oscillates; a clean power cap runs steady).
+#   Measured landing points on the matching fan curve:
+#     balanced    31W -> 78.5C, P-core 3051MHz   (quiet, stays under 80C)
+#     performance 45W -> 87.8C, P-core 3543MHz   (the real maximum)
+#   tctl is a safety net set just above where each wattage settles, NOT the control
+#   knob: limiting by tctl instead of watts cost 18% clock at the same temperature.
+# Errors are deliberately NOT redirected — ryzenadj silently no-ops if the SMU
+# rejects a limit, and /dev/mem readback is blocked (CONFIG_IO_STRICT_DEVMEM), so
+# stderr is the only signal that a limit actually applied.
 case "$profile" in
-    power-saver) $ASROOT ryzenadj --stapm-limit=15000 --fast-limit=20000 --slow-limit=15000 --tctl-temp=75 2>/dev/null ;;
-    balanced)    $ASROOT ryzenadj --stapm-limit=25000 --fast-limit=30000 --slow-limit=25000 --tctl-temp=90 2>/dev/null ;;
-    performance) $ASROOT ryzenadj --stapm-limit=54000 --fast-limit=65000 --slow-limit=54000 --tctl-temp=100 2>/dev/null ;;
+    power-saver) $ASROOT ryzenadj --stapm-limit=15000 --fast-limit=20000 --slow-limit=15000 --tctl-temp=75 ;;
+    balanced)    $ASROOT ryzenadj --stapm-limit=31000 --fast-limit=37000 --slow-limit=31000 --tctl-temp=85 ;;
+    performance) $ASROOT ryzenadj --stapm-limit=45000 --fast-limit=51000 --slow-limit=45000 --tctl-temp=92 ;;
 esac
 
 # Fix the 2GHz amd_pstate cap for balanced/performance only (power-saver needs the lower cap)
