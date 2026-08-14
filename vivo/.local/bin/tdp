@@ -21,18 +21,33 @@ if ! [[ "$watts" =~ ^[0-9]+$ ]] || [ "$watts" -lt 5 ] || [ "$watts" -gt 65 ]; th
     exit 1
 fi
 
-# Derive parameters from base wattage
+# Derive parameters from base wattage. Kept in step with the per-profile values in
+# power-profile-tdp-hook so `tdp 31` and the balanced profile mean the same thing.
 stapm=$((watts * 1000))
-fast=$(( (watts + 5) * 1000 ))  # burst = sustained + 5W headroom
+fast=$(( (watts + 6) * 1000 ))  # burst = sustained + 6W headroom
 slow=$stapm
 
-# Scale thermal limit: 70°C at 5W → 100°C at 54W+
+# tctl is a safety net a few degrees above where each wattage actually settles —
+# NOT the control knob. Measured on a 24-thread sustained load (2026-08-14),
+# performance fan curve:
+#     25W -> 71C    35W -> 80C    45W -> 88C
+#     30W -> 74C    40W -> 82C
+# Limiting by tctl instead of watts cost 18% clock at the same temperature
+# (2718 vs 3203 MHz at 80C), so leave headroom and let the power cap bind.
 if [ "$watts" -le 15 ]; then
     tctl=75
-elif [ "$watts" -le 30 ]; then
-    tctl=90
+elif [ "$watts" -le 35 ]; then
+    tctl=85
 else
-    tctl=100
+    tctl=92
+fi
+
+# 45W is this chassis's hard package ceiling: with stapm/fast/slow at 65000 and
+# tctl at 90/95/100 the SMU delivers 45.00W and ~89C every time. Above that the
+# request is simply ignored, and at tctl 100 a 54W setting ran 96C for LESS clock
+# than 45W does (3211 vs 3543 MHz) because thermal throttling oscillates.
+if [ "$watts" -gt 45 ]; then
+    echo "note: ${watts}W is above the measured 45W ceiling — expect ~45W actual"
 fi
 
 echo "Setting TDP: ${watts}W sustained / $((fast / 1000))W burst / ${tctl}°C limit"
