@@ -1,23 +1,38 @@
 # `system/` — root-owned files (NOT a stow package)
 
-Stow only targets `$HOME`, so these cannot be symlinked as a normal user. The tree
-mirrors the absolute install path; copy them into place with sudo.
+Stow only targets `$HOME`, so anything here cannot be symlinked as a normal user.
+The tree mirrors the absolute install path; copy files into place with sudo.
 
 Do **not** run `stow system` — it would symlink this tree into `~/usr/...`.
 
-## Install
+Currently empty. See the note below before adding a resume hook back.
 
-```bash
-sudo install -Dm755 system/usr/lib/systemd/system-sleep/amd-pstate-fix.sh \
-                    /usr/lib/systemd/system-sleep/amd-pstate-fix.sh
-```
+## Do not re-add `amd-pstate-fix.sh`
 
-## Contents
+It lived at `/usr/lib/systemd/system-sleep/amd-pstate-fix.sh` and toggled
+`amd_pstate/status` passive->active on resume to clear a 2GHz frequency cap.
 
-| file | why it is tracked |
-|---|---|
-| `usr/lib/systemd/system-sleep/amd-pstate-fix.sh` | vivo-only. Clears the 2GHz amd_pstate cap after resume **and** re-applies the ryzenadj TDP limits, which `powerprofilesctl` wipes back to firmware defaults on every profile change. Hand-written and owned by no package, so a machine rebuild would lose it. |
+Two things were wrong with it:
 
-`/usr/lib/systemd/system-sleep/` is the correct (and only) location — systemd 261's
-`systemd-sleep` binary scans that path and no `/etc` equivalent. Upstream calls such
-scripts "hacks", but there is no supported alternative for reacting to resume.
+1. It did all its work in a backgrounded subshell, `( sleep 1; ... ) &`.
+   `systemd-suspend.service` deactivates immediately after thaw and its cgroup is
+   torn down, so the subshell was killed before it ever ran. The script had been
+   dead code for its entire life — the 2GHz fix never actually happened, and
+   nobody noticed, which is itself evidence the cap is no longer a problem.
+
+2. Making it synchronous so it *would* run then oopsed the kernel on the first
+   resume (2026-08-14, hard power-off):
+
+       BUG: kernel NULL pointer dereference, address: 0000000000000000
+       #PF: supervisor instruction fetch in kernel mode
+       Oops: 0010 [#1] SMP NOPTI
+       CPU: 7 UID: 0 PID: 119741 Comm: amd-pstate-fix.
+
+   A supervisor *instruction* fetch at NULL means the kernel jumped through a
+   NULL function pointer: switching amd_pstate's mode while the driver is itself
+   resuming races its own callback table.
+
+TDP after resume is not worth a kernel oops. `ppd-tdp-watch` already covers boot
+and every profile change; after a resume, SUPER+B re-applies it by hand. If this
+is ever revisited, do the work from a `systemd-run` transient unit well after
+resume completes — never inline in a sleep hook.
