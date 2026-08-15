@@ -1,36 +1,52 @@
-#!/bin/bash
-# hypr-display-toggle — SUPER+O: rescue + DPMS toggle for the PHYSICAL displays.
+#!/usr/bin/env bash
+# hypr-display-toggle — SUPER+O rescue: force the physical panels back ON.
 #
-#   1. RESCUE (only when not streaming): if a physical panel is left DISABLED — e.g.
-#      a Sunshine stream ended badly without unprep re-enabling it — `hyprctl reload`
-#      restores everything from config. Skipped during a stream: the panels are
-#      disabled on purpose then, and a reload would also disable HEADLESS-1 and kill
-#      the stream.
-#   2. DPMS TOGGLE on the physical panels (when they're enabled):
-#        on  -> lock the session (unless streaming) then DPMS-off
-#        off -> DPMS-on
+# Bound `locked = true` (machine.lua) so it works from the lock screen, which is
+# the whole point: this is what you press when the screen is black and you cannot
+# see what you are typing.
 #
-# Never touches HEADLESS-* outputs, so it won't blank a Sunshine capture target.
-# bindl so it fires while locked. The lock is skipped during a stream so hyprlock
-# doesn't appear on HEADLESS-1 and interrupt the remote client.
+# WHY IT EXISTS: sunshine-prep disables eDP-1 and DP-2 for the duration of a
+# stream so Sunshine cannot fall back to capturing a physical panel. If the
+# stream then dies without unprep running — the machine wedges, Sunshine is
+# killed, the client drops — the panels stay disabled and the laptop looks dead.
+# This is the way back.
+#
+# It was previously a `dpms off` toggle. Deliberately NOT that any more: on this
+# 890M, dpms-off with an external monitor attached hits a DCN 3.5 IPS/dc_lock
+# race that HARD REBOOTS the machine (see memory amdgpu_dpms_reboot; mitigated
+# but not fixed by amdgpu.dcdebugmask=0x800). A rescue key must never be able to
+# do that, so this only ever turns things ON.
+#
+# NOTE the syntax: `hyprctl keyword` is REJECTED under the Lua config provider
+# ("keyword can't work with non-legacy parsers. Use eval."). Every monitor line
+# in sunshine-prep/unprep was silently dead for a week because of exactly this.
+# Use `hyprctl eval` + hl.monitor(), matching monitor.lua.
 
-STREAM_MARKER="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep/stream-active"
+set -uo pipefail   # no -e: attempt every step even if one output is absent
 
-# 1. Rescue (not while streaming): a non-headless output disabled -> restore config.
-if [[ ! -f "$STREAM_MARKER" ]] && \
-   hyprctl monitors all -j | jq -e 'any(.[]; .disabled and (.name | startswith("HEADLESS") | not))' >/dev/null 2>&1; then
-    hyprctl reload
-    exit 0
+# Hyprland 0.55+ stopped exporting HYPRLAND_INSTANCE_SIGNATURE reliably into the
+# systemd user env, and /run/user/1000/hypr accumulates dead socket dirs. Pick the
+# one whose lock file names a live pid.
+if [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
+    for dir in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hypr/"*/; do
+        pid=$(head -n1 "$dir/hyprland.lock" 2>/dev/null || true)
+        [[ -n "$pid" && -d "/proc/$pid" ]] || continue
+        HYPRLAND_INSTANCE_SIGNATURE=$(basename "$dir")
+        export HYPRLAND_INSTANCE_SIGNATURE
+        break
+    done
 fi
 
-# 2. DPMS toggle on the enabled physical panels.
-panels=$(hyprctl monitors -j | jq -r '.[] | select(.name | startswith("HEADLESS") | not) | .name')
-[[ -z "$panels" ]] && exit 0   # nothing to toggle (e.g. mid-stream the panels are disabled)
+# Values mirror monitor.lua. The Dell is matched by desc: — its connector
+# alternates DP-1/DP-2 depending on which port it is plugged into.
+timeout 3 hyprctl eval 'hl.monitor({ output = "eDP-1", mode = "1920x1200@60", position = "1920x0", scale = 1.5, disabled = false })' >/dev/null 2>&1
+timeout 3 hyprctl eval 'hl.monitor({ output = "desc:Dell Inc. DELL P2722H", mode = "1920x1080@60", position = "0x0", scale = 1, disabled = false })' >/dev/null 2>&1
 
-if hyprctl monitors -j | jq -e 'any(.[]; (.name | startswith("HEADLESS") | not) and .dpmsStatus)' >/dev/null; then
-    [[ -f "$STREAM_MARKER" ]] || loginctl lock-session
-    sleep 0.5   # let the keypress settle so it doesn't race the dpms-off
-    for m in $panels; do hyprctl dispatch "hl.dsp.dpms({ action = \"off\", monitor = \"$m\" })"; done
-else
-    for m in $panels; do hyprctl dispatch "hl.dsp.dpms({ action = \"on\", monitor = \"$m\" })"; done
-fi
+# DPMS on is safe in this direction and covers a panel that is enabled but blanked.
+timeout 3 hyprctl dispatch 'hl.dsp.dpms({ action = "on" })' >/dev/null 2>&1
+
+# Put focus somewhere visible — after a failed stream the active workspace can
+# still be `stream`, parked on a headless output you cannot see.
+timeout 3 hyprctl dispatch 'hl.dsp.focus({ monitor = "eDP-1" })' >/dev/null 2>&1
+
+notify-send -a display-rescue "Displays" "Physical panels forced back on" 2>/dev/null || true

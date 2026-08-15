@@ -15,8 +15,9 @@ hl.config({
 -- Rescue: force physical displays back on (e.g. if a Sunshine stream left them
 -- disabled — not used on lenovo, but harmless to keep as a recovery keybind).
 hl.bind(mainMod .. " + ALT + D", hl.dsp.exec_cmd(
-    'hyprctl keyword monitor "eDP-1,1920x1080@60,0x0,1.3333"; ' ..
-    'hyprctl keyword monitor "DP-2,1920x1080@60,auto-right,1"; ' ..
+    -- eval + hl.monitor, not keyword: the Lua parser rejects keyword outright.
+    'hyprctl eval \'hl.monitor({ output = "eDP-1", mode = "1920x1080@60", position = "0x0", scale = 1.3333, disabled = false })\'; ' ..
+    'hyprctl eval \'hl.monitor({ output = "DP-2", mode = "1920x1080@60", position = "auto-right", scale = 1, disabled = false })\'; ' ..
     'hyprctl reload'))
 
 -- No TDP / no Sunshine on lenovo — SUPER+O cycles urgent/last instead of the vivo display toggle
