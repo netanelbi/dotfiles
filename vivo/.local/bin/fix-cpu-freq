@@ -1,10 +1,68 @@
 #!/bin/bash
-# Reset CPU max frequency by toggling amd_pstate driver (fixes 2GHz stuck bug)
-# Just writing scaling_max_freq isn't reliable — toggling active/passive forces
-# the driver to reinitialize and actually unstick the frequency cap.
+# fix-cpu-freq — clear the 2GHz amd_pstate frequency cap, but only when it is
+# actually stuck, and never in a way that can wedge the caller.
+#
+# WHY THE CARE: toggling amd_pstate/status is genuinely dangerous on this kernel
+# (7.1.8-cachyos, Strix Point). On 2026-08-15 it broke the machine twice in one
+# day:
+#   * run from a system-sleep hook just after resume, it NULL-oopsed the kernel
+#     ("supervisor instruction fetch in kernel mode" — the mode switch races the
+#     driver's own resume). Two hard power-offs.
+#   * run repeatedly from sunshine prep/unprep, it DEADLOCKED the driver: four
+#     fix-cpu-freq processes plus power-profiles-daemon stuck in uninterruptible
+#     D state, /sys/.../amd_pstate/status unreadable, unkillable even with
+#     SIGKILL. Sunshine hung forever waiting on unprep. Only a reboot cleared it.
+#
+# So: do nothing unless the cap is really present, prefer the harmless fix, and
+# put a hard timeout on the dangerous one so a wedged driver blocks this script
+# for a few seconds instead of forever.
+#
+# Callers: power-profile-tdp-hook (every profile change, unless --no-freq-fix).
 
-pstate="/sys/devices/system/cpu/amd_pstate/status"
+CPU0=/sys/devices/system/cpu/cpu0/cpufreq
+STATUS=/sys/devices/system/cpu/amd_pstate/status
 
-echo "passive" > "$pstate"
+want=$(timeout 2 cat "$CPU0/cpuinfo_max_freq" 2>/dev/null)
+have=$(timeout 2 cat "$CPU0/scaling_max_freq" 2>/dev/null)
+
+# If sysfs itself won't answer, the driver is already wedged — touching it
+# further only adds another unkillable process. Bail loudly instead.
+if [[ -z "$want" || -z "$have" ]]; then
+    logger -t fix-cpu-freq "amd_pstate sysfs unreadable — driver likely wedged, doing nothing"
+    exit 1
+fi
+
+# Not capped: the common case. Touch nothing at all.
+if (( have >= want )); then
+    exit 0
+fi
+
+logger -t fix-cpu-freq "freq capped at $have (want $want) — attempting gentle fix"
+
+# 1. Gentle: just write the ceiling back. No driver mode switch, so it cannot
+#    oops or deadlock. The old comment claimed this "isn't reliable" — it is at
+#    least always SAFE, so try it before reaching for the toggle.
+for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+    timeout 1 bash -c "echo $want > $f" 2>/dev/null
+done
+
+have=$(timeout 2 cat "$CPU0/scaling_max_freq" 2>/dev/null)
+if [[ -n "$have" ]] && (( have >= want )); then
+    logger -t fix-cpu-freq "gentle fix worked, no driver toggle needed"
+    exit 0
+fi
+
+# 2. Last resort: the driver mode toggle. Every write gets a timeout so a
+#    deadlocked driver costs a few seconds, not an unkillable process and a
+#    blocked caller. (timeout cannot kill a D-state process either, but it does
+#    stop US from waiting on it, which is what hung Sunshine.)
+logger -t fix-cpu-freq -p daemon.warning "gentle fix failed — toggling amd_pstate (known-risky on this kernel)"
+timeout 3 bash -c "echo passive > $STATUS" 2>/dev/null || \
+    logger -t fix-cpu-freq -p daemon.err "amd_pstate passive write timed out — driver wedged"
 sleep 0.1
-echo "active" > "$pstate"
+timeout 3 bash -c "echo active > $STATUS" 2>/dev/null || \
+    logger -t fix-cpu-freq -p daemon.err "amd_pstate active write timed out — driver wedged"
+
+have=$(timeout 2 cat "$CPU0/scaling_max_freq" 2>/dev/null)
+logger -t fix-cpu-freq "done, maxfreq now ${have:-unreadable}"
+exit 0
