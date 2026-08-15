@@ -42,15 +42,19 @@ fi
 #    focusmonitor hits "Monitor not found". The `hyprctl reload` below also restores
 #    them from config; these explicit calls are the safety net (and no-op harmlessly
 #    if a panel like DP-2 isn't connected).
-timeout 2 hyprctl keyword monitor "eDP-1,1920x1200@60,1920x0,1.5" 2>/dev/null || true
-timeout 2 hyprctl keyword monitor "DP-2,1920x1080@60,0x0,1" 2>/dev/null || true
+#    eval + hl.monitor(), not keyword: since the Lua config migration hyprctl
+#    rejects keyword ("keyword can't work with non-legacy parsers. Use eval."),
+#    so the old lines here never restored anything — the `hyprctl reload` below
+#    was silently doing all the work. Values mirror monitor.lua.
+timeout 2 hyprctl eval 'hl.monitor({ output = "eDP-1", mode = "1920x1200@60", position = "1920x0", scale = 1.5, disabled = false })' 2>/dev/null || true
+timeout 2 hyprctl eval 'hl.monitor({ output = "desc:Dell Inc. DELL P2722H", mode = "1920x1080@60", position = "0x0", scale = 1, disabled = false })' 2>/dev/null || true
 
 # 3. Move focus back to eDP-1 / workspace 1
 timeout 2 hyprctl dispatch 'hl.dsp.focus({ monitor = "eDP-1" })' 2>/dev/null || true
 timeout 2 hyprctl dispatch 'hl.dsp.focus({ workspace = 1 })' 2>/dev/null || true
 
 # 4. Disable HEADLESS-1 — name:stream workspace gets GC'd when its monitor is gone
-timeout 2 hyprctl keyword monitor "HEADLESS-1,disable" 2>/dev/null || true
+timeout 2 hyprctl eval 'hl.monitor({ output = "HEADLESS-1", disabled = true })' 2>/dev/null || true
 
 # 4. Reload to restore the static config (monitors/workspaces) as a safety net.
 #    (prep no longer adds runtime windowrules — placement is the openwindow
