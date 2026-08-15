@@ -77,13 +77,23 @@ fi
 #    handles focus itself. From here on, real unplugs bounce to workspace 1 again.
 rm -f "$STATE_DIR/stream-active"
 
-# 7. Restart hypridle. A stream churns the outputs hard — prep disables both
-#    panels and enables HEADLESS-1, unprep reverses it — and hypridle does not
-#    reliably re-arm its idle listeners afterwards. Observed 2026-08-15: its last
-#    log line was `removed iface 73` (an output going away) and it then never
-#    fired again; the screen stayed unlocked for 27 minutes against a 300s
-#    timeout, on an idle machine, with zero inhibitors held. A restart re-registers
-#    all three timeout rules immediately.
+# 7. Restart hypridle — and note this MUST come after the `hyprctl reload` above.
+#
+#    A crashed game leaves the whole session unable to idle. hyprland.lua carries
+#    `idle-inhibit-gamescope` (class ^gamescope, idle_inhibit = always), which is
+#    correct while playing, but when gamescope dies abnormally — as it did through
+#    every failed stream on 2026-08-15 — the inhibitor is never released. The
+#    screen then never locks again: 4h27m with zero locks against a 300s timeout,
+#    on an idle machine, with no D-Bus inhibitor held and hypridle happily
+#    reporting all three rules registered. It had simply stopped being told.
+#
+#    Both steps are required, which is what makes the ordering load-bearing —
+#    measured separately that day:
+#      reload alone (this script, 16:42)      -> still dead
+#      hypridle restart alone (by hand 17:08) -> still dead
+#      reload THEN hypridle restart (19:20)   -> locked on schedule at 19:25:13
+#    The reload clears the compositor-side inhibitor; hypridle then has to be
+#    rebuilt because its ext_idle_notification objects are stale by that point.
 #
 #    KillMode=process in hypridle.service means this does NOT tear down a live
 #    hyprlock, so restarting here can't drop the lock screen.
