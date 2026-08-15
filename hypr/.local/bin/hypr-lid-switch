@@ -9,6 +9,10 @@
 # into a bare config. When undocked, do nothing: logind's HandleLidSwitch=suspend
 # already handles the close.
 
+# Monitor changes go through `hyprctl eval` + hl.monitor(), NOT `hyprctl keyword`:
+# the Lua config provider rejects keyword outright ("keyword can't work with
+# non-legacy parsers. Use eval."), so the old lines here silently did nothing and
+# a docked lid-close left the internal panel lit.
 INTERNAL="eDP-1"
 # eDP re-enable spec is machine-specific (panel resolution/scale). Sourced from the
 # machine stow package; fall back to a sane default if absent.
@@ -22,10 +26,13 @@ case "$1" in
             | select(.name != "'"$INTERNAL"'" and (.name | startswith("HEADLESS") | not))]
             | length')
         if [ "${externals:-0}" -gt 0 ]; then
-            hyprctl keyword monitor "$INTERNAL,disable"
+            hyprctl eval "hl.monitor({ output = \"$INTERNAL\", disabled = true })"
         fi
         ;;
     open)
-        hyprctl keyword monitor "$INTERNAL,$EDP_SPEC"
+        # EDP_SPEC stays in the legacy "mode,position,scale" shape because it is a
+        # user-facing knob in lid-switch.env; split it into hl.monitor's fields.
+        IFS=, read -r _mode _pos _scale <<< "$EDP_SPEC"
+        hyprctl eval "hl.monitor({ output = \"$INTERNAL\", mode = \"$_mode\", position = \"$_pos\", scale = $_scale, disabled = false })"
         ;;
 esac

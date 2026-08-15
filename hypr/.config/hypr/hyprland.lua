@@ -167,7 +167,16 @@ hl.bind(mainMod .. " + Print",      hl.dsp.exec_cmd('grim -g "$(slurp)" ~/Pictur
 hl.bind(mainMod .. " + C",          hl.dsp.exec_cmd([[grim -g "$(hyprctl activewindow -j | jq -r '"\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"')" - | wl-copy && notify-send "Screenshot" "Window captured!"]]))
 
 -- Screenshot with flash effect
-hl.bind(mainMod .. " + SHIFT + Print", hl.dsp.exec_cmd('hyprctl keyword decoration:screen_shader "" && grim - | wl-copy && hyprctl keyword decoration:dim_strength 1 && sleep 0.1 && hyprctl keyword decoration:dim_strength 0 && notify-send "Screenshot" "Full screen captured!"'))
+-- Runtime option writes are `hyprctl eval` + hl.config(), NOT `hyprctl keyword` —
+-- the Lua provider rejects keyword outright, so the flash silently never fired.
+-- Restores dim_strength to 0.5 (the configured value), not 0, which is what the
+-- keyword version would have left behind had it ever run.
+hl.bind(mainMod .. " + SHIFT + Print", hl.dsp.exec_cmd(
+  'grim - | wl-copy && ' ..
+  'hyprctl eval \'hl.config({ decoration = { dim_strength = 1 } })\' >/dev/null && ' ..
+  'sleep 0.1 && ' ..
+  'hyprctl eval \'hl.config({ decoration = { dim_strength = 0.5 } })\' >/dev/null && ' ..
+  'notify-send "Screenshot" "Full screen captured!"'))
 
 -- Clipboard history (with image preview, Alt+P to preview image)
 hl.bind(mainMod .. " + V", hl.dsp.exec_cmd([==[selection=$(rofi -dmenu -p "Clipboard" -show-icons < <(~/.local/bin/cliphist-rofi-img)); ret=$?; if [[ $ret -eq 10 ]]; then ~/.local/bin/cliphist-preview "$selection"; elif [[ $ret -eq 0 && -n "$selection" ]]; then echo "$selection" | ~/.local/bin/cliphist-rofi-img; fi]==]))
