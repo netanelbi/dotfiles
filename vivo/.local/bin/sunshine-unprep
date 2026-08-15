@@ -65,9 +65,10 @@ timeout 3 hyprctl reload 2>/dev/null || true
 # 5. Revert the power profile to balanced if prep boosted it (docked streams only).
 #    Mirrors power-profile-cycle's balanced preset (25W stapm / 30W fast / 90C) + freq fix.
 if [[ -f "$STATE_DIR/profile-boosted" ]]; then
+    # Switch the profile only; ppd-tdp-watch applies the matching limits. The old
+    # hardcoded 25W/30W/tctl 90 here had already drifted from the shipped balanced
+    # preset (31W/37W/85). See sunshine-prep for the same change.
     powerprofilesctl set balanced 2>/dev/null || true
-    sudo -n /usr/bin/ryzenadj --stapm-limit=25000 --fast-limit=30000 --slow-limit=25000 --tctl-temp=90 >/dev/null 2>&1 || true
-    sudo -n /home/netanel/.local/bin/fix-cpu-freq >/dev/null 2>&1 || true
     rm -f "$STATE_DIR/profile-boosted"
 fi
 

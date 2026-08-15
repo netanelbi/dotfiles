@@ -104,9 +104,12 @@ echo "$COOKIE" > "$STATE_DIR/inhibit-cookie"
 ac_online=$(cat /sys/class/power_supply/ACAD/online 2>/dev/null || echo 0)
 cur_profile=$(powerprofilesctl get 2>/dev/null || echo "")
 if [[ "$ac_online" == "1" && -n "$cur_profile" && "$cur_profile" != "power-saver" ]]; then
+    # Just switch the profile — ppd-tdp-watch sees the PropertiesChanged and
+    # applies the matching ryzenadj limits (and fix-cpu-freq) itself. This used to
+    # hardcode 54W/65W/tctl 100 here, which drifted out of step with the measured
+    # values: 45W is the chassis ceiling, and 54W at tctl 100 ran 96C for LESS
+    # clock than 45W does at 88C. One source of truth beats two copies.
     powerprofilesctl set performance 2>/dev/null || true
-    sudo -n /usr/bin/ryzenadj --stapm-limit=54000 --fast-limit=65000 --slow-limit=54000 --tctl-temp=100 >/dev/null 2>&1 || true
-    sudo -n /home/netanel/.local/bin/fix-cpu-freq >/dev/null 2>&1 || true
     touch "$STATE_DIR/profile-boosted"
 fi
 
