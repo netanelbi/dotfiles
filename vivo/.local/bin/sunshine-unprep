@@ -77,4 +77,16 @@ fi
 #    handles focus itself. From here on, real unplugs bounce to workspace 1 again.
 rm -f "$STATE_DIR/stream-active"
 
+# 7. Restart hypridle. A stream churns the outputs hard — prep disables both
+#    panels and enables HEADLESS-1, unprep reverses it — and hypridle does not
+#    reliably re-arm its idle listeners afterwards. Observed 2026-08-15: its last
+#    log line was `removed iface 73` (an output going away) and it then never
+#    fired again; the screen stayed unlocked for 27 minutes against a 300s
+#    timeout, on an idle machine, with zero inhibitors held. A restart re-registers
+#    all three timeout rules immediately.
+#
+#    KillMode=process in hypridle.service means this does NOT tear down a live
+#    hyprlock, so restarting here can't drop the lock screen.
+timeout 5 systemctl --user restart hypridle 2>/dev/null || true
+
 exit 0
