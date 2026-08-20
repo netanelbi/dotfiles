@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Waybar module: show a coffee cup while the lid-close inhibitor is held.
+#
+# Event-driven, no polling: logind emits PropertiesChanged on the Manager with
+# BlockInhibited whenever an inhibitor is taken or released, so the widget also
+# reacts to the unit dying on its own or being stopped by hand — not just to
+# `stay-awake toggle`. Verified: the signal carries BlockInhibited both ways.
+
+STATE_CMD=(busctl --system get-property org.freedesktop.login1
+           /org/freedesktop/login1 org.freedesktop.login1.Manager BlockInhibited)
+
+# Kill the gdbus child on exit so waybar restarts don't leak orphans.
+cleanup() {
+    [[ -n "${MON_PID:-}" ]] && kill "$MON_PID" 2>/dev/null
+    exit 0
+}
+trap cleanup EXIT INT TERM PIPE
+
+show_status() {
+    local blocked
+    blocked=$("${STATE_CMD[@]}" 2>/dev/null)
+    if [[ "$blocked" == *handle-lid-switch* ]]; then
+        printf '{"text": "󰅶", "tooltip": "Stay awake ON\\nLid close will not suspend\\nClick to turn off", "class": "active"}\n' || exit 0
+    else
+        printf '{"text": "", "tooltip": "", "class": ""}\n' || exit 0
+    fi
+}
+
+show_status
+
+exec 3< <(exec gdbus monitor --system --dest org.freedesktop.login1 \
+              --object-path /org/freedesktop/login1)
+MON_PID=$!
+while read -r line <&3; do
+    [[ "$line" == *BlockInhibited* ]] && show_status
+done

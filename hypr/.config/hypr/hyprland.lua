@@ -184,6 +184,10 @@ hl.bind(mainMod .. " + V", hl.dsp.exec_cmd([==[selection=$(rofi -dmenu -p "Clipb
 -- Lock screen
 hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("hyprlock"))
 
+-- Stay awake: hold a logind block inhibitor so a lid close does not suspend.
+-- Waybar shows a coffee cup (modules-center) while it is held.
+hl.bind(mainMod .. " + SHIFT + L", hl.dsp.exec_cmd("~/.local/bin/stay-awake toggle"))
+
 -- Scratchpad
 hl.bind(mainMod .. " + grave",     hl.dsp.exec_cmd("~/.local/bin/hypr-scratchpad-toggle"))
 hl.bind(mainMod .. " + S",         hl.dsp.exec_cmd("~/.local/bin/hypr-scratchpad-move"))
