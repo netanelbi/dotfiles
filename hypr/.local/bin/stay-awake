@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# stay-awake — keep the machine running with the lid shut (SUPER+SHIFT+L).
+#
+# Wraps a logind BLOCK inhibitor in a transient user unit so it has a name that
+# can be stopped, queried and shown in waybar. Without it, closing the lid hits
+# logind's HandleLidSwitch=suspend (hypr-lid-switch deliberately does nothing
+# when undocked), and hypridle suspends anyway after 600s on battery.
+#
+# WHAT is `handle-lid-switch:sleep` and must NEVER gain `idle`: logind idle
+# inhibitors are honoured by hypridle, so adding it would silently disable the
+# 300s lock and the 330s dpms-off — the machine would sit unlocked and lit.
+#
+# The unit is TRANSIENT on purpose: it dies with a reboot. "Stay awake" is a
+# temporary intent ("I'm walking away with the lid shut"), not a persistent
+# setting, and a forgotten inhibitor surviving a reboot is a flat battery.
+
+set -uo pipefail
+
+UNIT=stay-awake
+WHAT="handle-lid-switch:sleep"
+WHY="Stay awake toggle — lid close must not suspend"
+
+is_on() { systemctl --user is-active --quiet "$UNIT"; }
+
+notify() {
+    notify-send -a stay-awake -i "$2" "Stay awake" "$1" 2>/dev/null || true
+}
+
+turn_on() {
+    # A previously failed run keeps the unit name reserved; systemd-run would
+    # then fail with "unit already exists".
+    systemctl --user reset-failed "$UNIT" 2>/dev/null
+    systemd-run --user --quiet --unit="$UNIT" \
+        --description="Stay awake: block lid-close suspend" \
+        systemd-inhibit --what="$WHAT" --who="stay-awake" --why="$WHY" --mode=block \
+        sleep infinity
+}
+
+turn_off() {
+    systemctl --user stop "$UNIT" 2>/dev/null
+    systemctl --user reset-failed "$UNIT" 2>/dev/null
+}
+
+case "${1:-toggle}" in
+    on)
+        is_on || turn_on
+        notify "ON — lid close will not suspend" preferences-desktop-screensaver
+        ;;
+    off)
+        turn_off
+        notify "OFF — lid close suspends again" system-suspend
+        ;;
+    toggle)
+        if is_on; then
+            turn_off
+            notify "OFF — lid close suspends again" system-suspend
+        else
+            turn_on
+            notify "ON — lid close will not suspend" preferences-desktop-screensaver
+        fi
+        ;;
+    status)
+        # Report the real logind state, not just our unit: any block inhibitor
+        # on handle-lid-switch has the same practical effect.
+        blocked=$(busctl --system get-property org.freedesktop.login1 \
+            /org/freedesktop/login1 org.freedesktop.login1.Manager BlockInhibited 2>/dev/null)
+        if [[ "$blocked" == *handle-lid-switch* ]]; then echo on; else echo off; fi
+        ;;
+    *)
+        echo "usage: stay-awake [toggle|on|off|status]" >&2
+        exit 2
+        ;;
+esac

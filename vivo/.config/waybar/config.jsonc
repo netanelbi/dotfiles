@@ -9,7 +9,7 @@
   "height": 30,
 
   "modules-left": ["hyprland/workspaces", "custom/scratchpad", "custom/windows"],
-  "modules-center": ["clock", "hyprland/language", "custom/capslock", "pulseaudio#mic", "power-profiles-daemon", "custom/tdp", "custom/gamepads"],
+  "modules-center": ["clock", "hyprland/language", "custom/capslock", "pulseaudio#mic", "power-profiles-daemon", "custom/tdp", "custom/stay-awake", "custom/gamepads"],
   "modules-right": [
     "tray",
     "bluetooth",
@@ -116,6 +116,13 @@
   "custom/tdp": {
     "exec": "~/.local/bin/tdp-watch",
     "return-type": "json"
+  },
+
+  "custom/stay-awake": {
+    "exec": "~/.local/bin/stay-awake-watch",
+    "return-type": "json",
+    "escape": false,
+    "on-click": "~/.local/bin/stay-awake toggle"
   },
 
   "custom/gamepads": {
