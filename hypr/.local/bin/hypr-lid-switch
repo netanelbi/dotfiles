@@ -1,19 +1,36 @@
 #!/bin/bash
 # hypr-lid-switch — lid open/close monitor handling.
 #
-# Only disable the internal panel (eDP-1) on lid close when an EXTERNAL monitor
-# is connected (clamshell/docked). Disabling the *last* remaining monitor sends
-# Hyprland 0.55 into an unsafe-state headless transition that segfaults
+# DOCKED (an external monitor is connected): disable the internal panel (eDP-1)
+# on close, restore it on open. Disabling the *last* remaining monitor sent
+# Hyprland 0.55 into an unsafe-state headless transition that segfaulted
 # (performMonitorReload -> enterUnsafeState -> headless commit -> recheckSolitary
-# -> getViewsForWorkspace, SIGSEGV), taking the whole session down and restarting
-# into a bare config. When undocked, do nothing: logind's HandleLidSwitch=suspend
-# already handles the close.
+# -> getViewsForWorkspace, SIGSEGV) — fixed upstream in 0.55.4, but disabling the
+# only output is still a bigger hammer than this needs.
+#
+# UNDOCKED: blank the panel with dpms instead. This branch used to do nothing,
+# on the grounds that "logind's HandleLidSwitch=suspend already handles the
+# close". That stopped being true when HandleLidSwitchExternalPower=ignore was
+# set (see system/etc/systemd/logind.conf.d/lid.conf): on AC the machine now
+# stays up with the lid shut, and without this the panel keeps its backlight on
+# and the GPU keeps scanning out, sealed inside a closed clamshell.
+#
+# Both branches stand down during a Sunshine stream. sunshine-prep disables the
+# physical panels for the duration, so the only enabled output is HEADLESS-1 —
+# and a global dpms off would blank the stream itself.
 
 # Monitor changes go through `hyprctl eval` + hl.monitor(), NOT `hyprctl keyword`:
 # the Lua config provider rejects keyword outright ("keyword can't work with
 # non-legacy parsers. Use eval."), so the old lines here silently did nothing and
 # a docked lid-close left the internal panel lit.
+#
+# NOTE `hyprctl dispatch` answers "ok" to anything, including unknown keys and
+# nonsense actions — it is not a validity check. The dpms call below is the same
+# argument-free form hypridle and hypr-display-toggle already use every day, so
+# it is known-good; do not "improve" it into a per-monitor variant without
+# actually observing the panel react.
 INTERNAL="eDP-1"
+STREAM_MARKER="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep/stream-active"
 # eDP re-enable spec is machine-specific (panel resolution/scale). Sourced from the
 # machine stow package; fall back to a sane default if absent.
 EDP_SPEC="1920x1080@60,0x0,1.3333"
@@ -21,12 +38,19 @@ EDP_SPEC="1920x1080@60,0x0,1.3333"
 
 case "$1" in
     close)
-        # Count enabled monitors that aren't the internal panel or a headless sink.
-        externals=$(hyprctl monitors -j | jq '[.[]
+        # `hyprctl monitors` (no `all`) lists only ENABLED outputs.
+        mons=$(hyprctl monitors -j)
+        externals=$(jq '[.[]
             | select(.name != "'"$INTERNAL"'" and (.name | startswith("HEADLESS") | not))]
-            | length')
+            | length' <<<"$mons")
         if [ "${externals:-0}" -gt 0 ]; then
             hyprctl eval "hl.monitor({ output = \"$INTERNAL\", disabled = true })"
+        elif [ ! -f "$STREAM_MARKER" ] &&
+             jq -e 'any(.[]; .name == "'"$INTERNAL"'")
+                    and all(.[]; .name | startswith("HEADLESS") | not)' <<<"$mons" >/dev/null; then
+            # Undocked: the panel is the only output, so blanking it globally and
+            # blanking eDP-1 are the same thing.
+            hyprctl dispatch 'hl.dsp.dpms({ action = "off" })'
         fi
         ;;
     open)
@@ -34,5 +58,6 @@ case "$1" in
         # user-facing knob in lid-switch.env; split it into hl.monitor's fields.
         IFS=, read -r _mode _pos _scale <<< "$EDP_SPEC"
         hyprctl eval "hl.monitor({ output = \"$INTERNAL\", mode = \"$_mode\", position = \"$_pos\", scale = $_scale, disabled = false })"
+        [ -f "$STREAM_MARKER" ] || hyprctl dispatch 'hl.dsp.dpms({ action = "on" })'
         ;;
 esac
