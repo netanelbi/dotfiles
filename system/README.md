@@ -14,10 +14,17 @@ sudo systemctl daemon-reload
 sudo systemctl enable post-resume-check.service
 ```
 
+```bash
+sudo install -Dm644 system/etc/systemd/logind.conf.d/lid.conf \
+                    /etc/systemd/logind.conf.d/lid.conf
+sudo systemctl reload systemd-logind
+```
+
 ## Contents
 
 | file | why |
 |---|---|
+| `etc/systemd/logind.conf.d/lid.conf` | Lid close suspends on battery only. On AC it is ignored, so the machine keeps working with the lid shut. Set on AC power rather than on `HandleLidSwitchDocked`, which silently stops applying the moment the displays are blanked — see the comment in the file. |
 | `etc/systemd/system/post-resume-check.service` | Runs `post-resume-check` ~20s after resume, ordered `After=suspend.target` so it is an ordinary unit rather than a sleep hook. Re-applies the ryzenadj TDP limits (a suspend clears them) and read-only *reports* whether the 2GHz frequency cap survived. |
 
 ## Do not re-add `amd-pstate-fix.sh`
