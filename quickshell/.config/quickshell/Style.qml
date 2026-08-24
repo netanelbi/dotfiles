@@ -50,15 +50,24 @@ Singleton {
   }
 
   // ----------------------------------------------------------------- font
-  // style.css: font-family "JetBrainsMono Nerd Font"; font-size 14px, with
-  // #custom-windows at 12px and #custom-tdp.active at 11px.
+  // style.css's numbers are correct as literals: text-scaling-factor is 1.0
+  // on this machine, so GTK paints waybar's `font-size: 14px` at 14px and Qt
+  // matches it directly.
+  //
+  // (A previous version of this comment claimed GTK scaled fonts by 1.1667 and
+  // sized everything up accordingly. That factor was not the user's setting --
+  // an Omarchy trial had written it into gsettings. It has been reset to 1.0.)
+  //
+  // The one deliberate deviation: the window-title list reads too small at
+  // style.css's literal 12px, so it sits at the base size.
   readonly property QtObject font: QtObject {
     readonly property string family: "JetBrainsMono Nerd Font"
     readonly property int size: 14
-    readonly property int small: 12
-    readonly property int tiny: 11
-    readonly property int workspace: 13
-    readonly property int tooltip: 13
+    readonly property int small: 14    // #custom-windows; 12 read too small
+    readonly property int tiny: 12     // #custom-tdp.active
+    // style.css has no 13px anywhere -- both inherit the `*` rule.
+    readonly property int workspace: size
+    readonly property int tooltip: size
     readonly property int normalWeight: Font.Normal
     readonly property int boldWeight: Font.Bold
   }
