@@ -188,7 +188,7 @@ hl.bind(mainMod .. " + SHIFT + Print", hl.dsp.exec_cmd(
   'notify-send "Screenshot" "Full screen captured!"'))
 
 -- Clipboard history (with image preview, Alt+P to preview image)
-hl.bind(mainMod .. " + V", hl.dsp.exec_cmd([==[selection=$(rofi -dmenu -p "Clipboard" -show-icons < <(~/.local/bin/cliphist-rofi-img)); ret=$?; if [[ $ret -eq 10 ]]; then ~/.local/bin/cliphist-preview "$selection"; elif [[ $ret -eq 0 && -n "$selection" ]]; then echo "$selection" | ~/.local/bin/cliphist-rofi-img; fi]==]))
+hl.bind(mainMod .. " + V", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call clipboard toggle"))
 
 -- Lock screen
 hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("hyprlock"))

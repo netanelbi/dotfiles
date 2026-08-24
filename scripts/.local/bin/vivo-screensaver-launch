@@ -7,6 +7,12 @@ set -uo pipefail
 # Already up? Don't stack a second one.
 pgrep -f '[o]rg.vivo.screensaver' >/dev/null && exit 0
 
+# Never start over a locked session. hypridle fires the screensaver at 150s and
+# locks at 300s, but a lock can also arrive early (loginctl lock-session, lid
+# close, SUPER+L) -- without this the screensaver would spawn behind hyprlock and
+# spin a tte loop nobody can see.
+pidof hyprlock >/dev/null && exit 0
+
 # The window rule in hypr keys off this class; kitty sets it with --class.
 exec kitty --class org.vivo.screensaver \
            --title "VIVO screensaver" \
