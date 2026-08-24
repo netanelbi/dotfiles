@@ -1,0 +1,57 @@
+#!/bin/bash
+# Fullscreen ASCII screensaver, VIVO branded. Modelled on Omarchy's, which runs
+# terminaltexteffects over an ASCII-art file with a random effect each loop.
+#
+# `tte` is a Python tool installed per-user (`uv tool install
+# terminaltexteffects`) -- no sudo, no system package.
+#
+# Two processes are involved: this script runs INSIDE a fullscreen kitty that
+# `vivo-screensaver-launch` spawns. Run it directly and it just takes over the
+# terminal you called it from, which is useful for previewing an effect.
+
+set -uo pipefail
+
+ART="${VIVO_SCREENSAVER_ART:-$HOME/.local/share/screensaver/vivo.txt}"
+[[ -r $ART ]] || { echo "no art file at $ART" >&2; exit 1; }
+
+command -v tte >/dev/null || {
+  echo "tte not found. Install with: uv tool install terminaltexteffects" >&2
+  exit 1
+}
+
+cleanup() {
+  # Lua form: hyprctl on 0.56+ parses its argument as Lua, so the old
+  # `hyprctl keyword cursor:invisible false` is a syntax error now.
+  hyprctl eval 'hl.config({ cursor = { invisible = false } })' &>/dev/null || true
+  pkill -x tte 2>/dev/null
+  printf '\033[?25h'      # show cursor
+  exit 0
+}
+trap cleanup SIGINT SIGTERM SIGHUP SIGQUIT
+
+printf '\033]11;rgb:11/11/1b\007'   # crust background, matching the bar
+printf '\033[?25l'                  # hide cursor
+hyprctl eval 'hl.config({ cursor = { invisible = true } })' &>/dev/null || true
+
+# A terminal starts at 80x24 and only learns its real size once the compositor
+# has told the window. tte measures the canvas ONCE at startup, so starting too
+# early paints an 80x24 picture into the corner of a fullscreen window.
+deadline=$((SECONDS + 2))
+while ((SECONDS < deadline)) && [[ $(stty size 2>/dev/null) == "24 80" ]]; do
+  sleep 0.02
+done
+
+while true; do
+  tte -i "$ART" \
+      --frame-rate 120 \
+      --canvas-width 0 --canvas-height 0 \
+      --anchor-canvas c --anchor-text c \
+      --reuse-canvas --no-eol --no-restore-cursor \
+      --random-effect &
+  tte_pid=$!
+
+  # Poll for a keypress while the effect plays; any key ends the screensaver.
+  while kill -0 "$tte_pid" 2>/dev/null; do
+    read -rsn1 -t 0.5 && cleanup
+  done
+done

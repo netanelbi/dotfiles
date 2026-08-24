@@ -1,0 +1,76 @@
+#!/bin/bash
+# One line of JSON describing the weather here, for the animated wallpaper.
+#   {"temp":25.2,"code":0,"isDay":1,"precip":0.0,"city":"Tel Aviv","desc":"Clear"}
+#
+# open-meteo, not wttr.in: wttr.in was returning HTTP 500 when this was written,
+# and open-meteo needs no API key and no account.
+#
+# Location comes from IP once and is cached for a week -- it is a laptop, but it
+# is not usually a different city, and geolocating on every poll is rude.
+
+set -uo pipefail
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/weather-now"
+LOC_CACHE="$CACHE_DIR/location.json"
+mkdir -p "$CACHE_DIR"
+
+fail() { echo '{"ok":false}'; exit 0; }   # never print junk; the caller shows nothing
+
+# ---- manual override wins ----
+# IP geolocation follows the ISP, not the user: it reported Tel Aviv for a
+# machine in Nahariyya. Anything in this file is used verbatim and is never
+# overwritten by the IP lookup.
+#   ~/.config/weather-now/location.json  ->  {"lat":33.0058,"lon":35.0942,"city":"Nahariyya"}
+OVERRIDE="${XDG_CONFIG_HOME:-$HOME/.config}/weather-now/location.json"
+if [[ -s $OVERRIDE ]]; then
+    LOC_CACHE="$OVERRIDE"
+fi
+
+# ---- location by IP, cached for 7 days (only when there is no override) ----
+if [[ $LOC_CACHE != "$OVERRIDE" ]] && { [[ ! -s $LOC_CACHE ]] || [[ $(find "$LOC_CACHE" -mtime +7 2>/dev/null) ]]; }; then
+    loc=$(timeout 8 curl -fsS "http://ip-api.com/json/?fields=lat,lon,city" 2>/dev/null) || loc=""
+    [[ -n $loc ]] && printf '%s' "$loc" >"$LOC_CACHE"
+fi
+[[ -s $LOC_CACHE ]] || fail
+
+read -r lat lon city < <(python3 -c "
+import json,sys
+d=json.load(open('$LOC_CACHE'))
+print(d['lat'], d['lon'], d.get('city','').replace(' ','_'))
+" 2>/dev/null) || fail
+
+# ---- current conditions ----
+url="https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon"
+url+="&current=temperature_2m,weather_code,is_day,precipitation,wind_speed_10m,cloud_cover&timezone=auto"
+resp=$(timeout 10 curl -fsS "$url" 2>/dev/null) || fail
+[[ -n $resp ]] || fail
+
+printf '%s' "$resp" | python3 -c "
+import json,sys
+try: c = json.load(sys.stdin)['current']
+except Exception: print('{\"ok\":false}'); sys.exit(0)
+
+code = c.get('weather_code', 0)
+# WMO 4677. Only the buckets the wallpaper actually reacts to.
+if   code == 0:            desc = 'Clear'
+elif code in (1,2,3):      desc = 'Cloudy'
+elif code in (45,48):      desc = 'Fog'
+elif 51 <= code <= 57:     desc = 'Drizzle'
+elif 61 <= code <= 67:     desc = 'Rain'
+elif 71 <= code <= 77:     desc = 'Snow'
+elif 80 <= code <= 82:     desc = 'Showers'
+elif 85 <= code <= 86:     desc = 'Snow showers'
+elif 95 <= code <= 99:     desc = 'Thunderstorm'
+else:                      desc = 'Unknown'
+
+print(json.dumps({
+    'ok': True,
+    'temp': c.get('temperature_2m'),
+    'code': code,
+    'isDay': c.get('is_day', 1),
+    'precip': c.get('precipitation', 0),
+    'city': '$city'.replace('_',' '),
+    'desc': desc,
+    'wind': c.get('wind_speed_10m', 0),
+    'cloud': c.get('cloud_cover', 0),
+}))
+"
