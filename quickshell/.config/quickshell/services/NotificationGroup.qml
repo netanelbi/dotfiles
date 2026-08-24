@@ -39,9 +39,9 @@ Item {
   readonly property bool collapsed: multi && !expanded
   // Cards peeking out from under the top one, capped at two like swaync's.
   readonly property int peeks: collapsed ? Math.min(2, entries.length - 1) : 0
-  // .control-center padding 12 + .notification-background padding 12 +
-  // .notification margin 12, off a panel that is centerWidth - 20 wide.
-  readonly property int cardWidth: store.centerWidth - 20 - 2 * 12 - 2 * 12
+  // The measured width of a control-center row in the running swaync; the
+  // list around it is sized to match.
+  readonly property int cardWidth: store.centerCardWidth
 
   readonly property var head: entries.length > 0 ? entries[0] : null
   readonly property string headIcon: {

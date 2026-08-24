@@ -60,6 +60,13 @@ Scope {
   // ~/.dotfiles/swaync/.config/swaync/config.json, one property per key.
   readonly property int popupWidth: 400        // notification-window-width
   readonly property int centerWidth: 400       // control-center-width
+  // control-center-width is not what swaync's panel ends up being: it sizes
+  // the panel around its list, so the running control center measures 427px
+  // wide (border to border, 20px off the right edge) with a 316px card
+  // centred in it -- 53px of gutter on each side. Measured off the live panel
+  // rather than derived, because no arithmetic on the config gets there.
+  readonly property int centerPanelWidth: 427
+  readonly property int centerCardWidth: 316
   readonly property int timeoutNormal: 10      // timeout
   readonly property int timeoutLow: 5          // timeout-low
   readonly property int timeoutCritical: 0     // timeout-critical (0 = never)

@@ -120,7 +120,7 @@ PanelWindow {
       anchors.topMargin: 20            // config margin 10 + .control-center 10
       anchors.bottomMargin: 20
       anchors.rightMargin: 20
-      width: center.store.centerWidth - 20
+      width: center.store.centerPanelWidth
 
       color: Theme.base
       radius: 12
@@ -284,7 +284,13 @@ PanelWindow {
 
           Flickable {
             id: list
-            anchors.fill: parent
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            // The list is exactly one card wide (plus the card's own 12px
+            // margins) and centred, which is what puts swaync's 53px gutter
+            // on both sides of the control-center rows.
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: center.store.centerCardWidth + 24
             contentHeight: groups.height
             clip: true
             boundsBehavior: Flickable.StopAtBounds
