@@ -38,6 +38,12 @@ Scope {
   property var results: []
   property bool loading: false
 
+  // The row the preview pane follows. Bound to the list's cursor, so arrowing
+  // through updates the preview -- which is the whole point of the split view:
+  // rofi could only ever shell out to imv on Alt+P.
+  readonly property var current: (list.currentIndex >= 0 && list.currentIndex < results.length)
+                                 ? results[list.currentIndex] : null
+
   function reload() {
     root.entries = []
     root.results = []
@@ -126,7 +132,7 @@ Scope {
 
     prompt: "Clipboard"
     accent: Theme.accent           // catppuccin.rasi: border-color @mauve
-    panelWidth: 500
+    panelWidth: 900
     cornerRadius: 12
     placeholder: "Search clipboard..."
     list: list
@@ -140,9 +146,12 @@ Scope {
     onAltAccepted: root.preview()
     onQueryChanged: root.refilter()
 
+    Row {
+      width: parent.width
+
     LauncherList {
       id: list
-      width: parent.width
+      width: 470
       accent: panel.accent
       rowHeight: 56
       rows: 8
@@ -263,6 +272,77 @@ Scope {
         font.pixelSize: Style.font.size
         renderType: Text.NativeRendering
       }
+    }
+
+    // ------------------------------------------------------- preview pane
+    // Follows the list cursor rather than needing a keypress. An image entry
+    // shows the real file at size; a text entry shows the whole thing, which
+    // the 1-line list row can only elide.
+    Item {
+      width: parent.width - list.width
+      height: list.height
+
+      Rectangle {
+        anchors.fill: parent
+        anchors.margins: 1
+        color: Theme.mantle
+        radius: 8
+
+        // Vertical hairline separating the two panes.
+        Rectangle {
+          width: 1; height: parent.height
+          color: Theme.surface0
+        }
+
+        // --- image entry ---
+        Image {
+          anchors.fill: parent
+          anchors.margins: 18
+          visible: root.current !== null && root.current.image !== ""
+          source: (root.current && root.current.image !== "") ? "file://" + root.current.image : ""
+          fillMode: Image.PreserveAspectFit
+          asynchronous: true
+          smooth: true
+          // Cap the decode: some clipboard images are screenshots of a 4K
+          // display and decoding them at full size stalls the whole panel.
+          sourceSize.width: 900
+          opacity: status === Image.Ready ? 1 : 0
+          Behavior on opacity { NumberAnimation { duration: Style.anim.opacityDuration } }
+        }
+
+        // --- text entry ---
+        Flickable {
+          anchors.fill: parent
+          anchors.margins: 18
+          visible: root.current !== null && root.current.image === ""
+          contentHeight: fullText.implicitHeight
+          clip: true
+          interactive: contentHeight > height
+
+          Text {
+            id: fullText
+            width: parent.width
+            text: root.current ? root.current.display : ""
+            wrapMode: Text.Wrap
+            color: Theme.text
+            font.family: Style.font.family
+            font.pixelSize: Style.font.size
+            renderType: Text.NativeRendering
+          }
+        }
+
+        // --- nothing selected ---
+        Text {
+          anchors.centerIn: parent
+          visible: root.current === null
+          text: root.loading ? "…" : "nothing selected"
+          color: Theme.overlay0
+          font.family: Style.font.family
+          font.pixelSize: Style.font.size
+          renderType: Text.NativeRendering
+        }
+      }
+    }
     }
   }
 
