@@ -16,8 +16,8 @@ profile="$1"
 # cycle overlapping the udev AC handler — fire overlapping ryzenadj writes to
 # the single SMU mailbox, desyncing it. The SMU then stops responding
 # ("amdgpu: SMU: No response") and the whole machine hard-freezes (gfx ring +
-# ACPI + xhci death). World-writable lock so both the user (keybind) and root
-# (udev) callers share it. See memory: ryzenadj_smu_freeze.
+# ACPI + xhci death). One shared lock so the user (keybind) and root (udev)
+# callers serialize against each other. See memory: ryzenadj_smu_freeze.
 #
 # Waits for the lock rather than dropping (this was `flock -n 9 || exit 0`).
 # Serialization is the property that prevents the freeze — queuing preserves it,
@@ -25,10 +25,30 @@ profile="$1"
 # a lost press is harmless, but ppd-tdp-watch and the resume hook are the only
 # things that apply TDP for boot/resume/auto-switch: a silent drop there leaves
 # the machine on firmware defaults with no indication anything went wrong.
-LOCK=/tmp/power-profile-tdp-hook.lock
-[ -e "$LOCK" ] || (umask 0; : > "$LOCK")
-exec 9>>"$LOCK"
-flock -w 10 9 || { logger -t power-profile-tdp-hook "lock timeout, TDP NOT applied"; exit 0; }
+#
+# The lock lives in /run/user/1000, NOT /tmp. /tmp is world-writable + sticky, so
+# fs.protected_regular (=1) refuses an O_CREAT open of a file the opener does not
+# own unless /tmp's owner (root) owns it. This hook runs as BOTH netanel (keybind)
+# and root (udev, post-resume-check), so the netanel-owned /tmp lock silently shut
+# root out: "Permission denied" -> "flock: 9: Bad file descriptor" -> exit 0. Every
+# post-resume TDP re-apply had been skipped, while post-resume-check still logged
+# "TDP re-applied" (found 2026-08-23; machine sat at 86C on battery all day).
+# /run/user/1000 is 0700 netanel-owned and not sticky, so netanel opens it normally
+# and root opens it via DAC_OVERRIDE.
+LOCK=/run/user/1000/power-profile-tdp-hook.lock
+[ -d /run/user/1000 ] || LOCK=/tmp/power-profile-tdp-hook.lock
+[ -e "$LOCK" ] || (umask 0; : > "$LOCK") 2>/dev/null
+
+# Fail OPEN when the lock cannot be opened at all: losing the race guard is a rare
+# risk, skipping the apply is firmware defaults with no thermal cap — the failure
+# that just bit us. A real flock timeout still declines, because that means another
+# run holds the lock, i.e. serialization is working as intended.
+if ( exec 9>>"$LOCK" ) 2>/dev/null; then
+    exec 9>>"$LOCK"
+    flock -w 10 9 || { logger -t power-profile-tdp-hook "lock timeout, TDP NOT applied"; exit 0; }
+else
+    logger -t power-profile-tdp-hook "cannot open $LOCK - applying TDP UNLOCKED"
+fi
 
 # Run ryzenadj/fix-cpu-freq as root when invoked by udev, via sudo -n when invoked
 # by a user keybind (NOPASSWD sudoers expected; -n avoids hanging on a prompt).
