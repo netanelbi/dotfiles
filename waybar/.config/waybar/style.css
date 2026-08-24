@@ -119,7 +119,9 @@ window#waybar {
 #pulseaudio,
 #battery {
     color: @text;
-    padding: 0 10px;
+    /* 10px each side put a 20px gap between neighbours (volume<->battery was
+       the worst). 6px keeps them separated without the trough. */
+    padding: 0 6px;
 }
 
 #language {
