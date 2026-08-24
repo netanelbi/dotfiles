@@ -7,6 +7,7 @@
 import Quickshell
 
 import "launchers"
+import "services"
 
 // Entry point. One bar per connected monitor; Variants keeps that in sync as
 // monitors come and go (docking, sunshine-prep's mode switch, lid close).
@@ -21,4 +22,10 @@ ShellRoot {
   // this line is what constructs the five IpcHandlers (apps/clipboard/calc/
   // emoji/power) that `qs ipc call <target> toggle` talks to.
   Launchers { }
+
+  // Volume / brightness / mute OSD, replacing swayosd-server.
+  Osd { }
+
+  // org.freedesktop.Notifications: popups + control center, replacing swaync.
+  Notifications { }
 }
