@@ -223,7 +223,11 @@ Scope {
     if (!body) return ""
     var plain = body.replace(/<[^>]*>/g, " ")
     var m = /(?:^|\s)(\d{3}(?:-| )\d{3}|\d{4,8})(?=$|[\s.,])/.exec(plain)
-    return m ? m[1] : ""
+    if (!m) return ""
+    // Strip the separator. A code shown as "481-923" must be copied as
+    // "481923" -- pasting the dashed form into a 6-box OTP field fails, and
+    // that is the entire point of the action. swaync strips it too.
+    return m[1].replace(/[^0-9]/g, "")
   }
 
   // ------------------------------------------------------------- lists
