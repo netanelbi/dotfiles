@@ -26,10 +26,19 @@ hl.on("hyprland.start", function()
     -- waybar from the previous Hyprland instance can stay active and `start` would
     -- no-op — leaving hyprland/workspaces bound to the dead IPC socket (frozen
     -- workspace numbers until reboot). restart always rebinds to the live session.
-    hl.exec_cmd("systemctl --user restart waybar.service")
-    hl.exec_cmd("swaync")
-    hl.exec_cmd("awww-daemon &")
-    hl.exec_cmd("sleep 1 && awww img /usr/share/hypr/wall2.png")
+    -- Quickshell replaces waybar + swaync + swayosd + awww in ONE process:
+    -- the bar, notifications, the OSD, the wallpaper and the rofi replacements
+    -- all live in ~/.config/quickshell. hypridle stays (below) because it owns
+    -- the org.freedesktop.ScreenSaver D-Bus name and Quickshell exposes no way
+    -- to register one.
+    --
+    -- To fall back, comment this line out and uncomment the four below it.
+    hl.exec_cmd("quickshell -n -p ~/.config/quickshell")
+
+    -- hl.exec_cmd("systemctl --user restart waybar.service")
+    -- hl.exec_cmd("swaync")
+    -- hl.exec_cmd("awww-daemon &")
+    -- hl.exec_cmd("sleep 1 && awww img /usr/share/hypr/wall2.png")
     -- restart (not start): same lingering-user-manager trap as waybar — a stale
     -- hypridle from a previous Hyprland instance stays active, so `start` no-ops and
     -- it keeps polling a dead compositor (idle locks dead; before_sleep_cmd's hyprlock
@@ -38,7 +47,7 @@ hl.on("hyprland.start", function()
 
     -- Monitor hotplug - reapply wallpaper on connect, switch to workspace 1 on disconnect
     hl.exec_cmd("~/.local/bin/hypr-monitor-handler")
-    hl.exec_cmd("swayosd-server")
+    -- hl.exec_cmd("swayosd-server")   -- replaced by Quickshell's OSD
     hl.exec_cmd("wl-paste --type text --watch cliphist store")
     hl.exec_cmd("wl-paste --type image --watch cliphist store")
     hl.exec_cmd("~/.local/bin/hypr-zen-popup-watch")
@@ -120,7 +129,7 @@ hl.bind("switch:off:Lid Switch", hl.dsp.exec_cmd("~/.local/bin/hypr-lid-switch o
 hl.bind(mainMod .. " + Return", hl.dsp.exec_cmd(terminal))
 hl.bind("CTRL + ALT + T",       hl.dsp.exec_cmd(terminal))
 hl.bind("CTRL + ALT + W",       hl.dsp.exec_cmd(terminal .. " --working-directory ~/Work"))
-hl.bind(mainMod .. " + D",      hl.dsp.exec_cmd("pkill -x rofi || " .. menu))
+hl.bind(mainMod .. " + D",      hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call apps toggle"))
 hl.bind(mainMod .. " + E",      hl.dsp.exec_cmd("thunar"))
 
 -- Window management
@@ -197,20 +206,20 @@ hl.bind(mainMod .. " + ALT + S",   hl.dsp.exec_cmd("~/.local/bin/hypr-scratchpad
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd("~/.local/bin/power-profile-cycle"))
 
 -- Brightness controls (with OSD)
-hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd("swayosd-client --brightness raise"), { repeating = true })
-hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("swayosd-client --brightness lower"), { repeating = true })
+hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call osd brightness raise"), { repeating = true })
+hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call osd brightness lower"), { repeating = true })
 
 -- Volume controls (with OSD)
-hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("swayosd-client --output-volume raise"), { repeating = true })
-hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd("swayosd-client --output-volume lower"), { repeating = true })
-hl.bind("XF86AudioMute",        hl.dsp.exec_cmd("swayosd-client --output-volume mute-toggle"))
-hl.bind("XF86AudioMicMute",     hl.dsp.exec_cmd("swayosd-client --input-volume mute-toggle"))
+hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call osd outputVolume raise"), { repeating = true })
+hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call osd outputVolume lower"), { repeating = true })
+hl.bind("XF86AudioMute",        hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call osd outputVolume mute-toggle"))
+hl.bind("XF86AudioMicMute",     hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call osd inputVolume mute-toggle"))
 
 -- Emoji picker (overrides bluetooth toggle on Fn+emoji key)
-hl.bind("XF86Bluetooth", hl.dsp.exec_cmd("rofi -modi emoji -show emoji"))
+hl.bind("XF86Bluetooth", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call emoji toggle"))
 
 -- Calculator (live results)
-hl.bind(mainMod .. " + K", hl.dsp.exec_cmd([[rofi -show calc -modi calc -plugin-path /usr/lib/rofi -no-show-match -no-sort -no-history -calc-command "echo -n '{result}' | wl-copy" -theme ~/.config/rofi/calc.rasi]]))
+hl.bind(mainMod .. " + K", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call calc toggle"))
 
 -- Resize cycle (tiled: 33%->50%->67%, floating: 90% centered)
 -- Percent sizes have no typed equivalent in the 0.55+ Lua dispatchers (x/y are
@@ -219,13 +228,18 @@ hl.bind(mainMod .. " + K", hl.dsp.exec_cmd([[rofi -show calc -modi calc -plugin-
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd([==[bash -c 'w=$(hyprctl activewindow -j); [[ "$w" == "null" ]] && exit; read mw mh < <(hyprctl monitors -j | jq -r "first(.[]|select(.focused)) | [(.width/.scale|floor),(.height/.scale|floor)] | @tsv"); [[ -z "$mw" ]] && exit; if [[ $(echo "$w"|jq ".floating") == "true" ]]; then hyprctl dispatch "hl.dsp.window.resize({ x = $((mw*90/100)), y = $((mh*80/100)) })" && hyprctl dispatch "hl.dsp.window.center()"; else f=/tmp/hypr-resize-state; r=$(cat $f 2>/dev/null); case $r in 33) r=50;; 50) r=67;; *) r=33;; esac; echo $r > $f; hyprctl dispatch "hl.dsp.window.resize({ x = $((mw*r/100)), y = $((mh*r/100)) })"; fi']==]))
 
 -- Power menu
-hl.bind(mainMod .. " + Escape", hl.dsp.exec_cmd("pkill -x rofi || ~/.local/bin/powermenu"))
+hl.bind(mainMod .. " + Escape", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call power toggle"))
 
 ----------------------
 ---- WINDOW RULES ----
 ----------------------
 
 -- Prevent idle lock for games (gamepad input doesn't reset idle timer)
+-- Screensaver: a fullscreen kitty running tte. Needs fullscreen + no border,
+-- and idle_inhibit so it does not fight whatever idle system is running.
+hl.window_rule({ name = "vivo-screensaver", match = { class = "^org\\.vivo\\.screensaver$" },
+    fullscreen = true, idle_inhibit = "always" })
+
 hl.window_rule({ name = "idle-inhibit-steam",     match = { class = "^steam_app" }, idle_inhibit = "always" })
 hl.window_rule({ name = "idle-inhibit-gamescope", match = { class = "^gamescope" }, idle_inhibit = "always" })
 
