@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""pi-ollama-catalog-sync -- correct pi's Ollama model entries from Ollama itself.
+
+~/.pi/agent/models.json is hand-written config, not a fetched catalog, so its
+numbers drift from reality and nothing ever corrects them. They were wrong in
+ways that change behaviour rather than just cosmetics:
+
+    deepseek-v4-flash:0731   contextWindow 131072   ->  1048576   (8x short)
+                             reasoning     false     ->  true      (it emits
+                                                                   thinking_delta)
+
+Ollama knows the truth and will say so:
+
+    POST {origin}/api/show  {"model": "<id>"}
+      .capabilities            ["completion","tools","thinking","vision"]
+      .model_info["<family>.context_length"]
+
+so this asks, and writes the answer back.
+
+------------------------------------------------------------------- on vision
+`input: ["text","image"]` is set when the model reports the `vision` capability
+-- OR when the provider's baseUrl is the ollama-shim, because the shim describes
+images with a vision model and rewrites them to text before they ever reach a
+text-only model. Through the shim every model accepts images, so declaring
+otherwise makes pi refuse to send an image the endpoint would have handled.
+
+The shim is detected by asking for `/__caps`, which only it serves. If the
+baseUrl is plain ollama.com, only genuinely vision-capable models get "image".
+
+------------------------------------------------------------------- maxTokens
+Deliberately NOT touched. /api/show does not report an output cap, and guessing
+one high enough to be rejected turns every long answer into an API error. Raise
+it by hand if you know the real number for a model.
+
+Usage:
+    pi-ollama-catalog-sync            # show what would change, then apply
+    pi-ollama-catalog-sync --dry-run  # show only
+    pi-ollama-catalog-sync --provider ollama --origin https://ollama.com
+"""
+
+import argparse
+import json
+import os
+import shutil
+import sys
+import time
+import urllib.error
+import urllib.request
+
+MODELS = os.path.expanduser("~/.pi/agent/models.json")
+DEFAULT_ORIGIN = "https://ollama.com"
+
+
+def post_json(url, payload, token, timeout=20):
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                 "User-Agent": UA},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
+# The edge in front of these hosts 403s urllib's default User-Agent while
+# letting curl through -- the same block the `ncym` provider in models.json
+# already works around with an explicit "User-Agent: curl/8.5.0" header. Without
+# this every probe below fails closed and the script silently decides the shim
+# is not there.
+UA = "curl/8.5.0"
+
+
+def is_shim(base_url, timeout=8):
+    """`/__caps` is served by ollama-shim and by nothing else.
+
+    Returns True / False / None, where None means "could not tell" -- a network
+    failure must not be reported as "no shim", because that quietly strips image
+    support from every model."""
+    origin = base_url.rstrip("/")
+    if origin.endswith("/v1"):
+        origin = origin[:-3]
+    req = urllib.request.Request(origin + "/__caps", headers={"User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status == 200
+    except urllib.error.HTTPError as e:
+        # A real HTTP answer that is not 200 means something is there and it is
+        # not the shim.
+        return False if e.code in (404, 405) else None
+    except Exception:
+        return None
+
+
+def context_length(info):
+    """model_info keys are namespaced by family, e.g. `deepseek4.context_length`."""
+    if not isinstance(info, dict):
+        return None
+    for k, v in info.items():
+        if k.endswith(".context_length") and isinstance(v, int) and v > 0:
+            return v
+    return None
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--provider", default="ollama")
+    ap.add_argument("--origin", default=DEFAULT_ORIGIN,
+                    help="where to ASK (the origin knows; a proxy may not expose /api/show)")
+    ap.add_argument("--file", default=MODELS)
+    args = ap.parse_args()
+
+    try:
+        with open(args.file) as f:
+            doc = json.load(f)
+    except OSError as e:
+        sys.exit(f"cannot read {args.file}: {e}")
+
+    prov = (doc.get("providers") or {}).get(args.provider)
+    if not prov:
+        sys.exit(f"no provider {args.provider!r} in {args.file}")
+
+    token = prov.get("apiKey") or os.environ.get("OLLAMA_API_KEY")
+    if not token:
+        sys.exit("no apiKey on the provider and no OLLAMA_API_KEY")
+
+    shim = is_shim(prov.get("baseUrl", ""))
+    print(f"provider {args.provider}  baseUrl {prov.get('baseUrl')}")
+    print(f"asking   {args.origin}/api/show")
+    if shim is None:
+        print("shim     UNKNOWN -- /__caps could not be reached; leaving `input` alone")
+    else:
+        print(f"shim     {'yes -- it describes images, so every model takes image input' if shim else 'no'}")
+    print()
+
+    changes = []
+    for m in prov.get("models") or []:
+        mid = m.get("id")
+        if not mid:
+            continue
+        try:
+            info = post_json(f"{args.origin}/api/show", {"model": mid}, token)
+        except urllib.error.HTTPError as e:
+            print(f"  {mid:<26} SKIP  HTTP {e.code}")
+            continue
+        except Exception as e:
+            print(f"  {mid:<26} SKIP  {e}")
+            continue
+
+        caps = info.get("capabilities") or []
+        want = {}
+
+        ctx = context_length(info.get("model_info"))
+        if ctx and ctx != m.get("contextWindow"):
+            want["contextWindow"] = ctx
+
+        reasoning = "thinking" in caps
+        if reasoning != bool(m.get("reasoning")):
+            want["reasoning"] = reasoning
+
+        # `shim is None` means the probe failed; do not touch `input` on a guess.
+        if shim is not None:
+            inp = ["text", "image"] if ("vision" in caps or shim) else ["text"]
+            if inp != (m.get("input") or []):
+                want["input"] = inp
+
+        if not want:
+            print(f"  {mid:<26} ok")
+            continue
+
+        for k, v in want.items():
+            print(f"  {mid:<26} {k}: {m.get(k)!r} -> {v!r}")
+        changes.append((m, want))
+        time.sleep(0.1)  # be polite to the API
+
+    if not changes:
+        print("\nnothing to change.")
+        return
+
+    if args.dry_run:
+        print(f"\n--dry-run: {len(changes)} model(s) would change.")
+        return
+
+    backup = f"{args.file}.{int(time.time())}.bak"
+    shutil.copy2(args.file, backup)
+    for m, want in changes:
+        m.update(want)
+    with open(args.file, "w") as f:
+        json.dump(doc, f, indent=2)
+        f.write("\n")
+    print(f"\nwrote {args.file}  (backup: {backup})")
+    print("restart any running pi for it to take effect.")
+
+
+if __name__ == "__main__":
+    main()
