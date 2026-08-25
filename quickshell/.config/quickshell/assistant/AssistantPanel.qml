@@ -429,6 +429,53 @@ PanelWindow {
           transcript.stuck = transcript.belowBottom <= transcript.stickSlack
     }
 
+    // ----------------------------------------------------------------- toast
+    // Says a selection reached the clipboard. It exists because the copy is
+    // SILENT otherwise: selecting text is something you do all the time without
+    // meaning anything by it, so a copy that leaves no trace is indistinguishable
+    // from nothing having happened, and you would reach for Ctrl+C anyway.
+    //
+    // Over the composer rather than over the transcript, so it never covers the
+    // words that were just copied. Bound to Copy.at rather than to a signal:
+    // copying again while it is still up restarts this one instead of stacking
+    // a second.
+    Rectangle {
+      id: toast
+      anchors { right: composer.right; bottom: composer.top; rightMargin: 12; bottomMargin: 6 }
+      width: toastText.implicitWidth + 20
+      height: toastText.implicitHeight + 10
+      radius: height / 2
+      color: Theme.surface1
+      opacity: 0
+      visible: opacity > 0
+
+      Text {
+        id: toastText
+        anchors.centerIn: parent
+        text: "copied"
+        color: Theme.subtext0
+        font.family: Style.font.family
+        font.pixelSize: Style.font.panelMeta
+        renderType: Text.NativeRendering
+      }
+
+      Connections {
+        target: Copy
+        function onAtChanged() { if (Copy.at > 0) life.restart() }
+      }
+
+      // The animation IS the lifetime -- one timeline, no second clock, the
+      // same shape NotificationCard uses.
+      SequentialAnimation {
+        id: life
+        NumberAnimation { target: toast; property: "opacity"; to: 1
+                          duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+        PauseAnimation { duration: 900 }
+        NumberAnimation { target: toast; property: "opacity"; to: 0
+                          duration: Style.anim.reveal; easing.type: Style.anim.easingSmooth }
+      }
+    }
+
     // Ctrl+R. Sits exactly over the transcript rather than over the whole card,
     // so the composer and the footer stay visible and the panel never stops
     // looking like the same panel.

@@ -488,19 +488,34 @@ Item {
             implicitHeight: piece.modelData.image ? shot.implicitHeight : chunk.implicitHeight
             height: implicitHeight
 
-            Text {
+            // A TextEdit, not a Text, for ONE reason: Text has no
+            // selectedText change signal, so there is no moment at which to
+            // notice that a selection happened. Read-only, and it never takes
+            // the keyboard (activeFocusOnPress false) -- the composer keeps
+            // focus, so dragging across an answer does not stop you typing.
+            TextEdit {
               id: chunk
               width: parent.width
               visible: !piece.modelData.image
               text: piece.modelData.image ? "" : piece.modelData.text
               color: Theme.text
-              wrapMode: Text.Wrap
+              readOnly: true
+              activeFocusOnPress: false
+              wrapMode: TextEdit.Wrap
               // The model answers in markdown, so render it -- otherwise every
               // emphasis arrives as literal **asterisks** and every code span as
               // backticks. Mid-stream an unclosed marker renders as plain text and
               // settles the moment its partner arrives, which is invisible at these
               // token rates.
-              textFormat: Text.MarkdownText
+              textFormat: TextEdit.MarkdownText
+              // Selecting copies, on its own -- see Copy.qml for why there is
+              // no confirming keypress. Per BLOCK, because the answer is a
+              // column of pieces so images can sit inline, and a drag cannot
+              // cross from one piece into the next.
+              selectByMouse: true
+              selectionColor: Theme.sapphire
+              selectedTextColor: Theme.base
+              onSelectedTextChanged: Copy.take(selectedText)
               font.family: Style.font.family
               font.pixelSize: Style.font.panelBody
               renderType: Text.NativeRendering
