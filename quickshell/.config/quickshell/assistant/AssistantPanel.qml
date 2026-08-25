@@ -853,10 +853,24 @@ PanelWindow {
         }
       }
 
+      // Model, and the thinking level beside it. Both are what `/model` and
+      // `/effort` change, and this is the whole of what those commands SHOW --
+      // deliberately, because a state readout that already existed is a better
+      // confirmation than a message announcing a change: it is still true five
+      // minutes later, and it reports the level pi actually settled on rather
+      // than the one that was asked for. set_thinking_level clamps silently
+      // (`max` becomes `high` on this model), so the two can differ, and the
+      // one worth showing is this one.
+      //
+      // Appended to the existing label rather than given a slot of its own,
+      // because the footer is 24px with a context readout already on the right
+      // and a second element would be laying claim to room another widget may
+      // want. The level is blank until a child has reported one, so a panel that
+      // has never run says nothing rather than guessing.
       Text {
         anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter
                   verticalCenterOffset: 1 }
-        text: PiSession.model
+        text: PiSession.model + (PiSession.effortLabel !== "" ? "  ·  " + PiSession.effortLabel : "")
         color: Theme.overlay0
         elide: Text.ElideRight
         font.family: Style.font.family
@@ -877,6 +891,25 @@ PanelWindow {
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
+      }
+
+      // How much of the Ollama Cloud plan is left. The third "how much is left"
+      // number on this strip, and the only one the conversation cannot give
+      // back: clearing the transcript empties the context gauge beside it and
+      // moves this one not at all. One window rather than two, and a dash
+      // rather than a zero when it does not know -- see Usage.qml for both.
+      Text {
+        anchors { horizontalCenter: parent.horizontalCenter
+                  verticalCenter: parent.verticalCenter; verticalCenterOffset: 1 }
+        text: Usage.label
+        color: Usage.tint
+        font.family: Style.font.family
+        font.pixelSize: Style.font.panelMeta
+        renderType: Text.NativeRendering
+
+        Behavior on color {
+          ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
+        }
       }
     }
   }
