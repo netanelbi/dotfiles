@@ -145,7 +145,7 @@ PanelWindow {
   FontMetrics {
     id: metrics
     font.family: Style.font.family
-    font.pixelSize: Style.font.small
+    font.pixelSize: Style.font.panelBody
   }
 
   // ------------------------------------------------------------------ state
@@ -279,7 +279,10 @@ PanelWindow {
     transform: Scale {
       origin.x: scrim.width / 2
       origin.y: scrim.height / 2
-      yScale: 56 / (scrim.height / 2)
+      // Taller than it was (56): the words sat near the scrim's falloff, where
+      // its alpha is a fraction of the number written below, so over a bright
+      // window they were being read against almost nothing.
+      yScale: 72 / (scrim.height / 2)
     }
 
     ShapePath {
@@ -294,9 +297,12 @@ PanelWindow {
         // second stop is the one that actually does the work: measured off a
         // capture, it puts ~0.6 alpha of @crust behind the text and reaches
         // zero long before the disc has an edge anyone could point at.
-        GradientStop { position: 0.0; color: Theme.alpha(Theme.crust, 0.80) }
-        GradientStop { position: 0.35; color: Theme.alpha(Theme.crust, 0.62) }
-        GradientStop { position: 0.70; color: Theme.alpha(Theme.crust, 0.18) }
+        // Darker than the first pass, which was tuned against a dark wallpaper
+        // and disappeared over a bright window. The outer stops stay near zero,
+        // so this is still a shadow with no edge anywhere rather than a card.
+        GradientStop { position: 0.0; color: Theme.alpha(Theme.crust, 0.94) }
+        GradientStop { position: 0.35; color: Theme.alpha(Theme.crust, 0.82) }
+        GradientStop { position: 0.70; color: Theme.alpha(Theme.crust, 0.34) }
         GradientStop { position: 1.0; color: Theme.alpha(Theme.crust, 0) }
       }
       startX: 0; startY: 0
@@ -388,7 +394,10 @@ PanelWindow {
     verticalAlignment: Text.AlignTop
     elide: Text.ElideRight
     font.family: Style.font.family
-    font.pixelSize: Style.font.small
+    // The panel's reading size, not the bar's. This is a sentence, at whatever
+    // distance you happen to be from the screen when it lands -- the bar's 14px
+    // is for a strip you are already looking at.
+    font.pixelSize: Style.font.panelBody
     lineHeight: 1.25
     renderType: Text.NativeRendering
   }

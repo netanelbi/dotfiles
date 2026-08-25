@@ -182,13 +182,18 @@ Singleton {
     readonly property int auraHeight: 132
     // Alpha at the seam (the bar's underside), and how far the whole thing is
     // turned down to the steady wash left behind while an answer waits unread.
-    readonly property real auraCore: 0.30
+    // Turned down from 0.30/0.46 after living with it: at full strength the
+    // travelling pool read as an ALERT rather than as something working, and
+    // the point of an ambient gauge is that it can be ignored. The ratio
+    // between the two is what carries the effect, not their absolute size, so
+    // both came down together and the pool is still the brighter of the pair.
+    readonly property real auraCore: 0.22
     readonly property real auraRest: 0.62
     // The travelling pool is BRIGHTER than the seam it rides on, and the seam
     // is turned down while it travels. If the two are the same strength the
     // result reads as one flat translucent sheet with a bit of unevenness in
     // it -- measured, and it was the first version's whole problem.
-    readonly property real auraPoolPeak: 0.46
+    readonly property real auraPoolPeak: 0.30
     readonly property real auraSeamWhileTravelling: 0.5
     // Width of the pool. Wide enough that its falloff is gentler than the
     // screen it crosses; a small blob reads as a bug rather than as light.
