@@ -60,6 +60,10 @@ if [ "$(id -u)" = 0 ]; then ASROOT=; else ASROOT="sudo -n"; fi
 #   setting was unreachable, and at tctl 100 it ran 96C for LESS clock than 45W
 #   (thermal throttling oscillates; a clean power cap runs steady).
 #   Measured landing points on the matching fan curve:
+#     power-saver 15W -> tctl target 55C, deliberately low: at 15W the chip
+#                 reaches the mid 60s under load, so 55 actually bites and
+#                 trades clocks for a cool, quiet machine. Raise it if
+#                 power-saver ever feels too slow to work in.
 #     balanced    31W -> 78.5C, P-core 3051MHz   (quiet, stays under 80C)
 #     performance 45W -> 87.8C, P-core 3543MHz   (the real maximum)
 #   tctl is a safety net set just above where each wattage settles, NOT the control
@@ -68,7 +72,7 @@ if [ "$(id -u)" = 0 ]; then ASROOT=; else ASROOT="sudo -n"; fi
 # rejects a limit, and /dev/mem readback is blocked (CONFIG_IO_STRICT_DEVMEM), so
 # stderr is the only signal that a limit actually applied.
 case "$profile" in
-    power-saver) $ASROOT ryzenadj --stapm-limit=15000 --fast-limit=20000 --slow-limit=15000 --tctl-temp=75 ;;
+    power-saver) $ASROOT ryzenadj --stapm-limit=15000 --fast-limit=20000 --slow-limit=15000 --tctl-temp=55 ;;
     balanced)    $ASROOT ryzenadj --stapm-limit=31000 --fast-limit=37000 --slow-limit=31000 --tctl-temp=85 ;;
     performance) $ASROOT ryzenadj --stapm-limit=45000 --fast-limit=51000 --slow-limit=45000 --tctl-temp=92 ;;
 esac
