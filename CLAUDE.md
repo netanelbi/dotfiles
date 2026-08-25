@@ -292,6 +292,37 @@ Example:
 
 ## Troubleshooting
 
+### swaync silently steals the notifications
+`/usr/share/dbus-1/services/org.erikreider.swaync.service` claims
+`Name=org.freedesktop.Notifications`, so **any** notification sent while
+Quickshell is down D-Bus-activates swaync, which then holds the name until it is
+killed. Symptom: notifications look and behave differently after a Quickshell
+restart, for no apparent reason. Blocked with:
+
+```bash
+systemctl --user mask swaync.service     # undo: systemctl --user unmask
+```
+
+Quickshell re-acquires the name on its own the moment swaync exits — it logs
+"Registration will be attempted again if the active service is unregistered"
+and means it. Check the current owner with:
+
+```bash
+busctl --user list | grep org.freedesktop.Notifications
+```
+
+### Layer-shell windows must not resize while animating
+A layer surface that changes size has to wait for a compositor configure/ack
+round trip before it may commit, so a `PanelWindow` whose `implicitHeight` is
+bound to animating content does one round trip **per frame**. Measured on the
+notification popups: a 180ms entrance took 467ms and rendered as five lurches
+~100ms apart, at only ~2% CPU — the client was blocked, not busy. Size the
+surface once and animate inside it; frames then land at a flat 16ms.
+
+Diagnose by logging the window's `onImplicitHeightChanged` with `Date.now()` and
+reading it back with `qs -p ~/.config/quickshell log -f` (note: that prints the
+existing log before following, so compare against a line count taken first).
+
 ### Hyprland log
 `/run/user/$UID/hypr/$HYPRLAND_INSTANCE_SIGNATURE/hyprland.log` — first stop for idle/inhibit/dpms diagnostics. Find via `find /run/user/$UID/hypr -name hyprland.log`.
 

@@ -44,10 +44,15 @@ PanelWindow {
   visible: store.popups.length > 0
 
   implicitWidth: store.popupWidth
-  // +6: the packaged .notification-background padding above the first card.
-  // The clamp keeps a long burst inside the screen; the compositor clips the
-  // rest, which is what "notification-window-height: -1" means in swaync.
-  implicitHeight: Math.min(column.height + 6, screen ? screen.height - 24 : 800)
+  // The surface is sized once, to the tallest stack the screen can hold, and
+  // is never resized again while cards come and go. A layer surface that
+  // changes size has to wait for a compositor configure/ack round trip before
+  // it may commit the new size, so binding this to the animating column height
+  // meant one round trip per frame: measured, a 180ms entrance took 467ms and
+  // landed in five visible lurches, ~100ms apart. The cards animate inside a
+  // fixed surface instead, which is also what "notification-window-height: -1"
+  // means in swaync -- as tall as the compositor allows, oldest clipped.
+  implicitHeight: screen ? screen.height - 24 : 800
 
   mask: Region {
     x: 24                       // 12px margin + 12px padding
