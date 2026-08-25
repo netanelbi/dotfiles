@@ -41,14 +41,15 @@ Item {
   // not collapse to zero height, or the list jumps the moment the first token
   // lands.
   //
-  // The placeholder stands down once reasoning starts, because the reasoning
-  // line below occupies exactly the same one line. Reserving both was the
-  // remaining half of the transcript jumping: an answer grew by a line when
-  // reasoning began and shrank by one when it gave way to text, so every row
-  // above it moved twice per turn while the view chased the bottom.
+  // One line, for the whole time an answer is empty. Not a word, not a
+  // reasoning stream, not a spinner: the panel's own header already names the
+  // state ("thinking", "answering", "running bash") in a fixed place that
+  // cannot move anything, so a second announcement in the transcript was
+  // saying the same thing twice AND was the last thing in a turn that changed
+  // a row's height mid-flight.
   readonly property string bodyText: !turn ? ""
     : turn.text !== "" ? turn.text
-    : (pending && turn.thinking === "" ? " " : "")
+    : (pending ? " " : "")
 
   // Whether this turn's tool batch is open. One flag per turn, and it starts
   // closed: the detail is a click away, not a wall.
@@ -289,36 +290,6 @@ Item {
       x: 14
       width: parent.width - 14
       spacing: 6
-
-      // ------------------------------------------------------- reasoning
-      // The reasoning USED to be streamed here verbatim, as the loading state:
-      // it arrives ~300ms in, so unlike a spinner it told you within a second
-      // whether the question had been understood. In use that argument did not
-      // survive contact with the model -- the reasoning goes past far faster
-      // than anyone reads, so it was churn rather than information, and it was
-      // gone before it could be read anyway.
-      //
-      // Kept as ONE fixed line instead. That preserves the only part that was
-      // load-bearing (something is happening, and it is thinking rather than
-      // running a command) and drops the part that was not.
-      //
-      // Fixed is the operative word. A block whose height tracked streaming
-      // text grew and then vanished, which moved every row under it twice per
-      // turn -- half of the transcript jumping the user reported. One line that
-      // never changes size cannot do that.
-      Text {
-        width: parent.width
-        visible: !turnItem.user && turnItem.turn
-          && turnItem.turn.text === "" && turnItem.turn.thinking !== ""
-        text: "thinking…"
-        color: Theme.overlay0
-        font.italic: true
-        maximumLineCount: 1
-        elide: Text.ElideRight
-        font.family: Style.font.family
-        font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
-      }
 
       // ----------------------------------------------------------- tools
       // ONE line for the whole batch, not one block per call. While the turn
