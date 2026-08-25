@@ -151,8 +151,9 @@ PanelWindow {
       // custom/gamepads -- one span per connected pad, in its own lightbar colour.
       Gamepads { }
 
-      // Ori's heartbeat. Gone when there is nothing to say, dim while warm,
-      // pulsing while thinking, bright when an answer is waiting unread.
+      // Ori's readout. Gone when there is nothing to say, a dim glyph while
+      // warm, and a live strip -- verb, elapsed, characters streamed, scan
+      // line -- while it works or while an answer waits unread.
       OriDot { }
     }
 
@@ -187,6 +188,37 @@ PanelWindow {
     anchorItem: clockWidget
     barOriginX: Style.bar.marginSide
     cardTop: Style.bar.marginTop + Style.bar.height + 4
+  }
+
+  // ------------------------------------------------------------- ori's light
+  // The ambient half of the assistant: a fixed-size, input-transparent layer
+  // surface hanging off the bar's underside, which lights up while Ori works
+  // and floods once when an answer lands. Mounted here rather than in
+  // shell.qml for the same reason CalendarPopup is -- it is one surface PER
+  // MONITOR, and the bar is the thing that already exists per monitor.
+  //
+  // It is above the widgets in this file, which would normally kill every
+  // widget's click (see the INPUT note at the top). It does not, because it is
+  // a separate surface with an empty input mask. Nothing inside `content` may
+  // take that liberty.
+  //
+  // Built and destroyed with the work, so an idle desktop carries no extra
+  // layer surface at all. It must be built ALREADY VISIBLE -- see OriAura's
+  // header for what a hidden-then-shown layer surface does.
+  property bool auraRetain: false
+
+  LazyLoader {
+    // The flare outlives `unread`, which a click clears the instant the panel
+    // opens; the retain flag is what lets the light finish decaying instead of
+    // being cut off mid-fade.
+    // `error` is its own term: a crashed child never fires settled(), so
+    // `unread` stays false and the failure would light nothing.
+    active: PiSession.busy || PiSession.unread || PiSession.error !== "" || bar.auraRetain
+
+    component: OriAura {
+      barScreen: bar.screen
+      onFadingChanged: bar.auraRetain = fading
+    }
   }
 
   // Calendar reminders run whether or not the popover is ever opened, so the

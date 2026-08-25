@@ -20,9 +20,32 @@ import Quickshell.Io
 //   <- {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"50"}}
 //   <- {"type":"agent_settled"}
 //
-// Other commands the protocol accepts, for when this grows: steer, abort,
-// follow_up, new_session, set_model, compact, get_last_assistant_text. `prompt`
-// also takes an `images` array, which is the hook for feeding it a
+// The full command set, verified against the bundle -- this list used to be a
+// partial one and a reader concluded from it that context usage was
+// unobtainable, so it is now complete:
+//
+//   prompt  steer  abort  follow_up  new_session  switch_session  fork  clone
+//   compact  set_model  cycle_model  set_thinking_level  cycle_thinking_level
+//   set_auto_compaction  set_auto_retry  set_follow_up_mode  set_steering_mode
+//   set_session_name  bash  export_html  abort_bash  abort_retry
+//   get_state  get_session_stats  get_messages  get_entries  get_tree
+//   get_commands  get_last_assistant_text  get_fork_messages
+//   get_available_models  get_available_thinking_levels
+//
+// Two of those carry live instrumentation, both measured rather than assumed,
+// and BOTH are now read -- they are what the panel's token and context readouts
+// are made of:
+//
+//   message_update  .usage -> { input, output, cacheRead, cacheWrite, reasoning,
+//                   totalTokens, cost }. Streams DURING a turn, so a running
+//                   token count is free -- no extra call.
+//   get_session_stats -> { userMessages, assistantMessages, toolCalls, cost,
+//                   tokens, contextUsage: { tokens, contextWindow, percent } }.
+//                   That percent is the direct equivalent of a coding agent's
+//                   "36%" context readout. Asked for once per settled turn,
+//                   which is the only moment the answer can have changed.
+//
+// `prompt` also takes an `images` array, which is the hook for feeding it a
 // ScreencopyView grab of the focused window later.
 //
 // ------------------------------------------------------------- warm vs idle
@@ -141,8 +164,179 @@ Singleton {
   //             show it while the answer is empty and drop it afterwards
   //   tool      the tool call in flight on this turn, "" when none
   //   pending   true while this turn is still being written
-  ListModel { id: turnModel }
+  ListModel {
+    id: turnModel
+    // The derived views below are keyed by row index, so a cleared transcript
+    // has to drop them too -- otherwise turn 0 of the next conversation
+    // inherits the tool calls and the cost of turn 0 of the last one. Clearing
+    // the transcript also means `new_session`, which empties the context the
+    // usage numbers describe, so those go with it.
+    onCountChanged: {
+      if (count > 0) return
+      root.toolLog = ({})
+      root.turnCost = ({})
+      root.usageInput = 0
+      root.usageOutput = 0
+      root.usageTotal = 0
+      root.outputBase = 0
+    }
+  }
   readonly property alias turns: turnModel
+
+  // ------------------------------------------------------- derived readouts
+  // The panel has to answer four questions at a glance -- what is it doing, for
+  // how long, what did it touch, and how much room is left. Two of them fall
+  // out of the turn model ingest() already writes; the other two are measured
+  // instrumentation the protocol hands over (see `usage` and the stats probe
+  // below). They live here rather than in the panel so that the panel and the
+  // bar indicator cannot disagree about them, and because a readout that
+  // survives the window being closed has to outlive the window.
+
+  // The row currently being written. `count` is notifiable so this re-binds on
+  // append, and the row object it hands back notifies on setProperty, so a
+  // binding through it follows the stream token by token.
+  readonly property var liveTurn: turnModel.count > 0 ? turnModel.get(turnModel.count - 1) : null
+
+  // The tool in flight right now, "" when none. Gated on `pending` so a settled
+  // turn cannot report a tool that ingest() has already cleared.
+  readonly property string activeTool: liveTurn && liveTurn.pending ? String(liveTurn.tool) : ""
+
+  // ---------------------------------------------------------------- duration
+  // Nothing in the protocol timestamps anything, so the clock is ours: when the
+  // running turn was accepted, and what every finished turn cost, kept per row
+  // so an answer from ten minutes ago still says how long it took and how many
+  // tokens it was. `busy` is the only input, and it flips exactly twice a turn.
+  property double turnStartedAt: 0
+  // row -> { ms, tokens }
+  property var turnCost: ({})
+
+  onBusyChanged: {
+    if (busy) {
+      root.turnStartedAt = Date.now()
+      root.outputBase = root.usageOutput
+      return
+    }
+    if (root.turnStartedAt <= 0) return
+    var next = {}
+    for (var k in root.turnCost) next[k] = root.turnCost[k]
+    next[turnModel.count - 1] = { ms: Date.now() - root.turnStartedAt,
+                                  tokens: root.turnOutput() }
+    root.turnCost = next
+  }
+
+  // ------------------------------------------------------------------ tools
+  // What each turn touched -- { name, arg, ms } per call, keyed by row and kept
+  // AFTER the call ends. ingest() clears `tool` the moment a tool returns,
+  // which is right for "what is running now" and useless for "what did it do";
+  // this is the record a terminal gets for free from scrollback and a 460px
+  // panel has to keep on purpose.
+  //
+  // Rebuilt by assignment rather than mutated, because a plain `var` only
+  // notifies on assignment. Tool calls are seconds apart, so the copy is free.
+  property var toolLog: ({})
+
+  onActiveToolChanged: {
+    var row = turnModel.count - 1
+    if (row < 0) return
+
+    var list = (root.toolLog[row] || []).slice()
+    if (root.activeTool !== "") {
+      // ingest() joins the tool name and its one summarised argument with a
+      // space; split them back apart so the name can be typeset as a name.
+      var cut = root.activeTool.indexOf(" ")
+      list.push({
+        name: cut < 0 ? root.activeTool : root.activeTool.substring(0, cut),
+        arg: cut < 0 ? "" : root.activeTool.substring(cut + 1),
+        t0: Date.now(),
+        ms: 0
+      })
+    } else if (list.length > 0 && list[list.length - 1].ms === 0) {
+      var open = list[list.length - 1]
+      list[list.length - 1] = { name: open.name, arg: open.arg, t0: open.t0,
+                                ms: Date.now() - open.t0 }
+    }
+
+    var next = {}
+    for (var k in root.toolLog) next[k] = root.toolLog[k]
+    next[row] = list
+    root.toolLog = next
+  }
+
+  // ---------------------------------------------------------------- context
+  // Measured, not estimated. `message_update` carries a usage block that
+  // streams during the turn, and `get_session_stats` reports the window the
+  // session is filling -- ingest() hands both to the setters below and
+  // everything here is derived from them. An earlier version of this file
+  // guessed at 4 characters per token against an assumed 131K window; the real
+  // numbers were one field away the whole time.
+  property int usageInput: 0
+  property int usageOutput: 0
+  property int usageTotal: 0
+  // 0 until a session has reported one. Nothing here invents a default: a
+  // percentage of a made-up window is worse than no percentage.
+  property int contextWindow: 0
+
+  function applyUsage(u) {
+    if (!u) return
+    var input = Number(u.input || 0)
+    var output = Number(u.output || 0)
+    var total = Number(u.totalTokens || (input + output))
+    if (total <= 0) return
+    root.usageInput = input
+    root.usageOutput = output
+    root.usageTotal = total
+  }
+
+  // The stats response, dug out defensively: the payload has been seen at the
+  // top level of the response frame, and a wrapper key would be a silent zero
+  // rather than a visible break.
+  function applyStats(d) {
+    var s = d.stats || d.result || d.data || d
+    var cu = s ? s.contextUsage : null
+    if (!cu) return
+    if (Number(cu.contextWindow) > 0) root.contextWindow = Number(cu.contextWindow)
+    if (Number(cu.tokens) > 0) root.usageTotal = Number(cu.tokens)
+  }
+
+  // Whether there is a real percentage to show. The panel prints raw tokens
+  // until there is, rather than a number it cannot stand behind.
+  readonly property bool contextKnown: contextWindow > 0 && usageTotal > 0
+
+  // ------------------------------------------------- names the bar widgets use
+  // The panel and the bar were built against this file at the same time and
+  // landed on different names for the same four numbers. Aliasing rather than
+  // renaming, because both sides are already written and tested against their
+  // own spelling; the alternative is editing working code in two places to win
+  // an argument about vocabulary.
+  readonly property double askedAt: turnStartedAt
+  readonly property real turnSeconds: turnStartedAt > 0
+    ? Math.max(0, (busy ? Date.now() : (settledAtMs || Date.now())) - turnStartedAt) / 1000
+    : 0
+  readonly property int tokensTotal: usageTotal
+  readonly property real contextPercent: contextKnown ? (usageTotal / contextWindow) * 100 : 0
+
+  // Frozen when a turn ends so `turnSeconds` reports what the turn COST rather
+  // than how long ago it happened.
+  property double settledAtMs: 0
+  readonly property real contextFraction:
+    contextKnown ? Math.min(1, usageTotal / contextWindow) : 0
+
+  // Output tokens produced by THIS turn -- the number that moves while you
+  // watch it, and the one a coding agent counts on its spinner line.
+  //
+  // `usage.output` has been seen reset per turn; were it ever cumulative across
+  // the session instead, the baseline below turns it into the same number
+  // either way (a cumulative counter only ever grows past the baseline, a
+  // per-turn one starts under it).
+  property int outputBase: 0
+  function turnOutput() {
+    return root.usageOutput >= root.outputBase
+      ? root.usageOutput - root.outputBase : root.usageOutput
+  }
+  readonly property int liveTokens: {
+    root.usageOutput   // re-run as the count streams in
+    return busy ? turnOutput() : 0
+  }
 
   function lastAssistant() {
     for (var i = turnModel.count - 1; i >= 0; i--) {
@@ -168,6 +362,7 @@ Singleton {
 
     root.error = ""
     root.busy = true
+    root.settledAtMs = 0
     turnModel.append({ role: "user", text: msg, thinking: "", tool: "", pending: false })
     // The assistant's turn exists before a single token arrives, so the view has
     // a row to stream into and the conversation never visibly jumps.
@@ -235,6 +430,13 @@ Singleton {
 
     switch (d.type) {
     case "response":
+      // The stats probe is bookkeeping, not conversation: read it when it
+      // worked and drop it when it did not. It must never abort a turn or
+      // paint the transcript red -- that path belongs to the prompt.
+      if (d.command === "get_session_stats") {
+        if (d.success !== false) root.applyStats(d)
+        break
+      }
       // Only a FAILED response matters: success is just an ack that the prompt
       // was accepted, and the real work arrives as the events below.
       if (d.success === false) {
@@ -246,6 +448,9 @@ Singleton {
       break
 
     case "message_update": {
+      // Usage rides along with the deltas -- and arrives on updates that carry
+      // nothing else -- so it is read before the event check below bails out.
+      if (d.usage) root.applyUsage(d.usage)
       var e = d.assistantMessageEvent
       if (!e) break
       // Reasoning and answer are SEPARATE delta streams (thinking_delta /
@@ -269,6 +474,9 @@ Singleton {
       root.busy = false
       settleTurn()
       root.settled()
+      // The one moment the context can have changed, so the one moment worth
+      // asking. Event-driven, once per turn -- never on a timer.
+      send({ type: "get_session_stats" })
       idleTimer.restart()
       break
     }
@@ -283,6 +491,7 @@ Singleton {
   // text is kept rather than cleared -- it is the record of how the answer was
   // reached, and the view decides whether to show it.
   function settleTurn() {
+    if (root.settledAtMs === 0 || root.busy) root.settledAtMs = Date.now()
     var i = lastAssistant()
     if (i < 0) return
     turnModel.setProperty(i, "tool", "")

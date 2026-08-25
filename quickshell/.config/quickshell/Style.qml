@@ -100,5 +100,88 @@ Singleton {
 
     // Hover delay before a tooltip is raised (waybar's is ~500ms).
     readonly property int tooltipDelay: 400
+
+    // ------------------------------------------------------------- ambient
+    // The two below are the only durations in this file that are allowed past
+    // the 320ms ceiling, because they are not state changes: they are motion
+    // that runs CONTINUOUSLY while the assistant is working, and at bar speeds
+    // a continuous loop reads as an alarm rather than as something alive.
+    //
+    // One breath of Ori's heartbeat. OriDot animates it as two 700ms halves;
+    // the panel drives the same period off a frame clock, so it needs the
+    // period as one number rather than as the pair.
+    readonly property int breath: 1400
+    // One pass of the scan highlight across the panel's activity rail.
+    readonly property int scan: 2600
+  }
+
+
+  // ------------------------------------------------------------------- ori
+  // The assistant's AMBIENT presence: the readout in the bar and the light
+  // that bleeds out from under it. These are tokens rather than literals for a
+  // reason the rest of this file does not have -- the readout and the light are
+  // two SEPARATE layer surfaces, and a shared period is the only way two
+  // surfaces can breathe on the same beat.
+  //
+  // Everything here is slower than the `anim` block above, deliberately. Every
+  // other transition in this bar is a REACTION to something you did and has to
+  // land inside 320ms; this is the one thing on screen that is simply alive
+  // whether or not you are looking at it, and it should move like breathing,
+  // not like UI.
+  readonly property QtObject ori: QtObject {
+    // One full inhale + exhale of the glyph. Resting human breath is ~4s; this
+    // sits just under it, which reads as concentrating rather than asleep.
+    readonly property int breathMs: 2600
+    // How far the breath dims the glyph. Never to zero: a mark that vanishes
+    // reads as a fault, a mark that dims reads as alive. (Kept from the
+    // original heartbeat -- it was the one thing about it that was right.)
+    readonly property real dotFloor: 0.4
+    // The indeterminate scan under the readout. NOT a multiple of breathMs:
+    // two incommensurate periods beat against each other and never settle into
+    // one predictable pulse, which is the whole difference between something
+    // working and something blinking.
+    readonly property int scanMs: 1900
+
+    // The light travelling the screen edge, one full round trip (there AND
+    // back -- it ping-pongs on a cosine so there is no jump at the ends).
+    readonly property int auraSweepMs: 7800
+    // The flare when an answer lands. Longer than any bar transition because
+    // it is the one moment the desktop is allowed to announce something.
+    readonly property int auraFlareMs: 1100
+    // Height of the light surface. FIXED, and never animated -- a layer
+    // surface that resizes costs a compositor round trip per frame (CLAUDE.md).
+    readonly property int auraHeight: 132
+    // Alpha at the seam (the bar's underside), and how far the whole thing is
+    // turned down to the steady wash left behind while an answer waits unread.
+    readonly property real auraCore: 0.30
+    readonly property real auraRest: 0.62
+    // The travelling pool is BRIGHTER than the seam it rides on, and the seam
+    // is turned down while it travels. If the two are the same strength the
+    // result reads as one flat translucent sheet with a bit of unevenness in
+    // it -- measured, and it was the first version's whole problem.
+    readonly property real auraPoolPeak: 0.46
+    readonly property real auraSeamWhileTravelling: 0.5
+    // Width of the pool. Wide enough that its falloff is gentler than the
+    // screen it crosses; a small blob reads as a bug rather than as light.
+    readonly property int auraBlobW: 720
+    // ...and its vertical radius, as a fraction of the surface height. Just
+    // over 1, so the pool is all but gone by the bottom edge and the surface
+    // never shows where it ends.
+    readonly property real auraBlobFall: 1.05
+
+    // The readout's cells, in px. FIXED widths, so the strip is one width for
+    // the whole turn: a tool name changing from "bash" to "read" must not make
+    // the entire centre island breathe sideways. Sized for
+    // JetBrainsMono at `font.tiny` (~7.2px/char).
+    readonly property int toolWidth: 58     // 8 chars, elided past that
+    readonly property int timeWidth: 44     // "9m 38s"
+    readonly property int countWidth: 44    // "↓ 9.9k"
+    readonly property int ctxWidth: 40      // "12.4%"
+    readonly property int cellGap: 6
+    // The context cell is absent until pi reports a window size, so the strip
+    // has TWO settled widths, not one -- but never changes width mid-turn,
+    // which is the property that matters.
+    readonly property int readoutWidth: toolWidth + timeWidth + countWidth + 2 * cellGap
+    readonly property int readoutWidthCtx: readoutWidth + ctxWidth + cellGap
   }
 }

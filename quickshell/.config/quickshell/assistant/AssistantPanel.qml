@@ -26,6 +26,30 @@ import ".."
 // nothing -- including mid-answer, since the process keeps writing into the turn
 // model with no window attached.
 //
+// ------------------------------------------------------------------ readouts
+// A terminal agent gets its legibility from the terminal: unlimited scrollback,
+// the full width of a window, and your entire attention. This is 460px pinned to
+// an edge that you are meant to work NEXT to, so every readout has to earn its
+// row. Four questions have to answer themselves without being asked, and the
+// panel is laid out around exactly those four:
+//
+//   what is it doing   the mark in the header breathes and the rail above the
+//                      composer names the state -- "thinking", "running bash".
+//   for how long       the rail counts the live turn; every settled answer
+//                      keeps its own duration in its footer.
+//   what did it touch  each tool call stays in the transcript as a block with
+//                      the actual command, and the time it took.
+//   how much is left   the hairline above the footer is the context gauge, with
+//                      the estimate spelled out beside it.
+//
+// The numbers come from PiSession's derived readouts; nothing here polls.
+//
+// -------------------------------------------------------------------- motion
+// One frame clock, running only while a turn is. It drives the mark and the
+// scan line, and it stamps the wall clock the elapsed readout counts from. When
+// the agent settles, the clock stops and every binding it feeds freezes -- this
+// surface costs nothing to leave open.
+//
 // IPC:  qs ipc call assistant toggle | open | close | ask <text> | status
 PanelWindow {
   id: panel
@@ -88,6 +112,73 @@ PanelWindow {
     height: card.height
   }
 
+  // ------------------------------------------------------------------ state
+  // One accent for the whole surface, so the card edge, the mark, the spine of
+  // the turn being written and its tool blocks all say the same thing at once.
+  // Mauve while a tool runs is the shell's own "active" colour (Theme.accent);
+  // it separates "it is talking to the model" from "it is touching the machine",
+  // which is the distinction that matters when you look up mid-turn.
+  readonly property color accent:
+      PiSession.error !== "" ? Theme.red
+    : PiSession.activeTool !== "" ? Theme.accent
+    : PiSession.busy ? Theme.sapphire
+    : PiSession.warm ? Theme.sapphire
+    : Theme.inactive
+
+  // The verb, in the panel's own vocabulary. "thinking" and "answering" are
+  // different states and the difference is visible from across the room: one is
+  // silence, the other is text arriving.
+  readonly property string stateLabel:
+      PiSession.error !== "" ? "error"
+    : PiSession.activeTool !== "" ? "running " + PiSession.activeTool.split(" ")[0]
+    : !PiSession.busy ? ""
+    : (PiSession.liveTurn && PiSession.liveTurn.text !== "") ? "answering" : "thinking"
+
+  Fmt { id: fmt }
+
+  // How full the window is, said as precisely as it is actually known. A
+  // percentage needs the session's own contextWindow, which arrives with the
+  // stats of the first settled turn; before that there is a real token total to
+  // show as soon as usage starts streaming, and before THAT there is nothing,
+  // which is what an em dash is for.
+  // Both halves are kept: against a million-token window a percentage barely
+  // moves for an afternoon, while the running total is what actually tells you
+  // the conversation is getting heavy.
+  readonly property string contextLabel: {
+    if (PiSession.usageTotal <= 0) return "—"
+    var out = fmt.tokens(PiSession.usageTotal)
+    if (!PiSession.contextKnown) return out
+    var pct = PiSession.contextFraction * 100
+    return out + " · " + (pct < 10 ? pct.toFixed(1) : String(Math.round(pct))) + "%"
+  }
+
+  // ------------------------------------------------------------- frame clock
+  // Vsync-locked, and it ticks ONLY while a turn is running with the panel on
+  // screen. It is not watching for state changes -- it animates the mark, moves
+  // the scan line, and advances a display of elapsed time, which is the one
+  // thing on this surface that has to move by itself.
+  property real nowMs: 0
+
+  FrameAnimation {
+    id: clock
+    running: panel.opened && PiSession.busy
+    onTriggered: panel.nowMs = Date.now()
+  }
+
+  readonly property real elapsedMs:
+    PiSession.turnStartedAt > 0 ? Math.max(0, panel.nowMs - PiSession.turnStartedAt) : 0
+
+  Connections {
+    target: PiSession
+    // Stamp the clock at the start of the turn rather than waiting for the
+    // first frame, so the readout opens at 0.0s instead of at whatever the last
+    // turn left behind.
+    function onBusyChanged() { if (PiSession.busy) panel.nowMs = Date.now() }
+    // One ring on the mark as the answer lands. The bar deliberately stays
+    // quiet when the panel is open; this is the full stop, not an alert.
+    function onSettled() { if (panel.opened) mark.ping() }
+  }
+
   // ------------------------------------------------------------------- card
   Rectangle {
     id: card
@@ -103,51 +194,74 @@ PanelWindow {
     color: Theme.base
     radius: 16
     border.width: 2
-    border.color: Theme.sapphire
+    // The edge of the card is the furthest-away readout there is: dim when
+    // nothing is happening, lit in the accent of whatever is.
+    border.color: PiSession.busy || PiSession.error !== ""
+      ? panel.accent : Theme.alpha(Theme.sapphire, 0.4)
     clip: true
 
+    Behavior on border.color {
+      ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
+    }
+
     // ---------------------------------------------------------------- header
+    // Every full-bleed strip below is inset by the border width and carries the
+    // card's corner radius on whichever side it touches: `clip` is rectangular,
+    // so a strip anchored flat to the edge would square off the corner it sits
+    // in and paint over the border that is doing the talking.
     Rectangle {
       id: header
-      anchors { top: parent.top; left: parent.left; right: parent.right }
+      anchors { top: parent.top; left: parent.left; right: parent.right
+                margins: card.border.width }
       height: 44
       color: Theme.surface0
+      topLeftRadius: card.radius - card.border.width
+      topRightRadius: card.radius - card.border.width
+
+      OriMark {
+        id: mark
+        anchors { left: parent.left; leftMargin: 14; verticalCenter: parent.verticalCenter }
+        accent: panel.accent
+        alive: PiSession.busy
+        phase: clock.elapsedTime
+      }
 
       Text {
-        anchors { left: parent.left; leftMargin: 14; verticalCenter: parent.verticalCenter }
+        anchors { left: mark.right; leftMargin: 10; verticalCenter: parent.verticalCenter }
         text: "Ori"
-        color: Theme.sapphire
+        color: Theme.text
         font.family: Style.font.family
         font.pixelSize: Style.font.size
         font.weight: Style.font.boldWeight
         renderType: Text.NativeRendering
       }
 
-      // Doubles as the liveness indicator: the model name while idle, what it is
-      // doing while not. Cheaper than a spinner and says more.
+      // Where it runs. This is the whole "it manages this machine" claim, and
+      // it belongs where a terminal agent puts its working directory: on the
+      // chrome, permanently, not in an about box.
       Text {
         anchors { right: newBtn.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
-        text: PiSession.busy ? "thinking…" : PiSession.warm ? PiSession.model : "cold"
-        color: PiSession.busy ? Theme.sapphire : Theme.overlay0
+        text: PiSession.workdir
+        color: Theme.overlay0
         font.family: Style.font.family
         font.pixelSize: Style.font.tiny
         renderType: Text.NativeRendering
-
-        Behavior on color {
-          ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
-        }
       }
 
       Rectangle {
         id: newBtn
         anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
         width: 24; height: 24; radius: 6
-        color: newArea.containsMouse ? Theme.hoverBackground : "transparent"
+        color: newArea.containsMouse ? Theme.hoverBackground : Theme.transparent
+
+        Behavior on color {
+          ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+        }
 
         Text {
           anchors.centerIn: parent
           text: "＋"
-          color: Theme.overlay0
+          color: newArea.containsMouse ? Theme.text : Theme.overlay0
           font.family: Style.font.family
           font.pixelSize: Style.font.size
           renderType: Text.NativeRendering
@@ -157,8 +271,15 @@ PanelWindow {
           id: newArea
           anchors.fill: parent
           hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
           onClicked: PiSession.newChat()
         }
+      }
+
+      Rectangle {
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        height: 1
+        color: Theme.surface1
       }
     }
 
@@ -170,141 +291,201 @@ PanelWindow {
         top: header.bottom
         left: parent.left
         right: parent.right
-        bottom: composer.top
-        margins: 10
+        bottom: rail.top
+        leftMargin: 10
+        rightMargin: 10
+        topMargin: 10
+        bottomMargin: 4
       }
 
       model: PiSession.turns
-      spacing: 10
+      spacing: 12
       clip: true
       // A conversation is read from the bottom, so that is where it rests.
+      // BottomToTop also inverts the model, which is what keeps the view pinned
+      // to the newest token for free while a turn streams -- the delegate reads
+      // its row back through `count - 1 - index`.
       verticalLayoutDirection: ListView.BottomToTop
-      // BottomToTop inverts the model, so index 0 must be the NEWEST turn --
-      // hence the delegate reads its row back through `count - 1 - index`.
-      // Doing it this way rather than scrolling a normal list is what keeps the
-      // view pinned to the newest token for free while a turn streams.
 
-      delegate: Item {
-        required property int index
-        readonly property var turn: PiSession.turns.get(PiSession.turns.count - 1 - index)
+      delegate: TurnDelegate { accent: panel.accent }
+    }
 
-        width: ListView.view.width
-        height: bubble.height
+    // A scroll position, not a scrollbar: there is nothing to grab, it only
+    // says how much transcript is above you. Hidden entirely when everything
+    // fits, which is most of the time.
+    Rectangle {
+      width: 2
+      radius: 1
+      x: transcript.x + transcript.width - 3
+      // visibleArea is reported in the list's own coordinates, which BottomToTop
+      // has already flipped -- at rest, parked on the newest turn, yPosition is
+      // (1 - heightRatio) and the thumb belongs at the bottom. Compensating for
+      // the flip a second time (the first thing tried here) pinned it to the
+      // top and had it travel the wrong way.
+      y: transcript.y + transcript.visibleArea.yPosition * transcript.height
+      height: Math.max(20, transcript.visibleArea.heightRatio * transcript.height)
+      visible: transcript.visibleArea.heightRatio < 0.999
+      color: Theme.alpha(Theme.overlay0, transcript.moving ? 0.9 : 0.35)
 
-        Rectangle {
-          id: bubble
-          // A user turn is a right-aligned pill; the assistant answers full
-          // width. The asymmetry is the only thing marking who said what --
-          // no labels, no avatars, no timestamps.
-          width: turn.role === "user"
-            ? Math.min(parent.width * 0.85, body.implicitWidth + 24)
-            : parent.width
-          x: turn.role === "user" ? parent.width - width : 0
-          // Measured from the column rather than summed by hand: the reasoning
-          // and tool rows animate their own heights, and an arithmetic guess
-          // that forgets a margin clips whichever row is last -- which is
-          // exactly the tool row, the one that most needs to be seen.
-          height: col.implicitHeight + 16
-          radius: 10
-          color: turn.role === "user" ? Theme.surface1 : "transparent"
-
-          Column {
-            id: col
-            anchors { top: parent.top; left: parent.left; right: parent.right; margins: 8 }
-            spacing: 0
-
-            Text {
-              id: body
-              width: parent.width
-              // A turn with nothing in it yet must not collapse to zero height,
-              // or the list jumps the moment the first token lands.
-              text: turn.text !== "" ? turn.text : (turn.pending ? " " : "")
-              color: Theme.text
-              wrapMode: Text.Wrap
-              // The model answers in markdown, so render it -- otherwise every
-              // emphasis arrives as literal **asterisks** and every code span as
-              // backticks. Mid-stream an unclosed marker renders as plain text
-              // and settles the moment its partner arrives, which is invisible
-              // at these token rates.
-              textFormat: Text.MarkdownText
-              font.family: Style.font.family
-              font.pixelSize: Style.font.size
-              renderType: Text.NativeRendering
-            }
-
-            // Streamed reasoning, shown ONLY while the answer is still empty. It
-            // arrives ~300ms in, so it is the loading state -- and unlike a
-            // spinner it tells you within a second whether it understood you.
-            // Once real text starts it is dropped, not kept.
-            Item {
-              id: reasoning
-              width: parent.width
-              height: showing ? reasonText.implicitHeight + 6 : 0
-              clip: true
-
-              readonly property bool showing:
-                turn.role === "assistant" && turn.text === "" && turn.thinking !== ""
-
-              Behavior on height {
-                NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
-              }
-
-              Text {
-                id: reasonText
-                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                text: turn.thinking
-                color: Theme.overlay0
-                font.italic: true
-                wrapMode: Text.Wrap
-                font.family: Style.font.family
-                font.pixelSize: Style.font.small
-                renderType: Text.NativeRendering
-              }
-            }
-
-            // The other half of "show the work": while a tool runs nothing
-            // streams at all, and without this the panel looks frozen for the
-            // whole several seconds a bash call takes.
-            Item {
-              id: toolRow
-              width: parent.width
-              height: turn.tool !== "" ? 22 : 0
-              clip: true
-
-              Behavior on height {
-                NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
-              }
-
-              Text {
-                anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter }
-                text: "⟩ " + turn.tool
-                color: Theme.sapphire
-                elide: Text.ElideRight
-                font.family: Style.font.family
-                font.pixelSize: Style.font.small
-                renderType: Text.NativeRendering
-              }
-            }
-          }
-        }
+      Behavior on color {
+        ColorAnimation { duration: Style.anim.normal; easing.type: Style.anim.easingSmooth }
       }
     }
 
-    // The empty state, in place of a blank rectangle.
-    Text {
+    // ------------------------------------------------------------ empty state
+    // What it is, where it runs, and how to drive it -- in place of a blank
+    // rectangle. The mark is dormant here: nothing is running, so nothing moves.
+    Column {
       anchors.centerIn: transcript
+      width: transcript.width - 40
+      spacing: 6
       visible: PiSession.turns.count === 0
-      text: "Ask me anything."
-      color: Theme.overlay0
-      font.family: Style.font.family
-      font.pixelSize: Style.font.size
-      renderType: Text.NativeRendering
+      opacity: 0.9
+
+      OriMark {
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: 34; height: 34
+        accent: panel.accent
+      }
+
+      Item { width: 1; height: 8 }
+
+      // Not "Ask me anything" -- what it actually is. The model and the
+      // directory are already on the chrome; this is the sentence that says
+      // why those two facts matter.
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        horizontalAlignment: Text.AlignHCenter
+        width: parent.width - 60
+        text: "It runs in this repo, on this machine,\nwith a shell."
+        color: Theme.subtext0
+        wrapMode: Text.Wrap
+        font.family: Style.font.family
+        font.pixelSize: Style.font.tiny
+        renderType: Text.NativeRendering
+      }
+
+      Item { width: 1; height: 10 }
+
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        horizontalAlignment: Text.AlignHCenter
+        text: "enter send · shift+enter newline\nctrl+n new · ctrl+c stop · esc close"
+        color: Theme.alpha(Theme.overlay0, 0.75)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.tiny
+        renderType: Text.NativeRendering
+      }
+    }
+
+    // ------------------------------------------------------------------ rail
+    // The live line, in the same place Claude Code puts its spinner: directly
+    // above where you type. It describes the turn IN FLIGHT and nothing else --
+    // what state it is in, how long it has been in it, and how much has come
+    // back so far. It collapses to nothing the moment the agent settles, which
+    // is the point: an idle assistant should take up no room saying so.
+    Item {
+      id: rail
+      anchors { left: parent.left; right: parent.right; bottom: errorStrip.top
+                leftMargin: card.border.width; rightMargin: card.border.width }
+      height: PiSession.busy ? 28 : 0
+      clip: true
+
+      Behavior on height {
+        NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
+      }
+
+      // The scan. A single highlight crossing the top edge of the rail, at a
+      // pace nothing else in this shell moves at -- it is ambient, not a state
+      // change, and it is the one thing on the surface that says "still
+      // working" without saying a word. It is bound to the frame clock, so it
+      // stops dead, mid-track, when the turn ends.
+      Item {
+        id: scanTrack
+        anchors { left: parent.left; right: parent.right; top: parent.top }
+        height: 1
+        clip: true
+
+        Rectangle {
+          anchors.fill: parent
+          color: Theme.surface1
+          opacity: 0.6
+        }
+
+        Rectangle {
+          width: 130
+          height: 1
+          x: (scanTrack.width + width)
+             * ((clock.elapsedTime * 1000) % Style.anim.scan) / Style.anim.scan - width
+          gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0.0; color: Theme.transparent }
+            GradientStop { position: 0.5; color: panel.accent }
+            GradientStop { position: 1.0; color: Theme.transparent }
+          }
+        }
+      }
+
+      Text {
+        id: verb
+        anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter }
+        text: panel.stateLabel
+        color: panel.accent
+        elide: Text.ElideRight
+        font.family: Style.font.family
+        font.pixelSize: Style.font.tiny
+        font.weight: Style.font.boldWeight
+        renderType: Text.NativeRendering
+
+        Behavior on color {
+          ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
+        }
+      }
+
+      // Elapsed, and what has come back for it. Both are on the right because
+      // they change every frame, and a number that twitches under the first
+      // word of a sentence is unreadable.
+      Text {
+        anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
+        text: fmt.duration(panel.elapsedMs)
+          + (PiSession.liveTokens > 0 ? "  ↓ " + fmt.tokens(PiSession.liveTokens) : "")
+        color: Theme.overlay0
+        font.family: Style.font.family
+        font.pixelSize: Style.font.tiny
+        renderType: Text.NativeRendering
+      }
+    }
+
+    // ----------------------------------------------------------------- error
+    Rectangle {
+      id: errorStrip
+      anchors { left: parent.left; right: parent.right; bottom: composer.top
+                leftMargin: card.border.width; rightMargin: card.border.width }
+      height: PiSession.error !== "" ? errText.implicitHeight + 12 : 0
+      color: Theme.alpha(Theme.red, 0.15)
+      clip: true
+
+      Behavior on height {
+        NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
+      }
+
+      Text {
+        id: errText
+        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 6 }
+        text: PiSession.error
+        color: Theme.red
+        wrapMode: Text.Wrap
+        font.family: Style.font.family
+        font.pixelSize: Style.font.small
+        renderType: Text.NativeRendering
+      }
     }
 
     // -------------------------------------------------------------- composer
     Rectangle {
       id: composer
-      anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+      anchors { left: parent.left; right: parent.right; bottom: footer.top
+                leftMargin: card.border.width; rightMargin: card.border.width }
       // Grows with the draft up to a ceiling, then the field scrolls. The card
       // is a fixed size, so this only moves the boundary between the two panes.
       height: Math.min(entry.implicitHeight, 120) + 20
@@ -314,9 +495,27 @@ PanelWindow {
         NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
       }
 
+      // The prompt. It lights with the accent while the cursor is in the field,
+      // which is the only affordance this panel needs for "the keyboard is
+      // here" -- the layer surface takes focus on demand, so that is a real
+      // question and not a decorative one.
+      Text {
+        id: caret
+        anchors { left: parent.left; leftMargin: 12; top: parent.top; topMargin: 10 }
+        text: "⟩"
+        color: entry.activeFocus ? panel.accent : Theme.overlay0
+        font.family: Style.font.family
+        font.pixelSize: Style.font.size
+        renderType: Text.NativeRendering
+
+        Behavior on color {
+          ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+        }
+      }
+
       TextEdit {
         id: entry
-        anchors { fill: parent; margins: 10 }
+        anchors { fill: parent; leftMargin: 30; rightMargin: 12; topMargin: 10; bottomMargin: 10 }
 
         color: Theme.text
         selectionColor: Theme.sapphire
@@ -331,7 +530,10 @@ PanelWindow {
         Text {
           anchors.fill: parent
           visible: entry.text === ""
-          text: PiSession.busy ? "…" : "Message"
+          // While a turn runs the field is refused, so it says what the key
+          // that DOES do something is, rather than inviting a message that
+          // would be dropped.
+          text: PiSession.busy ? "ctrl+c to stop" : "Message"
           color: Theme.overlay0
           font.family: Style.font.family
           font.pixelSize: Style.font.size
@@ -375,25 +577,64 @@ PanelWindow {
       }
     }
 
-    // ----------------------------------------------------------------- error
+    // ---------------------------------------------------------------- footer
+    // The status line, where a terminal agent keeps one: model, and how full the
+    // window is. The gauge is the strip's own top edge rather than a widget on
+    // it -- the panel runs out of context along that line, so that line is where
+    // it should be visible.
     Rectangle {
-      anchors { left: parent.left; right: parent.right; bottom: composer.top }
-      height: PiSession.error !== "" ? errText.implicitHeight + 12 : 0
-      color: Theme.alpha(Theme.red, 0.15)
-      clip: true
+      id: footer
+      anchors { left: parent.left; right: parent.right; bottom: parent.bottom
+                margins: card.border.width }
+      height: 24
+      color: Theme.mantle
+      bottomLeftRadius: card.radius - card.border.width
+      bottomRightRadius: card.radius - card.border.width
 
-      Behavior on height {
-        NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
+      Rectangle {
+        id: gaugeTrack
+        anchors { left: parent.left; right: parent.right; top: parent.top }
+        height: 2
+        color: Theme.surface0
+
+        Rectangle {
+          anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+          width: parent.width * PiSession.contextFraction
+          color: PiSession.contextFraction < 0.7 ? Theme.sapphire
+            : PiSession.contextFraction < 0.9 ? Theme.yellow : Theme.red
+
+          Behavior on width {
+            NumberAnimation { duration: Style.anim.normal; easing.type: Style.anim.easing }
+          }
+          Behavior on color {
+            ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
+          }
+        }
       }
 
       Text {
-        id: errText
-        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 6 }
-        text: PiSession.error
-        color: Theme.red
-        wrapMode: Text.Wrap
+        anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter
+                  verticalCenterOffset: 1 }
+        text: PiSession.model
+        color: Theme.overlay0
+        elide: Text.ElideRight
         font.family: Style.font.family
-        font.pixelSize: Style.font.small
+        font.pixelSize: Style.font.tiny
+        renderType: Text.NativeRendering
+      }
+
+      // Real numbers, in the order they become knowable: nothing before a
+      // session exists, then the running token total once usage starts
+      // streaming, then a percentage once the session has reported its window.
+      // A window this shell has not been told is never guessed at.
+      Text {
+        anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter
+                  verticalCenterOffset: 1 }
+        text: panel.contextLabel + " ctx · "
+          + (PiSession.busy ? "live" : PiSession.warm ? "warm" : "cold")
+        color: Theme.overlay0
+        font.family: Style.font.family
+        font.pixelSize: Style.font.tiny
         renderType: Text.NativeRendering
       }
     }
