@@ -56,9 +56,14 @@ PanelWindow {
 
   property bool opened: false
 
-  function open() { panel.opened = true; Qt.callLater(function () { entry.forceActiveFocus() }) }
-  function close() { panel.opened = false }
-  function toggle() { if (panel.opened) close(); else open() }
+  // NOTE these three are no longer the way in. `opened` is a binding onto
+  // PiSession.panelOpen so the bar indicator can toggle the same panel, which
+  // means the IpcHandler sets that property directly and NOTHING here is
+  // called -- open()'s focus call was dead code and the composer never took the
+  // keyboard. Focus now happens in onOpenedChanged, which fires either way.
+  function open() { PiSession.panelOpen = true }
+  function close() { PiSession.panelOpen = false }
+  function toggle() { PiSession.panelOpen = !PiSession.panelOpen }
 
   // --------------------------------------------------------------- geometry
   // Opens on whichever monitor has focus, the same rule the launchers and the
@@ -81,7 +86,11 @@ PanelWindow {
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
   exclusionMode: ExclusionMode.Ignore
 
-  anchors { top: true; bottom: true; right: true }
+  // LEFT, not right. The right edge is where this shell already puts things
+  // that interrupt you -- notification popups stack there. The assistant is
+  // something you turn TO, so it gets the other side and does not fight them
+  // for the same corner.
+  anchors { top: true; bottom: true; left: true }
   // The SURFACE is a fixed width and never resizes; the card slides inside it.
   // A layer surface that changes size waits on a compositor configure/ack per
   // frame, which is what turned the notification popups into a slideshow before
@@ -97,6 +106,9 @@ PanelWindow {
     // live layer surface between outputs costs a configure round trip per frame.
     if (opened) panel.screen = focusedScreen()
     revealed = opened ? 1 : 0
+    // Opening it means wanting to type into it. callLater because the composer
+    // does not exist yet on the frame `opened` flips.
+    if (opened) Qt.callLater(function () { entry.forceActiveFocus() })
   }
 
   Behavior on revealed {
@@ -183,12 +195,14 @@ PanelWindow {
   Rectangle {
     id: card
 
+    // Floating, not docked: inset from every edge and short of full height, so
+    // it reads as a console resting on the desktop rather than a sidebar welded
+    // to it. The surface behind it is still fixed-size -- only the card moves.
     width: panel.panelWidth
-    anchors.top: parent.top
-    anchors.bottom: parent.bottom
-    anchors.topMargin: Style.bar.height + 8
-    anchors.bottomMargin: 8
-    x: parent.width - width - 12 + (1 - panel.revealed) * (width + 24)
+    height: Math.round(parent.height * 0.72)
+    anchors.verticalCenter: parent.verticalCenter
+    // Slides in from the left edge it is anchored to.
+    x: 16 - (1 - panel.revealed) * (width + 32)
     opacity: panel.revealed
 
     color: Theme.base
