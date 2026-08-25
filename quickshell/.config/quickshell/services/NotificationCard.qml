@@ -335,83 +335,120 @@ Item {
     }
 
     // ----------------------------------------------------- alt actions
-    // One strip, buttons side by side -- swaync's actions box is horizontal,
-    // and a card with Reply and Archive draws them next to each other, not
-    // stacked. Measured off the running daemon (pixel runs through the button
-    // row of a 352px card): the pair of buttons spans 308px inside a 21px
-    // inset with a 32px gap, each 34px tall, with the 1px @surface0 rule and
-    // 8px of padding above them.
+    // swaync's action box is a two-per-line flow, not a single row that
+    // divides the width. Measured off the running daemon with grim (pixel
+    // runs across a 352px card, then the same runs on the wrapped case):
+    //
+    //   the strip is laid out in cells 6px in from each card edge, so two
+    //   cells are 170px wide and a lone cell is 340px; each cell holds its
+    //   button with 16px to either side (138px wide when paired, 308px on
+    //   its own) and carries its OWN 1px @surface0 top rule -- which is why
+    //   a third action wraps onto a second line at the same 138px, left
+    //   aligned, with a half-width rule above it rather than a full one.
+    //
+    //   .notification-action { border-top: 1px solid @surface0; padding: 8px }
+    //   puts 8px above and below a 34px button, so a line is 51px tall.
     Item {
       id: actions
       anchors.top: content.bottom
       width: parent.width
-      implicitHeight: visible ? 34 + 2 * 8 + 1 : 0
       visible: root.actionList.length > 0
+
+      readonly property int cellInset: 6
+      readonly property int cellPad: 16
+      readonly property int cols: Math.min(2, Math.max(1, root.actionList.length))
+      readonly property int lines: Math.ceil(root.actionList.length / cols)
+      readonly property int cellWidth: Math.floor((width - 2 * cellInset) / cols)
+      readonly property int lineHeight: 34 + 2 * 8 + 1
+
+      implicitHeight: visible ? lines * lineHeight : 0
 
       HoverHandler { id: actionsHover }
 
-      // .notification-action { border-top: 1px solid @surface0 }
-      Rectangle {
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        height: 1
-        color: Theme.surface0
-      }
-
-      Row {
-        id: actionRow
-        anchors.centerIn: parent
-        // The rule above the strip owns the first pixel.
-        anchors.verticalCenterOffset: 1
-        spacing: 32
-
-        readonly property int count: Math.max(1, root.actionList.length)
-        readonly property int slot:
-          Math.floor((actions.width - 2 * 21 - spacing * (count - 1)) / count)
+      Column {
+        anchors.fill: parent
 
         Repeater {
-          model: root.actionList
+          model: actions.lines
 
-          // The packaged GTK button inside the action row: it lands on
-          // rgba(255,255,255,0.1) over @base, three units off @surface0.
-          Rectangle {
-            id: actionButton
-            required property var modelData
+          Item {
+            id: actionLine
+            required property int index
 
-            width: actionRow.slot
-            height: 34
-            radius: 12
-            color: actionArea.containsMouse ? Theme.surface1 : Theme.surface0
+            width: actions.width
+            height: actions.lineHeight
 
-            Behavior on color {
-              ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
-            }
+            Row {
+              anchors.left: parent.left
+              anchors.leftMargin: actions.cellInset
+              anchors.top: parent.top
+              height: parent.height
 
-            Text {
-              anchors.centerIn: parent
-              width: parent.width - 24
-              text: actionButton.modelData.text
-              color: actionArea.pressed ? Theme.lavender
-                : actionArea.containsMouse ? Theme.mauve : Theme.text
-              horizontalAlignment: Text.AlignHCenter
-              elide: Text.ElideRight
-              font.family: Style.font.family
-              font.pixelSize: Style.font.size
-              font.weight: Style.font.boldWeight
-              renderType: Text.NativeRendering
+              Repeater {
+                model: root.actionList.slice(actionLine.index * actions.cols,
+                                             (actionLine.index + 1) * actions.cols)
 
-              Behavior on color {
-                ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+                Item {
+                  id: actionCell
+                  required property var modelData
+
+                  width: actions.cellWidth
+                  height: actions.lineHeight
+
+                  // .notification-action { border-top: 1px solid @surface0 }
+                  Rectangle {
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: 1
+                    color: Theme.surface0
+                  }
+
+                  // The packaged GTK button inside the action row: it lands on
+                  // rgba(255,255,255,0.1) over @base, three units off
+                  // @surface0.
+                  Rectangle {
+                    id: actionButton
+                    anchors.top: parent.top
+                    anchors.topMargin: 9      // the rule owns the first pixel
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: actions.cellWidth - 2 * actions.cellPad
+                    height: 34
+                    radius: 12
+                    color: actionArea.containsMouse ? Theme.surface1 : Theme.surface0
+
+                    Behavior on color {
+                      ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+                    }
+
+                    Text {
+                      anchors.centerIn: parent
+                      width: parent.width - 24
+                      text: actionCell.modelData.text
+                      color: actionArea.pressed ? Theme.lavender
+                        : actionArea.containsMouse ? Theme.mauve : Theme.text
+                      horizontalAlignment: Text.AlignHCenter
+                      elide: Text.ElideRight
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.size
+                      font.weight: Style.font.boldWeight
+                      renderType: Text.NativeRendering
+
+                      Behavior on color {
+                        ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+                      }
+                    }
+
+                    MouseArea {
+                      id: actionArea
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.actionActivated(actionCell.modelData.index)
+                    }
+                  }
+                }
               }
-            }
-
-            MouseArea {
-              id: actionArea
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.actionActivated(actionButton.modelData.index)
             }
           }
         }
