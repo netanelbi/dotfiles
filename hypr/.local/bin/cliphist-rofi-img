@@ -21,8 +21,16 @@ if [[ -n "$selected" ]]; then
 fi
 
 # Generate list
-rm -rf "$tmp_dir"
+# INCREMENTAL. This used to `rm -rf "$tmp_dir"` and re-decode every image in the
+# history on EVERY invocation. With ~750 entries that took over two minutes, so
+# both rofi and the Quickshell clipboard appeared to hang on open.
+#
+# cliphist ids are stable and content-addressed: an id that is already decoded
+# on disk can never mean a different image. So keep the cache and only decode
+# what is missing. The map is still rebuilt each run because it is cheap (one
+# `cliphist list`) and must not go stale.
 mkdir -p "$tmp_dir"
+rm -f "$tmp_dir/map"
 
 cliphist list | while IFS=$'\t' read -r id content; do
     [[ "$content" == *"<meta http-equiv="* ]] && continue
@@ -31,7 +39,9 @@ cliphist list | while IFS=$'\t' read -r id content; do
 
     if [[ "$content" =~ binary.*\ (jpg|jpeg|png|bmp) ]]; then
         ext="${BASH_REMATCH[1]}"
-        echo -e "$id\t" | cliphist decode > "$tmp_dir/$id.$ext" 2>/dev/null
+        # Only decode when it is not already cached (and non-empty: a
+        # truncated file from an interrupted run must be redone).
+        [[ -s "$tmp_dir/$id.$ext" ]] || echo -e "$id\t" | cliphist decode > "$tmp_dir/$id.$ext" 2>/dev/null
         display="[image:$id]"
         printf '%s\t%s\n' "$id" "$display" >> "$tmp_dir/map"
         printf '%s\0icon\x1f%s/%s.%s\n' "$display" "$tmp_dir" "$id" "$ext"
