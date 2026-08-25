@@ -94,8 +94,12 @@ PanelWindow {
       BarWidget {
         id: clockWidget
         property bool longFormat: false
-        tooltip: Qt.formatDateTime(clock.date, "dddd, d MMMM yyyy")
-        onClicked: longFormat = !longFormat
+        tooltip: Qt.formatDateTime(clock.date, "dddd, d MMMM yyyy") + "\nright-click for the long format"
+        // waybar's format-alt lived on the left click. It moved to the right
+        // button so the left one can open the calendar -- the toggle is still
+        // there, it just is not the first thing the clock does any more.
+        onClicked: calendarPopup.toggle()
+        onRightClicked: longFormat = !longFormat
 
         Text {
           text: ""
@@ -167,6 +171,30 @@ PanelWindow {
     id: clock
     precision: SystemClock.Minutes
   }
+
+  // ------------------------------------------------------------- calendar
+  // The clock's popover. It is its own fullscreen layer surface rather than a
+  // PopupWindow anchored to the clock -- see CalendarPopup.qml for why. It
+  // needs the bar's origin to convert the clock's position into screen
+  // coordinates, and the bar's bottom edge to hang under.
+  CalendarPopup {
+    id: calendarPopup
+    screen: bar.screen
+    anchorItem: clockWidget
+    barOriginX: Style.bar.marginSide
+    cardTop: Style.bar.marginTop + Style.bar.height + 4
+  }
+
+  // Calendar reminders run whether or not the popover is ever opened, so the
+  // singleton has to be CONSTRUCTED at shell start -- Quickshell builds a
+  // singleton on first use, and nothing else would touch this one until a
+  // click. One instance regardless of how many monitors instantiate this bar.
+  //
+  // The touch is an ASSIGNMENT, not a `readonly property x: Singleton.y`
+  // binding: an unread binding is evaluated lazily, so the singleton came up
+  // on some reloads and not others, and reminders silently did not run.
+  property bool remindersLive: false
+  Component.onCompleted: bar.remindersLive = CalendarReminders.stateLoaded
 
   // --------------------------------------------------------------- island
   // One rounded group of modules. Sizes itself to its content and animates
