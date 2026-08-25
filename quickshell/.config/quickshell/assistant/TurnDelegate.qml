@@ -31,10 +31,84 @@ Item {
   // { ms, tokens } once the turn has settled.
   readonly property var cost: PiSession.turnCost[row] || null
 
+  // The panel's frame clock, handed down rather than started again here: it
+  // already runs only while a turn is in flight with the panel on screen, and
+  // it is the only thing that makes the live batch's elapsed number move. A
+  // clock of our own would be a second thing to stop at idle.
+  property real nowMs: 0
+
+  // Whether this turn's tool batch is open. One flag per turn, and it starts
+  // closed: the detail is a click away, not a wall.
+  property bool toolsOpen: false
+
   width: ListView.view ? ListView.view.width : 0
   height: user ? pill.height : answer.height
 
   Fmt { id: fmt }
+
+  // ------------------------------------------------------------- vocabulary
+  // A batch is a COUNT plus the latest action, never a list of rows -- the same
+  // shape the other assistant settles a turn into. Each kind of call carries
+  // three words: what it is doing, what it did, and the noun it is counted in,
+  // so a settled batch reads as English ("Ran 3 commands", "Read 1 file")
+  // rather than as an inventory of tool names.
+  function kindOf(name) {
+    var n = String(name).toLowerCase()
+    if (n.indexOf("search") >= 0 || n.indexOf("grep") >= 0 || n.indexOf("glob") >= 0) return "search"
+    if (n.indexOf("write") >= 0 || n.indexOf("edit") >= 0) return "edit"
+    if (n.indexOf("read") >= 0 || n.indexOf("cat") >= 0) return "read"
+    if (n.indexOf("fetch") >= 0) return "fetch"
+    if (n.indexOf("bash") >= 0 || n.indexOf("shell") >= 0 || n.indexOf("exec") >= 0) return "bash"
+    return "other"
+  }
+
+  function liveVerb(kind) {
+    return kind === "search" ? "Searching"
+      : kind === "edit" ? "Editing"
+      : kind === "read" ? "Reading"
+      : kind === "fetch" ? "Fetching"
+      : "Running"
+  }
+
+  // Past tense, and both numbers right: "Ran 1 command", never "Ran 1 commands".
+  function pastLabel(kind, n) {
+    if (kind === "read") return "Read " + n + (n === 1 ? " file" : " files")
+    if (kind === "edit") return "Edited " + n + (n === 1 ? " file" : " files")
+    if (kind === "fetch") return "Fetched " + n + (n === 1 ? " page" : " pages")
+    // "Searched 3 searches" stutters; the noun is the part that says what kind.
+    if (kind === "search") return "Ran " + n + (n === 1 ? " search" : " searches")
+    if (kind === "bash") return "Ran " + n + (n === 1 ? " command" : " commands")
+    // A batch of mixed kinds has no one noun, so it is counted in steps.
+    return "Ran " + n + (n === 1 ? " step" : " steps")
+  }
+
+  // The kind of the whole batch, or "mixed" when it had more than one.
+  readonly property string batchKind: {
+    var k = ""
+    for (var i = 0; i < calls.length; i++) {
+      var ki = kindOf(calls[i].name)
+      if (k === "") k = ki
+      else if (k !== ki) return "mixed"
+    }
+    return k === "" ? "other" : k
+  }
+
+  // A call is still open when it has no duration stamped yet. Only the last
+  // call of the turn being written can be.
+  readonly property bool batchLive: pending && calls.length > 0
+    && calls[calls.length - 1].ms === 0
+
+  // Time spent in tools this turn. The open call is measured against the
+  // panel's clock, so this counts up by itself while it runs and freezes at the
+  // moment the call returns.
+  readonly property real batchMs: {
+    var t = 0
+    for (var i = 0; i < calls.length; i++) {
+      var c = calls[i]
+      t += c.ms > 0 ? c.ms : Math.max(0, turnItem.nowMs - c.t0)
+    }
+    return t
+  }
 
   // ------------------------------------------------------------------- ask
   Rectangle {
@@ -130,20 +204,168 @@ Item {
       }
 
       // ----------------------------------------------------------- tools
-      Repeater {
-        model: turnItem.calls
+      // ONE line for the whole batch, not one block per call. While the turn
+      // runs it is rewritten in place -- the current action, then a quiet tail
+      // of target, elapsed and a step COUNT -- and when the turn settles it
+      // freezes into a single past-tense line. Three commands is three lines of
+      // command text forever otherwise, which on a 460px card buries the answer.
+      //
+      // The verbosity is not deleted, only folded: clicking the line runs the
+      // drawer open on the real ToolCallRow blocks, commands and all.
+      Item {
+        id: batch
+        width: col.width
+        visible: turnItem.calls.length > 0
+        height: summary.height + drawer.height
 
-        delegate: ToolCallRow {
-          required property var modelData
-          width: col.width
-          call: modelData
-          // Only the last call of the turn being written can still be open;
-          // `ms` is stamped the moment a call returns.
-          live: turnItem.pending && modelData.ms === 0
-          // Deliberately NOT the panel's live accent: a tool block is mauve for
-          // good, so scrolling back you can tell at a glance which parts of a
-          // conversation touched the machine. Only the panel chrome tracks the
-          // state of the turn in flight.
+        Column {
+          id: summary
+          anchors { left: parent.left; right: parent.right; top: parent.top }
+          spacing: 1
+
+          Item {
+            width: parent.width
+            height: head.implicitHeight
+
+            Text {
+              id: head
+              anchors { left: parent.left; right: chevron.left; rightMargin: 8 }
+              // Live: what it is doing this second. Settled: what it did, in
+              // total. The tool name only earns a word when the verb does not
+              // already contain it -- "Running bash", but just "Reading".
+              text: {
+                if (!turnItem.batchLive)
+                  return "⟩ " + turnItem.pastLabel(turnItem.batchKind, turnItem.calls.length)
+                    + (fmt.duration(turnItem.batchMs) !== ""
+                        ? " · " + fmt.duration(turnItem.batchMs) : "")
+                var last = turnItem.calls[turnItem.calls.length - 1]
+                var kind = turnItem.kindOf(last.name)
+                var verb = turnItem.liveVerb(kind)
+                return "⟩ " + (kind === "bash" || kind === "other"
+                  ? verb + " " + String(last.name).toLowerCase() : verb) + "…"
+              }
+              color: Theme.accent
+              elide: Text.ElideRight
+              font.family: Style.font.family
+              font.pixelSize: Style.font.tiny
+              font.weight: Style.font.boldWeight
+              renderType: Text.NativeRendering
+
+              // The same breath the spine and the bar dot keep, so the line
+              // that is still being rewritten is visibly the live one. Gated on
+              // `batchLive`, so a settled batch animates nothing.
+              SequentialAnimation {
+                running: turnItem.batchLive
+                loops: Animation.Infinite
+                alwaysRunToEnd: true
+                NumberAnimation {
+                  target: head; property: "opacity"; to: 0.45
+                  duration: Style.ori.breathMs / 2; easing.type: Style.anim.easingSmooth
+                }
+                NumberAnimation {
+                  target: head; property: "opacity"; to: 1
+                  duration: Style.ori.breathMs / 2; easing.type: Style.anim.easingSmooth
+                }
+              }
+
+              onOpacityChanged: if (!turnItem.batchLive && opacity !== 1) opacity = 1
+            }
+
+            // The disclosure. It points down once the drawer is open, and it is
+            // the only thing on the line that says the detail still exists.
+            Text {
+              id: chevron
+              anchors.right: parent.right
+              anchors.baseline: head.baseline
+              text: "›"
+              color: Theme.overlay0
+              rotation: turnItem.toolsOpen ? 90 : 0
+              transformOrigin: Item.Center
+              font.family: Style.font.family
+              font.pixelSize: Style.font.tiny
+              renderType: Text.NativeRendering
+
+              Behavior on rotation {
+                NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
+              }
+            }
+          }
+
+          // The stat tail: everything that is NOT the current action, in one
+          // quiet line. It counts the steps rather than enumerating them --
+          // that is the whole point of the collapse.
+          Text {
+            width: parent.width
+            visible: turnItem.batchLive
+            text: {
+              if (!turnItem.batchLive) return ""
+              var parts = []
+              var last = turnItem.calls[turnItem.calls.length - 1]
+              if (String(last.arg) !== "") parts.push(String(last.arg))
+              var d = fmt.duration(turnItem.batchMs)
+              if (d !== "") parts.push(d)
+              parts.push(turnItem.calls.length
+                + (turnItem.calls.length === 1 ? " step" : " steps"))
+              return parts.join(" · ")
+            }
+            color: Theme.overlay0
+            elide: Text.ElideRight
+            maximumLineCount: 1
+            font.family: Style.font.family
+            font.pixelSize: Style.font.tiny
+            renderType: Text.NativeRendering
+          }
+        }
+
+        // The whole summary is the affordance, not a hit-box the size of a
+        // chevron. It does not cover the drawer: clicking a command you opened
+        // the drawer to read should not shut it again.
+        MouseArea {
+          anchors.fill: summary
+          cursorShape: Qt.PointingHandCursor
+          onClicked: turnItem.toolsOpen = !turnItem.toolsOpen
+        }
+
+        // ------------------------------------------------------- the detail
+        // Collapsed by animating to zero height, not by being switched off --
+        // the animation is what removes the row, the same idiom the
+        // notification cards close with.
+        Item {
+          id: drawer
+          anchors { left: parent.left; right: parent.right; top: summary.bottom }
+          height: turnItem.toolsOpen ? detail.implicitHeight : 0
+          clip: true
+          // At rest and closed it leaves the column entirely, so it cannot pay
+          // for a row of spacing it does not use.
+          visible: turnItem.toolsOpen || height > 0.01
+
+          Behavior on height {
+            NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
+          }
+
+          Column {
+            id: detail
+            width: parent.width
+            topPadding: 4
+            spacing: 4
+
+            Repeater {
+              model: turnItem.calls
+
+              delegate: ToolCallRow {
+                required property var modelData
+                width: detail.width
+                call: modelData
+                // Only the last call of the turn being written can still be
+                // open; `ms` is stamped the moment a call returns.
+                live: turnItem.pending && modelData.ms === 0
+                // Deliberately NOT the panel's live accent: a tool block is
+                // mauve for good, so scrolling back you can tell at a glance
+                // which parts of a conversation touched the machine. Only the
+                // panel chrome tracks the state of the turn in flight.
+              }
+            }
+          }
         }
       }
 
@@ -177,13 +399,12 @@ Item {
       Text {
         width: parent.width
         visible: !turnItem.user && !turnItem.pending && turnItem.cost !== null
+        // The tool count used to ride here too; the settled batch line above now
+        // states it in words, and saying "3 tools" again two rows later is the
+        // kind of noise this whole change is about.
         text: "◇ " + fmt.duration(turnItem.cost ? turnItem.cost.ms : 0)
           + (turnItem.cost && turnItem.cost.tokens > 0
               ? " · " + fmt.tokens(turnItem.cost.tokens) + " tok" : "")
-          + (turnItem.calls.length > 0
-              ? " · " + turnItem.calls.length
-                + (turnItem.calls.length === 1 ? " tool" : " tools")
-              : "")
         color: Theme.overlay0
         elide: Text.ElideRight
         font.family: Style.font.family

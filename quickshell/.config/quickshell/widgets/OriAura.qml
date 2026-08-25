@@ -43,7 +43,22 @@ import "root:/"
 //   thinking   a pool of light travels the width of the screen and back on a
 //              cosine, so it eases at the turns and never jumps at a seam,
 //              while the seam itself breathes on the bar readout's period.
-//              Two incommensurate cycles: it never repeats visibly.
+//
+//              The travel is driven by the STREAM, not by the wall clock: its
+//              phase is integrated per frame at a rate that is full while text
+//              is arriving and decays toward a drift once nothing has arrived
+//              for `auraFlowGraceMs`, dimming the pool toward the resting seam
+//              as it goes. So the pool carries the one fact nothing else on the
+//              desktop has -- whether Ori is MOVING -- and it survives a tool
+//              call, which the bar's character counter structurally cannot
+//              (a tool call streams no deltas, so that number freezes for its
+//              whole duration).
+//
+//              It also removes a defect: on a fixed clock this looped exactly
+//              every auraSweepMs, and auraSweepMs was 3 x breathMs, so the
+//              whole surface repeated verbatim every 7.8 seconds. A phase that
+//              advances at a rate the work decides has no period left to be a
+//              multiple of anything.
 //   answered   the travel stops dead and the whole edge floods once, then
 //              decays to a low steady wash that stays until the answer is
 //              read. An unread answer leaves the room lit.
@@ -109,17 +124,57 @@ PanelWindow {
   // the moment the work does. Same idiom as the screensaver. Only the travel
   // and the breath need it -- the flare is a plain animation and the waiting
   // wash does not move at all, so a surface that is merely lit costs nothing.
+  //
+  // It reads one wall-clock stamp per frame -- PiSession.lastAppendAt, set when
+  // a delta lands -- exactly as OriDot's `heart` reads PiSession.askedAt to tick
+  // its elapsed figure. That is a display clock deriving a value on a frame it
+  // was already drawing, not a timer re-reading state to detect that it changed.
+
+  // How fast the pool is currently travelling, 1 = full, floored at the drift.
+  property real flow: 1
+  // The pool's position on its round trip, integrated rather than computed from
+  // elapsed time -- which is what lets the rate change without the pool jumping.
+  property real phase: 0
+
   FrameAnimation {
     id: clock
     running: aura.thinking
+    onTriggered: {
+      var gap = Date.now() - PiSession.lastAppendAt
+      var f = 1
+      if (gap > Style.ori.auraFlowGraceMs) {
+        f = Math.exp(-(gap - Style.ori.auraFlowGraceMs) / Style.ori.auraFlowDecayMs)
+        if (f < Style.ori.auraDriftRate) f = Style.ori.auraDriftRate
+      }
+      aura.flow = f
+      // Clamped: the first frame after the surface is built, and any frame
+      // dropped behind a compositor hitch, would otherwise teleport the pool.
+      var dt = Math.min(frameTime, 0.1)
+      aura.phase = (aura.phase + f * dt * 1000 / Style.ori.auraSweepMs) % 1
+    }
+  }
+
+  // A fresh turn starts the pool where it started every other turn, at full
+  // rate, so two turns are comparable by eye.
+  onThinkingChanged: if (aura.thinking) {
+    aura.phase = 0
+    aura.flow = 1
   }
 
   // Travel: a full round trip on a cosine, so the pool decelerates into each
   // edge and accelerates out of it instead of wrapping.
   readonly property real travel: {
     if (!aura.thinking) return 0.5
-    var p = (clock.elapsedTime * 1000) % Style.ori.auraSweepMs / Style.ori.auraSweepMs
-    return 0.5 - 0.5 * Math.cos(2 * Math.PI * p)
+    return 0.5 - 0.5 * Math.cos(2 * Math.PI * aura.phase)
+  }
+
+  // The pool's brightness follows its speed down: at the drift floor it has
+  // faded most of the way into the seam it rides on, so a stalled Ori is a
+  // still, dim glow rather than a bright thing crawling. Both halves of the
+  // signal move together, which is what makes it readable at the edge of vision.
+  readonly property real poolPeak: {
+    var rest = Style.ori.auraCore * Style.ori.auraSeamWhileTravelling
+    return rest + (Style.ori.auraPoolPeak - rest) * aura.flow
   }
 
   // Breath: the seam brightening and dimming on the readout's period.
@@ -216,9 +271,9 @@ PanelWindow {
           centerRadius: pool.width / 2
           focalX: centerX
           focalY: centerY
-          GradientStop { position: 0.0; color: Theme.alpha(aura.tint, Style.ori.auraPoolPeak) }
-          GradientStop { position: 0.25; color: Theme.alpha(aura.tint, Style.ori.auraPoolPeak * 0.40) }
-          GradientStop { position: 0.62; color: Theme.alpha(aura.tint, Style.ori.auraPoolPeak * 0.09) }
+          GradientStop { position: 0.0; color: Theme.alpha(aura.tint, aura.poolPeak) }
+          GradientStop { position: 0.25; color: Theme.alpha(aura.tint, aura.poolPeak * 0.40) }
+          GradientStop { position: 0.62; color: Theme.alpha(aura.tint, aura.poolPeak * 0.09) }
           GradientStop { position: 1.0; color: Theme.alpha(aura.tint, 0) }
         }
         startX: 0

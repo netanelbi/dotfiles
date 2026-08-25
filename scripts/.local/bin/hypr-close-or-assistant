@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# SUPER+Q, made safe while the assistant panel is up.
+#
+# Hyprland binds are GLOBAL: they fire before any client sees the key, and a
+# layer surface cannot swallow one no matter what keyboard-focus mode it asks
+# for. So with the assistant open, SUPER+Q was reaching killactive and closing
+# whatever window happened to be behind it -- destructive, and triggered by
+# muscle memory at exactly the moment the panel has your attention.
+#
+# A Hyprland submap would also work and is the "native" answer, but submaps do
+# not inherit: entering one disables every other bind, so a Quickshell crash
+# while the panel is open would strand the session in a map with almost no keys.
+# Not worth it to fix one bind.
+#
+# Instead: ask whether the panel's layer surface exists. `hyprctl layers` lists
+# it by namespace only while it is mapped (verified: 1 while open, 0 while
+# closed), which needs no IPC into Quickshell and no change to its QML.
+if hyprctl layers 2>/dev/null | grep -q "quickshell-assistant"; then
+    exec qs -p ~/.config/quickshell ipc call assistant close
+fi
+
+# Hyprland 0.56+ parses the dispatch argument as Lua.
+exec hyprctl dispatch 'hl.dsp.window.close()'

@@ -132,7 +132,10 @@ hl.bind(mainMod .. " + D",      hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc 
 hl.bind(mainMod .. " + E",      hl.dsp.exec_cmd("thunar"))
 
 -- Window management
-hl.bind(mainMod .. " + Q",         hl.dsp.window.close())
+-- Closes the assistant panel when it is up, and the focused window otherwise.
+-- Hyprland binds are global, so SUPER+Q was reaching killactive THROUGH the open
+-- panel and closing the window behind it.
+hl.bind(mainMod .. " + Q",         hl.dsp.exec_cmd("~/.local/bin/hypr-close-or-assistant"))
 hl.bind(mainMod .. " + SHIFT + Q", hl.dsp.exit())
 hl.bind(mainMod .. " + F",         hl.dsp.window.float({ action = "toggle" }))
 hl.bind(mainMod .. " + SHIFT + F", hl.dsp.window.fullscreen())

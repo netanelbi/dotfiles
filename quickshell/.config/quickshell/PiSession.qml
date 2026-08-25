@@ -334,6 +334,18 @@ Singleton {
   // Frozen when a turn ends so `turnSeconds` reports what the turn COST rather
   // than how long ago it happened.
   property double settledAtMs: 0
+
+  // Wall clock of the last piece of text Ori actually produced -- stamped by
+  // `grow()`, which is the one choke point every text/thinking delta goes
+  // through, and reset by `ask()` so a turn opens at full flow.
+  //
+  // It exists because the character counter in the bar CANNOT tell working from
+  // hung: a tool call streams no deltas, so the count sits frozen for the whole
+  // of a `bash sleep 15` while the process is perfectly healthy. The gap
+  // BETWEEN deltas is the fact that number is missing, and OriAura drives the
+  // travelling pool off it -- full rate while text arrives, decaying to a drift
+  // while it does not. A stamp, not a timer: nothing here polls it.
+  property double lastAppendAt: 0
   readonly property real contextFraction:
     contextKnown ? Math.min(1, usageTotal / contextWindow) : 0
 
@@ -365,6 +377,7 @@ Singleton {
     var i = lastAssistant()
     if (i < 0) return
     turnModel.setProperty(i, field, turnModel.get(i)[field] + delta)
+    root.lastAppendAt = Date.now()
     root.appended()
   }
 
@@ -379,6 +392,10 @@ Singleton {
     root.error = ""
     root.busy = true
     root.settledAtMs = 0
+    // A turn opens at full flow, so the first seconds -- before a single token
+    // has landed -- read as movement rather than as a stall left over from the
+    // previous answer.
+    root.lastAppendAt = Date.now()
     turnModel.append({ role: "user", text: msg, thinking: "", tool: "", pending: false })
     // The assistant's turn exists before a single token arrives, so the view has
     // a row to stream into and the conversation never visibly jumps.

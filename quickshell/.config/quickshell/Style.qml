@@ -143,8 +143,26 @@ Singleton {
     readonly property int scanMs: 1900
 
     // The light travelling the screen edge, one full round trip (there AND
-    // back -- it ping-pongs on a cosine so there is no jump at the ends).
+    // back -- it ping-pongs on a cosine so there is no jump at the ends). This
+    // is the sweep's duration AT FULL FLOW only: the pool's phase is integrated
+    // per frame against how recently text arrived, so the actual period varies
+    // with the work and there is no fixed cycle. (There used to be, and it was
+    // exactly 3 x breathMs -- the whole aura repeated every 7.8s under a
+    // comment claiming it never repeated.)
     readonly property int auraSweepMs: 7800
+    // How long a silence is tolerated before the pool starts slowing. Under
+    // this, ordinary gaps between tokens and the pause on either side of a
+    // tool result do not register as a stall.
+    readonly property int auraFlowGraceMs: 2000
+    // e-folding time of the slowdown past that grace. ~4s of silence puts the
+    // pool at a third rate, ~6s puts it on the floor -- which is roughly the
+    // point a person starts wondering whether it is still alive.
+    readonly property int auraFlowDecayMs: 1800
+    // The floor. A tool call that streams nothing still drifts: stopping dead
+    // is what a CRASHED shell should look like, and this is a flow gauge, not a
+    // hang detector. Slow enough that the difference from full rate is obvious
+    // in peripheral vision, which is the only place this is ever seen.
+    readonly property real auraDriftRate: 0.10
     // The flare when an answer lands. Longer than any bar transition because
     // it is the one moment the desktop is allowed to announce something.
     readonly property int auraFlareMs: 1100

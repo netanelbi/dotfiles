@@ -321,7 +321,10 @@ PanelWindow {
       // its row back through `count - 1 - index`.
       verticalLayoutDirection: ListView.BottomToTop
 
-      delegate: TurnDelegate { accent: panel.accent }
+      // `nowMs` is the panel's own frame clock, handed to the delegates so the
+      // live tool batch can count its elapsed time off the same tick as the
+      // rail -- and stop dead with it when the turn settles.
+      delegate: TurnDelegate { accent: panel.accent; nowMs: panel.nowMs }
     }
 
     // A scroll position, not a scrollbar: there is nothing to grab, it only
