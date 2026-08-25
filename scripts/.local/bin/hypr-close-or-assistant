@@ -15,7 +15,17 @@
 # Instead: ask whether the panel's layer surface exists. `hyprctl layers` lists
 # it by namespace only while it is mapped (verified: 1 while open, 0 while
 # closed), which needs no IPC into Quickshell and no change to its QML.
-if hyprctl layers 2>/dev/null | grep -q "quickshell-assistant"; then
+#
+# Matched by PID as well as by namespace, which is not paranoia: a SECOND
+# quickshell -- a scratch copy rendering a preview off-screen -- maps a layer
+# with the identical namespace on the same compositor. On a namespace-only
+# match SUPER+Q then talked to a shell that is not the panel, quietly did
+# nothing, and stopped closing windows altogether for as long as that copy was
+# alive. Which is exactly when someone is working on the panel and reaching for
+# SUPER+Q most.
+shell_pid=$(pgrep -f "quickshell .*-p $HOME/.config/quickshell" | head -1)
+if [[ -n "$shell_pid" ]] &&
+   hyprctl layers 2>/dev/null | grep -q "namespace: quickshell-assistant, pid: $shell_pid"; then
     exec qs -p ~/.config/quickshell ipc call assistant close
 fi
 
