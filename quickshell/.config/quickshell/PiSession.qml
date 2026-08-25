@@ -211,7 +211,31 @@ Singleton {
     // The point of doing it this way round: pi makes the call, so pi emits
     // tool_execution_start, so the panel can SHOW the search. A shim-side loop
     // is invisible to the client by construction.
-    "~/Development/Personal/my-pi/extensions/shim-web.ts"
+    "~/Development/Personal/my-pi/extensions/shim-web.ts",
+
+    // /ollama-usage and /ollama-usage-status: how much of the Ollama Cloud
+    // session and weekly allowance is spent. Named here rather than found by
+    // discovery, which is the whole point of `-ne` plus explicit `-e` -- see
+    // buildCommand(). Dropping -ne to get this one would have bought nine
+    // others we do not want: four are Anthropic/OpenAI billing readouts for
+    // services this machine does not pay for, and the rest are terminal
+    // overlays that can only do headless what /llama does, which is decline.
+    //
+    // It is also the one usage readout that matches the bill: the panel could
+    // already offer /usage for an Anthropic subscription nobody here has, and
+    // nothing at all for the Ollama Cloud plan that every answer on this
+    // machine goes through.
+    //
+    // Headless safety is CHECKED, not taken from its header. It claims to
+    // survive with no TUI -- every ctx access in a try/catch, `hasUI` read
+    // through one, because reading it is itself the throwing act. Driven on a
+    // real rpc child with our exact flags it registered both commands (1 -> 3),
+    // settled two full turns answering "pong" and "still-here", answered a
+    // stats probe afterwards, and left stderr empty. That covers both things
+    // that could have killed it: the 1.5s post-load timer, which is the same
+    // shape as the crash in pi's own openai-codex-usage.ts, and the `turn_end`
+    // hook, which fires a network call once per turn and fired twice here.
+    "~/Development/Personal/my-pi/extensions/ollama-usage.ts"
   ]
 
   // Where shim-web sends its searches. The local systemd instance rather than
