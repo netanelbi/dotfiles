@@ -30,7 +30,7 @@ Item {
   // 0..1 over one breath. Sine rather than a triangle so it eases at both ends
   // by construction, the way OriDot's InOutQuad pair does.
   readonly property real beat: alive
-    ? 0.5 + 0.5 * Math.sin(phase * 2 * Math.PI * 1000 / Style.anim.breath)
+    ? 0.5 + 0.5 * Math.sin(phase * 2 * Math.PI * 1000 / Style.ori.breathMs)
     : 0
 
   // It ROCKS about 45 degrees rather than turning through them. A continuous
@@ -40,7 +40,7 @@ Item {
   // still moves. On twice the core's period, so the two never beat together and
   // the mark never looks like a mechanism ticking.
   readonly property real spin:
-    45 + (alive ? 16 * Math.sin(phase * Math.PI * 1000 / Style.anim.breath) : 0)
+    45 + (alive ? 16 * Math.sin(phase * Math.PI * 1000 / Style.ori.breathMs) : 0)
 
   // ------------------------------------------------------------------ shell
   Rectangle {

@@ -71,7 +71,7 @@ Item {
     height: col.implicitHeight + 6
 
     // The spine. Solid once the turn is done, breathing while it is being
-    // written -- the same 1400ms breath as the mark in the header and the dot
+    // written -- the same 2600ms breath as the mark in the header and the dot
     // in the bar, so everything alive on this desktop is alive at one rate.
     Rectangle {
       id: spine
@@ -92,11 +92,11 @@ Item {
         alwaysRunToEnd: true
         NumberAnimation {
           target: spine; property: "opacity"; to: 0.3
-          duration: Style.anim.breath / 2; easing.type: Style.anim.easingSmooth
+          duration: Style.ori.breathMs / 2; easing.type: Style.anim.easingSmooth
         }
         NumberAnimation {
           target: spine; property: "opacity"; to: 1
-          duration: Style.anim.breath / 2; easing.type: Style.anim.easingSmooth
+          duration: Style.ori.breathMs / 2; easing.type: Style.anim.easingSmooth
         }
       }
 

@@ -95,11 +95,11 @@ Item {
             alwaysRunToEnd: true
             NumberAnimation {
               target: cost; property: "opacity"; to: 0.35
-              duration: Style.anim.breath / 2; easing.type: Style.anim.easingSmooth
+              duration: Style.ori.breathMs / 2; easing.type: Style.anim.easingSmooth
             }
             NumberAnimation {
               target: cost; property: "opacity"; to: 1
-              duration: Style.anim.breath / 2; easing.type: Style.anim.easingSmooth
+              duration: Style.ori.breathMs / 2; easing.type: Style.anim.easingSmooth
             }
           }
 

@@ -430,7 +430,7 @@ PanelWindow {
           width: 130
           height: 1
           x: (scanTrack.width + width)
-             * ((clock.elapsedTime * 1000) % Style.anim.scan) / Style.anim.scan - width
+             * ((clock.elapsedTime * 1000) % Style.ori.scanMs) / Style.ori.scanMs - width
           gradient: Gradient {
             orientation: Gradient.Horizontal
             GradientStop { position: 0.0; color: Theme.transparent }
