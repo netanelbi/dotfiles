@@ -48,7 +48,15 @@ BarWidget {
   // The monitor this bar is on, so we show the same workspaces waybar does.
   // Null until the window exists (and on a non-Hyprland compositor), in which
   // case we fall back to showing every workspace rather than showing none.
+  // Set explicitly by Bar.qml. The QsWindow route below resolves to null in
+  // practice -- the widget is nested several layers inside the PanelWindow and
+  // the attached property is not reliably available when this binding runs, so
+  // every bar fell back to "show every workspace" and both monitors showed the
+  // same list.
+  property var barScreen: null
+
   readonly property var barMonitor: {
+    if (root.barScreen) return Hyprland.monitorFor(root.barScreen)
     var w = root.QsWindow ? root.QsWindow.window : null
     return w && w.screen ? Hyprland.monitorFor(w.screen) : null
   }
@@ -80,8 +88,14 @@ BarWidget {
       if (!isSpecial(ws) && onThisMonitor(ws) && ids.indexOf(ws.id) === -1) ids.push(ws.id)
     }
 
+    // The focused workspace is a fallback for the frame before Hyprland's IPC
+    // model populates -- but it is the GLOBALLY focused one, so it must pass
+    // the same monitor filter as everything else. Without onThisMonitor() here,
+    // focusing a workspace on the external display made it appear on the
+    // laptop's bar too, and both bars showed the same number.
     var focused = Hyprland.focusedWorkspace
-    if (!isSpecial(focused) && ids.indexOf(focused.id) === -1) ids.push(focused.id)
+    if (focused !== null && !isSpecial(focused) && onThisMonitor(focused)
+        && ids.indexOf(focused.id) === -1) ids.push(focused.id)
 
     // Numbered workspaces ascending, then named ones -- waybar's order.
     ids.sort(function (a, b) {

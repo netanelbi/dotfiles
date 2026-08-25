@@ -69,7 +69,7 @@ PanelWindow {
       //   hyprland/workspaces, custom/scratchpad, custom/windows.
 
       // hyprland/workspaces -- the mauve-outlined pills for this monitor.
-      Workspaces { }
+      Workspaces { barScreen: bar.screen }
 
       // custom/scratchpad -- the gold 󰝖 counter, gone when nothing is stashed.
       Scratchpad { }
