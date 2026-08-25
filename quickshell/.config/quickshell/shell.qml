@@ -53,6 +53,11 @@ ShellRoot {
   // first opened.
   Assistant { }
 
+  // `ipc call ori ...` -- the assistant engine's own script surface (images in,
+  // session resume). Separate from Assistant{} because an IpcHandler is only
+  // registered when it hangs off this tree, and PiSession is a singleton.
+  OriIpc { }
+
   // The xdg-desktop-portal-hyprland screen-share picker, replacing
   // /usr/bin/hyprland-share-picker's three tabs of text with live thumbnails.
   // Built only when ~/.local/bin/hypr-share-picker asks it to open.

@@ -45,8 +45,34 @@ import Quickshell.Io
 //                   "36%" context readout. Asked for once per settled turn,
 //                   which is the only moment the answer can have changed.
 //
-// `prompt` also takes an `images` array, which is the hook for feeding it a
-// ScreencopyView grab of the focused window later.
+// `prompt` also takes an `images` array. Verified against the bundle and end to
+// end against a real screenshot, because the shape is not guessable:
+//
+//   {"type":"prompt","message":"what is this error?",
+//    "images":[{"type":"image","mimeType":"image/png","data":"<raw base64>"}]}
+//
+// Each element is a CONTENT BLOCK, not a path and not a data: URI -- the RPC
+// layer does `userContent.push(...images)` straight into the user message, and
+// the image normaliser downstream does `Buffer.from(block.data,"base64")`. A
+// `data:image/png;base64,` prefix would therefore be decoded as image bytes and
+// the picture would arrive corrupt rather than rejected. `steer` and `follow_up`
+// take the same array in the same shape.
+//
+// The model is TEXT-ONLY (deepseek-v4-flash), and this still works, because it
+// is reached through ollama-shim: the shim's mutateOpenAI() walks the outgoing
+// message content, hands every image block to a vision model via describeImage()
+// and substitutes a text description in place. So the image never reaches
+// deepseek at all -- what reaches it is a paragraph that begins "[ollama-shim:
+// an image in this message was replaced with text...]". Ori says so in its
+// answers, which is honest and worth leaving alone.
+//
+// One correction to the folklore: the shim doing that work is NOT the local one
+// on 127.0.0.1:11435. `~/.pi/agent/models.json` points the `ollama` provider at
+// https://ollama.ncym.uk/v1, which is the same shim on the VPS; the local
+// instance is only what SHIM_URL below gives to shim-web for searches. Both
+// describe images identically, so nothing here depends on which -- but a reader
+// looking for the description in `journalctl --user -u ollama-shim` will not
+// find it unless models.json is repointed.
 //
 // ------------------------------------------------------------- warm vs idle
 // A warm node process is ~200MB, which is more than this entire shell. So it is
@@ -63,11 +89,69 @@ import Quickshell.Io
 //        from. `get_commands` reports 17 on this machine and 16 of them are
 //        skills, so passing -ns to buy a fraction of a second at startup would
 //        silently empty the command list.
-//   --no-session  no session file on disk. Continuity comes from the process
-//        being alive, not from a transcript.
+//   --session PATH  attach to an existing session file, when resuming. Omitted
+//        for a fresh conversation; see "sessions" below for why `--no-session`
+//        is gone.
 //   -e   extensions are opted INTO one path at a time (see `extensions` below).
 //        Unlinking ~/.pi/agent/extensions/* would have worked too, but that
 //        directory is global: it would change `pi` in every terminal, not here.
+//
+// ---------------------------------------------------------------- sessions
+// This file used to pass `--no-session`, and the comment above it said
+// continuity comes from the process being alive. That was true and it was also
+// the bug: the process is killed after ten minutes of silence, so a transcript
+// the panel was still showing described a conversation pi had already
+// forgotten. Ask a follow-up and Ori answers as a stranger.
+//
+// So `--no-session` is gone. The justification, in full, because the tradeoff
+// is real:
+//
+//   * Writing a session file costs NOTHING in context. Context grows because a
+//     conversation is long, not because it is on disk -- a fresh spawn starts a
+//     fresh session file with an empty history either way. The only moment
+//     persistence costs tokens is when you deliberately RESUME a long
+//     conversation, which is an explicit act with a visible message count next
+//     to it in the list.
+//   * pi's auto-compaction is on (`autoCompactionEnabled: true`, measured via
+//     get_state) and the window here is 1,048,576 tokens. A turn of Ori's costs
+//     ~10K. Compaction is a distant concern, not a running one.
+//   * What it buys: the idle kill stops being amnesia. ask() re-attaches a cold
+//     child to the session the visible transcript came from, so the screen and
+//     the model agree again.
+//   * What it costs: one .jsonl per conversation under
+//     ~/.pi/agent/sessions/--home-netanel-.dotfiles--/, shared with whatever
+//     `pi` writes when run from a terminal in this repo.
+//
+// Resuming, verified by hand rather than assumed:
+//
+//   --session PATH   at spawn. Takes a path, or an id / id-prefix that pi
+//                    resolves against the cwd's session directory. `--resume`
+//                    and `-r` are NOT this: they are booleans that open the
+//                    interactive picker, which does not exist here. `--continue`
+//                    is also unusable -- it takes the most recent session in the
+//                    cwd, which would silently hijack a terminal pi session in
+//                    this same repo.
+//   switch_session   {"type":"switch_session","sessionPath":"/abs/path.jsonl"}
+//                    on a RUNNING child. Works even on a child that was started
+//                    with --no-session, and genuinely reloads the context: the
+//                    proof run asked for a code word given to a different
+//                    process and got it back.
+//   get_entries      the transcript, as the session's own append-only entry
+//                    list -- `{entries:[...], leafId}`. Entry types seen:
+//                    model_change, thinking_level_change, and `message`, whose
+//                    `.message` is a normal {role, content:[blocks]}. That is
+//                    what rehydrate() below walks.
+//
+// There is NO list-sessions command in the RPC protocol, and no directory
+// listing in QML. So the list is an index this file keeps itself, in
+// $XDG_STATE_HOME/quickshell/ori-sessions.json, written at the one moment
+// everything needed is known: the get_session_stats response that already
+// arrives once per settled turn carries `sessionFile`, `sessionId` and
+// `totalMessages`, and the first user turn is sitting in turnModel. Nothing
+// polls, nothing shells out, and the list is readable while the process is
+// cold. It lists Ori's conversations only, which is the point -- the session
+// directory is shared with coding runs of `pi` in this repo and those are not
+// what Ctrl+R is for.
 //
 // ---------------------------------------------------------------- workspace
 // It runs in ~/.dotfiles -- the repo that configures this whole machine,
@@ -143,6 +227,23 @@ Singleton {
   // resident for the rest of the session.
   readonly property int idleKillMs: 10 * 60 * 1000
 
+  // The session index (see "sessions" above). Same XDG rule the reminder state
+  // file follows, so both land in the same place on any machine.
+  readonly property string stateDir: {
+    var xdg = Quickshell.env("XDG_STATE_HOME")
+    return ((xdg && xdg !== "") ? xdg : Quickshell.env("HOME") + "/.local/state") + "/quickshell"
+  }
+  readonly property string sessionIndexPath: stateDir + "/ori-sessions.json"
+  // How many conversations to keep offering. Old rows are dropped from the
+  // index, never from disk -- deleting someone's transcripts is not this file's
+  // business.
+  readonly property int maxSessions: 40
+
+  // Refuse to encode an image bigger than this. pi downscales anything large
+  // itself, but the base64 pass below runs on the UI thread, so a 40MB file
+  // would be a visible freeze rather than a slow answer.
+  readonly property int maxImageBytes: 12 * 1024 * 1024
+
   // ------------------------------------------------------------------ state
   // `busy` is the one the UI keys off: true from the moment a question is
   // accepted until the agent settles.
@@ -151,6 +252,25 @@ Singleton {
   property string error: ""
 
   readonly property bool warm: proc.running
+
+  // ---------------------------------------------------------------- session
+  // The file pi is writing right now, and its id -- both reported by
+  // get_session_stats, which already runs once per settled turn. Empty until
+  // the first turn of a conversation has settled.
+  property string sessionFile: ""
+  property string sessionId: ""
+  // What the NEXT cold spawn should attach to, "" for a fresh conversation.
+  // Set by resume(), and by ask() when a transcript is on screen but the child
+  // has been idle-killed out from under it.
+  property string resumePath: ""
+  // True between asking for a transcript and getting it, so the get_entries
+  // response can be told apart from any other.
+  property bool awaitingEntries: false
+
+  // Past conversations, newest first: { id, file, label, at, count }. Read from
+  // the index file at startup and rewritten by recordSession(); the panel binds
+  // to it directly.
+  property var sessions: []
 
   // ------------------------------------------------------------ view state
   // Whether the panel is on screen, and whether an answer landed while it was
@@ -180,6 +300,11 @@ Singleton {
   //             show it while the answer is empty and drop it afterwards
   //   tool      the tool call in flight on this turn, "" when none
   //   pending   true while this turn is still being written
+  //   images    newline-separated source paths attached to a user turn, "" when
+  //             none. A ListModel fixes its roles from the FIRST row inserted,
+  //             so this is written on every append (see appendTurn) rather than
+  //             only on the rows that have one -- otherwise the role would not
+  //             exist and every later write to it would be dropped silently.
   ListModel {
     id: turnModel
     // The derived views below are keyed by row index, so a cleared transcript
@@ -308,7 +433,16 @@ Singleton {
   // rather than a visible break.
   function applyStats(d) {
     var s = d.stats || d.result || d.data || d
-    var cu = s ? s.contextUsage : null
+    if (!s) return
+    // The same response carries which file this conversation is, which is the
+    // only place that fact is available without an extra round trip -- so the
+    // session index is written from here rather than from a probe of its own.
+    if (s.sessionFile) {
+      root.sessionFile = String(s.sessionFile)
+      root.sessionId = String(s.sessionId || "")
+      root.recordSession(Number(s.totalMessages || 0))
+    }
+    var cu = s.contextUsage
     if (!cu) return
     if (Number(cu.contextWindow) > 0) root.contextWindow = Number(cu.contextWindow)
     if (Number(cu.tokens) > 0) root.usageTotal = Number(cu.tokens)
@@ -382,24 +516,50 @@ Singleton {
   }
 
   // ------------------------------------------------------------------- api
+  // The one place a row is added, so the role set can never diverge between
+  // ask(), the streaming turn, and rehydrate().
+  function appendTurn(role, text, thinking, tool, pending, images) {
+    turnModel.append({ role: role, text: text, thinking: thinking,
+                       tool: tool, pending: pending, images: images })
+  }
+
   // Returns whether the question was ACCEPTED. The composer keys its "clear the
   // draft" on this: a message typed while a turn is still running is refused,
   // and silently wiping the field in that case loses what you wrote.
-  function ask(text) {
+  //
+  // `images` is optional and unchanged callers are unaffected: a plain
+  // ask("...") is exactly what it was. When given, it is a list of things to
+  // attach, each of which may be an absolute path, a file:// url, a data: URI,
+  // or an already-built {mimeType,data} block -- whichever the caller happens
+  // to have. Anything that cannot be read is reported and the question still
+  // goes, because losing the question to a bad screenshot is the worse failure.
+  function ask(text, images) {
     var msg = String(text || "").trim()
     if (msg === "" || root.busy) return false
 
-    root.error = ""
+    var blocks = []
+    var labels = []
+    // Cleared here rather than per attachment, so that with several of them a
+    // failure on the first is not erased by a success on the second.
+    root.imageError = ""
+    var srcs = (images === undefined || images === null) ? []
+             : (Array.isArray(images) ? images : [images])
+    for (var i = 0; i < srcs.length; i++) {
+      var b = root.imageBlock(srcs[i])
+      if (b) { blocks.push(b); labels.push(b.source) }
+    }
+
+    root.error = root.imageError
     root.busy = true
     root.settledAtMs = 0
     // A turn opens at full flow, so the first seconds -- before a single token
     // has landed -- read as movement rather than as a stall left over from the
     // previous answer.
     root.lastAppendAt = Date.now()
-    turnModel.append({ role: "user", text: msg, thinking: "", tool: "", pending: false })
+    appendTurn("user", msg, "", "", false, labels.join("\n"))
     // The assistant's turn exists before a single token arrives, so the view has
     // a row to stream into and the conversation never visibly jumps.
-    turnModel.append({ role: "assistant", text: "", thinking: "", tool: "", pending: true })
+    appendTurn("assistant", "", "", "", true, "")
     root.appended()
 
     idleTimer.stop()
@@ -407,9 +567,105 @@ Singleton {
     // runs either immediately (warm) or from onStarted (cold), so the caller
     // never has to know which case it is.
     pending = msg
+    pendingImages = blocks
     if (proc.running) flush()
-    else proc.running = true
+    else {
+      // Cold, with a conversation already on screen: re-attach to the session
+      // that conversation came from, so the model is not answering a follow-up
+      // to something it has no record of. This is the whole reason --no-session
+      // had to go.
+      if (root.resumePath === "" && root.sessionFile !== "" && turnModel.count > 2)
+        root.resumePath = root.sessionFile
+      proc.running = true
+    }
     return true
+  }
+
+  // ------------------------------------------------------------------ images
+  // Set by imageBlock(), read once by ask(). Kept as its own property rather
+  // than written straight to `error` so a failure survives ask()'s own reset.
+  property string imageError: ""
+
+  readonly property string b64alphabet:
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+  // Base64 by hand, over the bytes. `Qt.btoa` is NOT usable here: it takes a
+  // QString and encodes its UTF-8, so every byte above 0x7F would come out as
+  // two, and the image would arrive silently corrupt rather than rejected.
+  function base64(bytes) {
+    var A = root.b64alphabet, out = "", n = bytes.length, i = 0
+    for (; i + 2 < n; i += 3) {
+      var v = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2]
+      out += A[(v >> 18) & 63] + A[(v >> 12) & 63] + A[(v >> 6) & 63] + A[v & 63]
+    }
+    if (n - i === 1) {
+      out += A[bytes[i] >> 2] + A[(bytes[i] << 4) & 63] + "=="
+    } else if (n - i === 2) {
+      var b0 = bytes[i], b1 = bytes[i + 1]
+      out += A[b0 >> 2] + A[((b0 << 4) | (b1 >> 4)) & 63] + A[(b1 << 2) & 63] + "="
+    }
+    return out
+  }
+
+  // From the magic bytes, not from the extension: a screenshot tool's output is
+  // whatever the tool felt like, and the shim keys its describer on this.
+  function sniffMime(b) {
+    if (b.length > 8 && b[0] === 0x89 && b[1] === 0x50) return "image/png"
+    if (b.length > 3 && b[0] === 0xFF && b[1] === 0xD8) return "image/jpeg"
+    if (b.length > 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return "image/gif"
+    if (b.length > 12 && b[0] === 0x52 && b[8] === 0x57 && b[9] === 0x45) return "image/webp"
+    return ""
+  }
+
+  // One attachment -> one content block in pi's wire shape, plus a `source`
+  // for the transcript. Null (and a message on `imageError`) if it cannot be read.
+  function imageBlock(src) {
+    if (src && typeof src === "object" && src.data)
+      return { type: "image", mimeType: String(src.mimeType || "image/png"),
+               data: String(src.data), source: String(src.source || "attachment") }
+
+    var p = String(src || "").trim()
+    if (p === "") return null
+
+    // A data: URI has to be taken apart, not passed through: pi decodes `data`
+    // as raw base64.
+    if (p.indexOf("data:") === 0) {
+      var comma = p.indexOf(",")
+      var semi = p.indexOf(";")
+      if (comma < 0 || semi < 0 || p.indexOf(";base64,") < 0) {
+        root.imageError = "unsupported data URI"
+        return null
+      }
+      return { type: "image", mimeType: p.substring(5, semi),
+               data: p.substring(comma + 1), source: "pasted image" }
+    }
+
+    if (p.indexOf("file://") === 0) p = p.substring(7)
+    imageFile.path = p
+    var buf = imageFile.data()
+    if (!buf || buf.byteLength === undefined || buf.byteLength === 0) {
+      root.imageError = "cannot read image: " + p
+      return null
+    }
+    if (buf.byteLength > root.maxImageBytes) {
+      root.imageError = "image too large (" + Math.round(buf.byteLength / 1048576) + "MB): " + p
+      return null
+    }
+    var bytes = new Uint8Array(buf)
+    var mime = root.sniffMime(bytes)
+    if (mime === "") {
+      root.imageError = "not an image: " + p
+      return null
+    }
+    return { type: "image", mimeType: mime, data: root.base64(bytes), source: p }
+  }
+
+  // Read synchronously: an attachment is wanted for the question being sent
+  // right now, so there is nothing useful to do while an async read lands.
+  FileView {
+    id: imageFile
+    blockLoading: true
+    printErrors: false
   }
 
   function abort() {
@@ -426,11 +682,178 @@ Singleton {
     if (root.busy) abort()
     turnModel.clear()
     root.error = ""
+    // Forget which file this conversation was, so neither an idle-kill respawn
+    // nor a cold start reattaches to it. The row already in the index stays --
+    // "start over" clears the screen, it does not delete history.
+    root.resumePath = ""
+    root.sessionFile = ""
+    root.sessionId = ""
     if (proc.running) send({ type: "new_session" })
+  }
+
+  // ---------------------------------------------------------------- resume
+  // The index file. Ours alone, so nothing watches it for changes: what is in
+  // `sessions` after startup is what this file last wrote.
+  FileView {
+    id: indexFile
+    path: root.sessionIndexPath
+    preload: true
+    printErrors: false
+    atomicWrites: true
+    onLoaded: {
+      try {
+        var d = JSON.parse(text())
+        root.sessions = (d && d.sessions) ? d.sessions : []
+      } catch (e) {
+        root.sessions = []
+      }
+      root.sessionsLoaded = true
+    }
+    // No file yet is an empty history, not an error.
+    onLoadFailed: {
+      root.sessions = []
+      root.sessionsLoaded = true
+    }
+  }
+
+  // Nothing is written back before the read has landed: a write from a turn
+  // that settled first would replace the whole history with one row.
+  property bool sessionsLoaded: false
+
+  // How a conversation is named in the list: its opening question. Nothing
+  // asks pi for a title -- that would be a whole extra turn to name something
+  // the first line already names.
+  function sessionLabel() {
+    for (var i = 0; i < turnModel.count; i++) {
+      var r = turnModel.get(i)
+      if (r.role !== "user") continue
+      var t = String(r.text).replace(/\s+/g, " ").trim()
+      return t.length > 90 ? t.substring(0, 90) + "…" : t
+    }
+    return ""
+  }
+
+  // Called from applyStats, i.e. once per settled turn. Upserts by id and
+  // re-sorts newest first.
+  // A write here can fail on a machine so fresh that $XDG_STATE_HOME/quickshell
+  // does not exist yet -- FileView.setText does not create parent directories.
+  // That fixes itself on the next settled turn, once whichever component makes
+  // that directory has made it, so it is not worth a second mkdir of our own.
+  function recordSession(count) {
+    if (!root.sessionsLoaded) return
+    if (root.sessionId === "" || root.sessionFile === "") return
+    var label = root.sessionLabel()
+    // A session with nothing asked in it is not worth offering.
+    if (label === "") return
+
+    var next = []
+    for (var i = 0; i < root.sessions.length; i++)
+      if (root.sessions[i].id !== root.sessionId) next.push(root.sessions[i])
+    next.unshift({ id: root.sessionId, file: root.sessionFile,
+                   label: label, at: Date.now(), count: count })
+    if (next.length > root.maxSessions) next = next.slice(0, root.maxSessions)
+    root.sessions = next
+    indexFile.setText(JSON.stringify({ version: 1, sessions: next }))
+  }
+
+  // Accepts a full id or any unambiguous prefix of one, so a script can pass
+  // the short form the listing prints.
+  function sessionById(id) {
+    var key = String(id || "")
+    if (key === "") return null
+    for (var i = 0; i < root.sessions.length; i++)
+      if (root.sessions[i].id === key) return root.sessions[i]
+    for (var j = 0; j < root.sessions.length; j++)
+      if (root.sessions[j].id.indexOf(key) === 0) return root.sessions[j]
+    return null
+  }
+
+  // Put a past conversation back: pi's context AND the transcript on screen,
+  // in that order. Returns whether it started; the transcript arrives later,
+  // when get_entries answers.
+  function resume(id) {
+    var s = root.sessionById(id)
+    if (!s) { root.error = "no such session: " + id; return false }
+    if (root.busy) abort()
+
+    root.error = ""
+    root.resumePath = s.file
+    root.awaitingEntries = true
+    if (proc.running) send({ type: "switch_session", sessionPath: s.file })
+    else proc.running = true   // buildCommand picks up resumePath
+    return true
+  }
+
+  // Turn a session's entry list back into turn model rows. The mapping is not
+  // one-to-one: pi records a tool loop as several assistant messages with
+  // toolResults between them, whereas ingest() builds exactly ONE assistant row
+  // per question. So consecutive assistant/toolResult entries are folded into
+  // the row opened by the user entry before them, which is what makes a resumed
+  // transcript look like the live one instead of a protocol dump.
+  function rehydrate(entries) {
+    turnModel.clear()
+    var log = {}
+
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i]
+      if (e.type !== "message" || !e.message) continue
+      var m = e.message
+      if (m.role === "user") {
+        var ut = "", uimg = []
+        var uc = m.content
+        if (typeof uc === "string") ut = uc
+        else for (var a = 0; a < (uc || []).length; a++) {
+          if (uc[a].type === "text") ut += uc[a].text
+          else if (uc[a].type === "image") uimg.push("(attached " + (uc[a].mimeType || "image") + ")")
+        }
+        appendTurn("user", ut, "", "", false, uimg.join("\n"))
+        continue
+      }
+      if (m.role !== "assistant") continue   // toolResult: the call is enough
+
+      // No user entry ahead of it (a compaction summary, a resumed fork): open
+      // a row so the text is not dropped.
+      var row = lastAssistant()
+      if (row < 0 || !turnModel.get(row).pending) {
+        appendTurn("assistant", "", "", "", true, "")
+        row = turnModel.count - 1
+      }
+      var text = turnModel.get(row).text
+      var think = turnModel.get(row).thinking
+      var ac = m.content || []
+      for (var b = 0; b < ac.length; b++) {
+        var blk = ac[b]
+        if (blk.type === "text") text += blk.text
+        else if (blk.type === "thinking") think += (blk.thinking || "")
+        else if (blk.type === "toolCall") {
+          var list = (log[row] || []).slice()
+          list.push({ name: String(blk.name || "tool"),
+                      arg: summarizeArgs(blk.arguments), t0: 0, ms: 0 })
+          log[row] = list
+        }
+      }
+      turnModel.setProperty(row, "text", text)
+      turnModel.setProperty(row, "thinking", think)
+    }
+
+    // Nothing is in flight in a transcript read off disk.
+    for (var c = 0; c < turnModel.count; c++) {
+      turnModel.setProperty(c, "pending", false)
+      turnModel.setProperty(c, "tool", "")
+    }
+    root.toolLog = log
+    root.busy = false
+    root.settledAtMs = 0
+    root.turnStartedAt = 0
+    // `appended` (pin the view to the bottom) but deliberately NOT `settled`:
+    // the bar treats that signal as "an answer just arrived" and speaks the
+    // first line of it. A conversation you asked to reopen has not arrived.
+    root.appended()
   }
 
   // --------------------------------------------------------------- protocol
   property string pending: ""
+  property var pendingImages: []
   property int nextId: 1
 
   function send(obj) {
@@ -442,8 +865,21 @@ Singleton {
 
   function flush() {
     if (root.pending === "") return
-    send({ type: "prompt", message: root.pending })
+    var msg = { type: "prompt", message: root.pending }
+    // Omitted entirely when there are none: an empty array is a different
+    // message from no field, and there is no reason to send one.
+    if (root.pendingImages.length > 0) {
+      var imgs = []
+      for (var i = 0; i < root.pendingImages.length; i++) {
+        var b = root.pendingImages[i]
+        // `source` is ours, for the transcript. pi is sent the block only.
+        imgs.push({ type: "image", mimeType: b.mimeType, data: b.data })
+      }
+      msg.images = imgs
+    }
+    send(msg)
     root.pending = ""
+    root.pendingImages = []
   }
 
   function ingest(line) {
@@ -468,6 +904,23 @@ Singleton {
       // paint the transcript red -- that path belongs to the prompt.
       if (d.command === "get_session_stats") {
         if (d.success !== false) root.applyStats(d)
+        break
+      }
+      // The transcript is asked for only after the switch is ACKED -- entries
+      // read any earlier are the session being switched away from.
+      if (d.command === "switch_session") {
+        if (d.success !== false && root.awaitingEntries) send({ type: "get_entries" })
+        else if (d.success === false) { root.awaitingEntries = false; root.error = String(d.error || "switch failed") }
+        break
+      }
+      if (d.command === "get_entries") {
+        root.awaitingEntries = false
+        if (d.success !== false) {
+          root.rehydrate(((d.data || {}).entries) || [])
+          // The usage readouts describe a context that has just been replaced
+          // wholesale, so re-read them. Driven by the resume, not by a clock.
+          send({ type: "get_session_stats" })
+        } else root.error = String(d.error || "get_entries failed")
         break
       }
       // Only a FAILED response matters: success is just an ack that the prompt
@@ -546,8 +999,11 @@ Singleton {
   // CLAUDE.md from its working directory.
   function buildCommand() {
     var parts = ["SHIM_URL=" + root.shimUrl, "exec " + root.binary,
-                 "--mode rpc", "-ne", "--no-session",
+                 "--mode rpc", "-ne",
                  "--provider " + root.provider, "--model " + root.model]
+    // Quoted: session filenames carry an ISO timestamp with colons in it, which
+    // a login shell would otherwise be free to interpret.
+    if (root.resumePath !== "") parts.push("--session '" + root.resumePath + "'")
     for (var i = 0; i < root.promptFiles.length; i++)
       parts.push("--append-system-prompt " + root.promptFiles[i])
     for (var j = 0; j < root.extensions.length; j++)
@@ -568,12 +1024,18 @@ Singleton {
     stdinEnabled: true
     stdout: SplitParser { onRead: function (line) { root.ingest(line) } }
 
-    // The child is spawned by ask(), so there is always exactly one question
-    // waiting when it comes up.
-    onStarted: root.flush()
+    // The child is spawned by ask(), so there is usually exactly one question
+    // waiting when it comes up -- or, when resume() spawned it, a transcript to
+    // read back out of the session it was started on.
+    onStarted: {
+      if (root.awaitingEntries) root.send({ type: "get_entries" })
+      root.flush()
+    }
 
     onExited: function (exitCode) {
       root.pending = ""
+      root.pendingImages = []
+      root.awaitingEntries = false
       idleTimer.stop()
       // An exit while busy is a crash, not the idle timer: say so rather than
       // leaving the panel spinning forever on an answer that will never come.
@@ -590,5 +1052,10 @@ Singleton {
     interval: root.idleKillMs
     repeat: false
     onTriggered: proc.running = false
+  }
+
+  function dropChild() {
+    idleTimer.stop()
+    proc.running = false
   }
 }
