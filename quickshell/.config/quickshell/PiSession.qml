@@ -36,25 +36,68 @@ import Quickshell.Io
 //   -ne  extensions OFF. NOT optional: ~/.pi/agent/extensions/openai-codex-usage.ts
 //        calls assertActive() on a UI that does not exist outside a TTY, throws,
 //        and takes the whole run with it. Every non-interactive pi run needs this.
-//   -ns  skills off -- nothing here uses them, and they cost startup.
+//        Skills are deliberately NOT disabled -- they are where `/commands` come
+//        from. `get_commands` reports 17 on this machine and 16 of them are
+//        skills, so passing -ns to buy a fraction of a second at startup would
+//        silently empty the command list.
 //   --no-session  no session file on disk. Continuity comes from the process
-//        being alive, not from a transcript; a restart is meant to be a clean slate.
-//   --append-system-prompt  takes a FILE PATH as well as text. soul.md is dito's
-//        personality file, so the panel answers as Vivo rather than as a generic
-//        coding assistant. (dito's own CLAUDE.md pulls in soul/user/tools/pc with
-//        `@file` imports -- pi does NOT expand those, which is why the file is
-//        named here directly. Verified: without this line it answers "I'm Claude,
-//        an AI coding assistant running inside pi".)
-//        user.md is deliberately NOT appended: it tells the assistant its primary
-//        interface is Telegram and that replies go there, which is true of dito's
-//        main session and wrong for a panel on the screen in front of you.
+//        being alive, not from a transcript.
+//   -e   extensions are opted INTO one path at a time (see `extensions` below).
+//        Unlinking ~/.pi/agent/extensions/* would have worked too, but that
+//        directory is global: it would change `pi` in every terminal, not here.
+//
+// ---------------------------------------------------------------- workspace
+// It runs in ~/.dotfiles -- the repo that configures this whole machine,
+// including this file. Three things follow, none of them incidental:
+//
+//   * pi discovers CLAUDE.md from its working directory, so the repo's own
+//     documentation is already in context. It knows what stow is doing here
+//     without being told.
+//   * it can read and change its own source. PiSession.qml is how it runs;
+//     assistant/ is how it looks.
+//   * ~/.config/assistant/*.md are its own files -- who it is, what this machine
+//     does, and what it has learned. memory.md is meant to be written BY it.
+//
+// Measured cost of running there rather than in a neutral directory: 3157 ->
+// 5964 input tokens. That 2.8K is the repo knowledge, out of a 131K window.
+//
+// The identity is Ori, and it is NOT dito's Vivo. Same laptop, different heads,
+// separate memory -- soul.md says so outright so it cannot claim conversations
+// it never had.
+
 Singleton {
   id: root
 
+  // ------------------------------------------------------------- settings
+  // Everything tunable lives in this block. Changing any of it hot-reloads the
+  // shell, which drops the running child; the next question starts a new one, so
+  // it costs a cold start and nothing else.
   readonly property string binary: "pi"
   readonly property string provider: "ollama"
   readonly property string model: "deepseek-v4-flash:0731"
-  readonly property string soulFile: "~/.dito/soul.md"
+
+  // Where it runs. This is the whole "it manages this machine" decision.
+  readonly property string workdir: "~/.dotfiles"
+
+  // Prepended to the system prompt, in order. pi takes a PATH here as well as
+  // text -- and it does NOT expand CLAUDE.md's `@file` imports, so every file
+  // has to be named. (Point it at a workspace whose CLAUDE.md is nothing but
+  // `@` lines and it answers "I'm Claude, an AI coding assistant running inside
+  // pi"; that is exactly how this was found.)
+  readonly property var promptFiles: [
+    "~/.config/assistant/soul.md",
+    "~/.config/assistant/laptop.md",
+    "~/.config/assistant/memory.md"
+  ]
+
+  // Extensions, opted into by path. Empty means none: `-ne` disables discovery
+  // and each entry here is loaded back explicitly, which leaves the global set
+  // in ~/.pi/agent/extensions/ alone so `pi` in a terminal is unchanged.
+  //
+  // Two worth knowing before adding any:
+  //   openai-codex-usage.ts  CRASHES here -- see the -ne note above. Never add it.
+  //   pi-web-access          web search/fetch; the obvious first one to add.
+  readonly property var extensions: []
 
   // Kill the child after this much silence. Long enough to cover a
   // back-and-forth, short enough that a stray question does not leave 200MB
@@ -246,20 +289,28 @@ Singleton {
     return v.length > 70 ? v.substring(0, 70) + "…" : v
   }
 
+  // Assembled rather than written inline so the settings block above stays the
+  // one place anything is configured. The `cd` comes first because pi reads
+  // CLAUDE.md from its working directory.
+  function buildCommand() {
+    var parts = ["exec " + root.binary, "--mode rpc", "-ne", "--no-session",
+                 "--provider " + root.provider, "--model " + root.model]
+    for (var i = 0; i < root.promptFiles.length; i++)
+      parts.push("--append-system-prompt " + root.promptFiles[i])
+    for (var j = 0; j < root.extensions.length; j++)
+      parts.push("-e " + root.extensions[j])
+    return "cd " + root.workdir + " && " + parts.join(" ")
+  }
+
   // --------------------------------------------------------------- process
   Process {
     id: proc
 
-    // `sh -lc` for the same reason ScriptWidget uses it: pi lives in
-    // ~/.bun/bin, which a login shell puts on PATH and a bare exec does not,
-    // and `~` in the soul path needs expanding. `exec` so that sh replaces
-    // itself with pi -- otherwise stdin belongs to sh and `write()` goes
-    // nowhere.
-    command: ["sh", "-lc",
-      "exec " + root.binary + " --mode rpc -ne -ns --no-session"
-        + " --provider " + root.provider
-        + " --model " + root.model
-        + " --append-system-prompt " + root.soulFile]
+    // `sh -lc` for the same reason ScriptWidget uses it: pi lives in ~/.bun/bin,
+    // which a login shell puts on PATH and a bare exec does not, and every `~`
+    // below needs expanding. `exec` so that sh replaces itself with pi --
+    // otherwise stdin belongs to sh and `write()` goes nowhere.
+    command: ["sh", "-lc", root.buildCommand()]
 
     stdinEnabled: true
     stdout: SplitParser { onRead: function (line) { root.ingest(line) } }
