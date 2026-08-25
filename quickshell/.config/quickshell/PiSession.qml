@@ -177,8 +177,17 @@ Singleton {
   // shell, which drops the running child; the next question starts a new one, so
   // it costs a cold start and nothing else.
   readonly property string binary: "pi"
-  readonly property string provider: "ollama"
-  readonly property string model: "deepseek-v4-flash:0731"
+  // Provider and model are the DEFAULTS and also the live values -- `/model`
+  // writes them (see "panel commands" below) and buildCommand() reads them, so a
+  // switch survives the idle kill instead of dying with the child that heard it.
+  // The literals here are what a machine with no ori-model.json starts on; a
+  // saved choice overrides them, which is the price of the command existing and
+  // is why the pair is stored together and validated before it is written.
+  //
+  // The thinking level is deliberately NOT here. Nothing is passed for it unless
+  // someone asks -- see `effort` below.
+  property string provider: "ollama"
+  property string model: "deepseek-v4-flash:0731"
 
   // Where it runs. This is the whole "it manages this machine" decision.
   readonly property string workdir: "~/.dotfiles"
@@ -556,6 +565,14 @@ Singleton {
   function ask(text, images) {
     var msg = String(text || "").trim()
     if (msg === "" || root.busy) return false
+
+    // The panel's own commands, taken before anything else touches the draft.
+    // They are not conversation: nothing is appended, no child is spawned for
+    // them, and `busy` never moves -- so `/effort low` on a cold panel costs a
+    // property write and a small file, not 200MB of node. True is returned so
+    // the composer still clears the field, which is what makes it feel like a
+    // command rather than a message that failed to send.
+    if (root.runPanelCommand(msg)) return true
 
     // Past the refusal, so a staging area the composer handed over is now
     // spent -- the ones whose marker survived are already in `images`, and the
@@ -1121,6 +1138,509 @@ Singleton {
     commandsFile.setText(JSON.stringify({ version: 1, commands: list }))
   }
 
+
+  // --------------------------------------------------- panel commands
+  // `/model` and `/effort`, which the completion list offers alongside the
+  // engine's own commands and which never reach the model as text.
+  //
+  // They have to be OURS. Everything get_commands returns is a slash command pi
+  // itself expands; these two are not commands at all over rpc, they are
+  // separate message types, so a `prompt` whose text is "/model glm-5.2" is sent
+  // to the model as that literal string and answered as a question about itself.
+  // ask() therefore hands every draft to runPanelCommand() first, and a draft it
+  // claims is never queued.
+  //
+  //   -> {"type":"set_model","provider":"ollama","modelId":"glm-5.2"}
+  //   <- {"id":8,"type":"response","command":"set_model","success":true,
+  //       "data":{ ...the whole Model: id, name, provider, baseUrl, reasoning,
+  //                contextWindow, maxTokens, cost... }}
+  //   <- {"id":7,"type":"response","command":"set_model","success":false,
+  //       "error":"Model not found: ollama/nope-9000"}
+  //
+  //   -> {"type":"set_thinking_level","level":"low"}
+  //   <- {"id":1,"type":"response","command":"set_thinking_level","success":true}
+  //
+  // --------------------------------------------- why the ack cannot be trusted
+  // set_thinking_level answers success:true for EVERY string. It does not
+  // validate; it clamps, silently, and the ack is identical in all three cases.
+  // Measured against a real child on deepseek-v4-flash:0731, get_state read back
+  // after each:
+  //
+  //   "low"     -> low        (supported)
+  //   "max"     -> high       (clamped to the model's ceiling)
+  //   "banana"  -> off        (clamped to nothing at all)
+  //
+  // So the ack is dropped and the level is read from elsewhere. Two sources,
+  // both push, neither a poll:
+  //
+  //   thinking_level_changed   an EVENT, emitted on every real change --
+  //                            ours, and the one set_model makes on its own.
+  //                            It is not in rpc-types.d.ts; it is in the
+  //                            stream. {"type":"thinking_level_changed",
+  //                            "level":"high"}. It does NOT fire when the level
+  //                            did not move, which is exactly the clamp-to-
+  //                            current case, so it cannot be the only source.
+  //   get_state                asked for at spawn and after either setter. The
+  //                            authoritative reading, and the one that makes a
+  //                            silent clamp visible in the footer.
+  //
+  // ------------------------------------------------- what the levels actually are
+  // Not the seven in the ThinkingLevel type ("off" through "max").
+  // get_available_thinking_levels asks the CURRENT MODEL what it supports, and
+  // two models on the same provider disagree:
+  //
+  //   ollama/deepseek-v4-flash:0731  off minimal low medium high
+  //   ollama/glm-5.2                 off minimal low medium high xhigh
+  //
+  // which is why the list is queried per spawn and re-queried after every
+  // set_model, rather than hardcoded from the type. Offering "xhigh" on deepseek
+  // would be offering a value that clamps to "high" without saying so, and
+  // hardcoding deepseek's five would hide a level glm-5.2 really has.
+  //
+  // ------------------------------------------------------- where models come from
+  // get_available_models, not ~/.pi/agent/models.json. models.json holds only
+  // the providers defined by hand on this machine (flm, ncym, ollama,
+  // llama-local); the live answer is ~120 models across eight providers, because
+  // pi composes its built-in catalogues on top. More to the point, that list is
+  // already filtered to providers with configured auth --
+  // `available = all.filter(m => configuredProviders.has(m.provider))` -- so
+  // every row in it is a model set_model will actually accept. A list read off
+  // models.json would offer four providers and hide the other four.
+  //
+  // "~120" and not a number, deliberately: the filter runs off a live auth check
+  // per provider, and two spawns twenty minutes apart answered 122 and then 116.
+  // Nothing here treats the count as stable, and the cache is overwritten from
+  // whatever the newest spawn saw.
+  //
+  // ------------------------------------------------------------- and persistence
+  // A set_model on a live child dies with that child, and the child is killed
+  // after idleKillMs of silence. So the RPC is the SECOND half of every command;
+  // the first is writing the choice onto this singleton, where buildCommand()
+  // reads it. The next cold spawn is then born on the chosen model.
+  //
+  // That works because the CLI flags beat the session file, which is not obvious
+  // and was proved rather than assumed. createAgentSession() restores the model
+  // and level recorded in a resumed transcript only `if (!model)` and
+  // `if (thinkingLevel === undefined)` -- i.e. only when no flag was given.
+  // Driven against a hand-built session carrying model_change anthropic/
+  // claude-haiku-4-5 and thinking_level_change minimal:
+  //
+  //   --session X --provider ollama --model deepseek-v4-flash:0731 --thinking low
+  //        -> ollama/deepseek-v4-flash:0731, low
+  //   --session X  (no model flags)
+  //        -> anthropic/claude-haiku-4-5, minimal
+  //
+  // The flags win, every time. Resuming a conversation therefore cannot drag the
+  // model back to whatever it was answered on before.
+  //
+  // One trap, recorded because it is silent: `--provider P --model ID` where ID
+  // is not in P's catalogue does NOT fail. pi warns on stderr -- which is not
+  // read here -- and starts anyway on a fabricated "custom model id" pointed at
+  // P's baseUrl. So a stale persisted id gives a panel that looks fine and fails
+  // at the first question. Nothing is ever written here that did not come out of
+  // get_available_models, which is the only defence available.
+  property var availableModels: []
+  property var thinkingLevels: []
+
+  // ------------------------------------------------- which of those are usable
+  // get_available_models is filtered by pi to providers with CONFIGURED AUTH,
+  // and that phrase does not mean what it sounds like. It means a credential
+  // exists somewhere. It does not mean the credential works. Every one of the
+  // five providers it returns was sent a real one-word question, and the answers
+  // are not what the list implies:
+  //
+  //   ollama         7 models   answered "OK"     inline apiKey in models.json
+  //   huggingface   67 models   answered "OK"     HF_TOKEN in the login env
+  //   anthropic     13 models   EMPTY + error     OAuth, refresh token expired
+  //   google        22 models   EMPTY + error     GEMINI_API_KEY is set, and is
+  //                                               rejected as API_KEY_INVALID
+  //   openai-codex   7 models   EMPTY + error     OAuth, expired 104 days ago
+  //
+  // All four OAuth records in ~/.pi/agent/auth.json are expired -- anthropic by
+  // 45 days, openai-codex by 104, the two google ones by ~180 -- and refreshing
+  // does not rescue them:
+  //
+  //   "stopReason":"error","errorMessage":"OAuth refresh failed for anthropic:
+  //    ... body={\"error\":\"invalid_grant\",
+  //    \"error_description\":\"Refresh token expired\"}"
+  //
+  // So 42 of 116 rows are proven dead, and picking one is one keypress from a
+  // panel that answers nothing.
+  //
+  // ---------------------------------------------- why not a credential check
+  // Because it does not work, and google is the counter-example. The obvious
+  // rule is "usable if it has a key" -- read the inline apiKey, read pi's own
+  // provider-to-env-var map (pi-ai's env-api-keys.js: google -> GEMINI_API_KEY,
+  // huggingface -> HF_TOKEN), check the OAuth expiry. Do all three and google
+  // PASSES, because GEMINI_API_KEY really is set and pi really does use it. What
+  // came back was:
+  //
+  //   "code":400, "message":"API key not valid. Please pass a valid API key.",
+  //   "status":"INVALID_ARGUMENT", "reason":"API_KEY_INVALID"
+  //
+  // A key being PRESENT is not a key being GOOD, and nothing short of spending a
+  // request tells them apart. Probing baseUrls answers the wrong question for
+  // the same reason: four of the five are remote APIs, and a reachable
+  // api.anthropic.com says nothing about the dead credential behind it.
+  //
+  // What is left is curation -- and pi already has the user's, in two places.
+  //
+  // ------------------------------------------------------- settings.json first
+  // `enabledModels` in ~/.pi/agent/settings.json is the list the user prunes by
+  // hand; it currently holds seven `ollama/...` entries. pi feeds it straight
+  // into the scoped-model set:
+  //
+  //   main.js:634   const modelPatterns =
+  //                   parsed.models ?? settingsManager.getEnabledModels()
+  //
+  // i.e. it is exactly `--models`, the set Ctrl+P cycles. So it is not an
+  // incidental config key, it is the answer to "which models do I want offered".
+  //
+  // Worth being explicit, because it is easy to assume otherwise: pruning it
+  // changes NOTHING about what this panel is handed. get_available_models
+  // reports 116 across five providers with `enabledModels` at seven, measured
+  // after the prune. The two lists are unrelated inside pi -- one is the auth
+  // snapshot, the other is the cycling scope -- and intersecting them is work pi
+  // does not do for us and the RPC will not do either. There is no command that
+  // returns the scoped set, so the file is read here.
+  //
+  // Entries are PATTERNS. pi resolves them with globs and `:thinking` suffixes;
+  // this matches an exact `provider/id` and a trailing `*`, which covers what
+  // the file holds and degrades to "no match" rather than to a wrong match.
+  //
+  // ------------------------------------------------------- models.json second
+  // Only when `enabledModels` is absent. Then a provider is offered if
+  // models.json declares it -- the file where this laptop's endpoints and
+  // inline keys are written by hand -- or if it is the one Ori is running on,
+  // which is usable by demonstration.
+  //
+  // Both routes give the same seven today. They differ in what they would do
+  // next: enabling `huggingface/...` in settings.json brings its 67 working
+  // models back with no change here, which is the escape hatch this needs, and
+  // it lives in the file the user is already editing rather than in this one.
+  //
+  // The one honest hole: models.json may declare a LOCAL endpoint -- it held flm
+  // on 127.0.0.1:52625 and llama-local on :8080 earlier today, both since
+  // removed by hand. A local provider nothing is listening on would be declared,
+  // offered, and would move Ori onto a dead port. Nothing checks that, because
+  // checking means a TCP probe and there is no such provider here to justify
+  // one. If they come back, this is the place.
+  property var enabledModels: []
+  property var declaredProviders: []
+
+  // pi's own config, read directly. That IS coupling to another program's file
+  // format, and it is worth being uneasy about -- but the protocol cannot answer
+  // this question, and these are two stable top-level keys. If either shape ever
+  // changes the filter finds nothing and usableModels falls back to the
+  // unfiltered list rather than to an empty one.
+  //
+  // Both are watched rather than read once. They are edited by hand -- one lost
+  // three providers and the other ten models during the session this was written
+  // in -- and a completion list that is only right after a shell reload is one
+  // that is quietly wrong in between.
+  FileView {
+    id: piSettingsFile
+    path: Quickshell.env("HOME") + "/.pi/agent/settings.json"
+    preload: true
+    printErrors: false
+    watchChanges: true
+    onFileChanged: piSettingsFile.reload()
+    onLoaded: {
+      try {
+        var d = JSON.parse(text()) || {}
+        root.enabledModels = d.enabledModels || []
+      } catch (e) {
+        root.enabledModels = []
+      }
+    }
+    onLoadFailed: root.enabledModels = []
+  }
+
+  FileView {
+    id: piModelsFile
+    path: Quickshell.env("HOME") + "/.pi/agent/models.json"
+    preload: true
+    printErrors: false
+    watchChanges: true
+    onFileChanged: piModelsFile.reload()
+    onLoaded: {
+      try {
+        var d = JSON.parse(text()) || {}
+        var ps = []
+        for (var k in (d.providers || {})) ps.push(k)
+        root.declaredProviders = ps
+      } catch (e) {
+        root.declaredProviders = []
+      }
+    }
+    onLoadFailed: root.declaredProviders = []
+  }
+
+  function modelEnabled(key) {
+    for (var i = 0; i < root.enabledModels.length; i++) {
+      var pat = String(root.enabledModels[i])
+      if (pat === key) return true
+      if (pat.charAt(pat.length - 1) === "*"
+          && key.indexOf(pat.slice(0, -1)) === 0) return true
+    }
+    return false
+  }
+
+  // What `/model` OFFERS. Note it is not what `/model` ACCEPTS -- chooseModel()
+  // validates against the full list, so naming a hidden model in full still
+  // works. That asymmetry is deliberate: completion must not hand anyone a dead
+  // provider, and typing `anthropic/claude-haiku-4-5` out by hand is not
+  // something done by accident.
+  readonly property var usableModels: {
+    var out = []
+    var scoped = root.enabledModels.length > 0
+    for (var i = 0; i < root.availableModels.length; i++) {
+      var m = root.availableModels[i]
+      var key = m.provider + "/" + m.id
+      // The model Ori is ON is always offered, however it got there. A picker
+      // that cannot show the current selection is a picker with a hole in it.
+      var keep = (m.provider === root.provider && m.id === root.model)
+        || (scoped ? root.modelEnabled(key)
+                   : root.declaredProviders.indexOf(m.provider) >= 0)
+      if (keep) out.push(m)
+    }
+    // A filter that matched nothing is a broken filter, not an empty machine --
+    // if either file moves or changes shape, offering everything is a far better
+    // failure than offering a command with no values at all.
+    return out.length > 0 ? out : root.availableModels
+  }
+
+  // Which model `thinkingLevels` was asked about, "provider/id". A level list
+  // outlives the model it describes otherwise, and the cache below is read back
+  // on a later day.
+  property string levelsFor: ""
+  // The EFFECTIVE level, as last reported by the child; "" until one has run.
+  // Display only -- it is deliberately not what buildCommand passes.
+  property string thinkingLevel: ""
+  // The level the USER pinned with /effort, "" for "let pi choose". Only this
+  // reaches the command line and the file below. The distinction matters: seeding
+  // --thinking from whatever get_state happened to report would freeze pi's own
+  // default the first time the panel was opened, and quietly override it forever
+  // after.
+  property string effort: ""
+  // What the footer shows for the level, and "" for "show nothing at all".
+  //
+  // Gated on a PIN rather than on knowing a level, and the gate is a layout
+  // decision as much as an honesty one. That strip is 460px carrying a plan
+  // readout and a context readout already; a level beside the model costs the
+  // model about 60px, which is enough to elide `deepseek-v4-flash:0731` down to
+  // `deepseek-v4-...`. Paying that for a level nobody chose -- get_state reports
+  // one on every spawn -- would make every panel worse for a command most
+  // sessions never use. Paying it after someone types `/effort` is a trade they
+  // just asked for.
+  //
+  // What it then shows is the EFFECTIVE level and not the pinned one, because
+  // those differ exactly when set_thinking_level clamped silently, and that is
+  // the case worth being able to see.
+  readonly property string effortLabel: root.effort === "" ? ""
+      : (root.thinkingLevel !== "" ? root.thinkingLevel : root.effort)
+
+  // One file for both jobs: the choice, and the two lists it is validated
+  // against. They are kept together because they are read at the same moment --
+  // someone types `/` before any child has ever run -- and because the choice is
+  // only meaningful next to the list it came from. Same argument the command
+  // cache makes, and the same self-correcting staleness: every cold spawn
+  // overwrites the lists from the live answer.
+  readonly property string modelStatePath: stateDir + "/ori-model.json"
+
+  FileView {
+    id: modelFile
+    path: root.modelStatePath
+    preload: true
+    printErrors: false
+    atomicWrites: true
+    onLoaded: {
+      try {
+        var d = JSON.parse(text()) || {}
+        // Only a COMPLETE pair is restored. Half of it -- a provider with no id
+        // -- would build `--provider anthropic --model deepseek-...`, which is
+        // the fabricated-custom-model trap above rather than an error.
+        if (d.provider && d.modelId) { root.provider = String(d.provider); root.model = String(d.modelId) }
+        root.effort = String(d.effort || "")
+        root.availableModels = d.models || []
+        root.thinkingLevels = d.levels || []
+        root.levelsFor = String(d.levelsFor || "")
+      } catch (e) {
+        // A corrupt file is not a reason to refuse to start: the settings block
+        // above is a working default and the next spawn rewrites this.
+      }
+    }
+    onLoadFailed: { /* no file yet; the first spawn writes one */ }
+  }
+
+  function saveModelState() {
+    modelFile.setText(JSON.stringify({
+      version: 1,
+      provider: root.provider, modelId: root.model, effort: root.effort,
+      levelsFor: root.levelsFor, levels: root.thinkingLevels,
+      models: root.availableModels
+    }))
+  }
+
+  // Trimmed to the three fields anything here reads. The live answer is 45KB of
+  // baseUrls, per-token costs and window sizes; this is ~10KB, and it is parsed
+  // on the UI thread at shell start.
+  function applyModels(d) {
+    var list = ((d.data || {}).models) || []
+    if (list.length === 0) return
+    var out = []
+    for (var i = 0; i < list.length; i++)
+      out.push({ provider: String(list[i].provider), id: String(list[i].id),
+                 name: String(list[i].name || list[i].id) })
+    root.availableModels = out
+    root.saveModelState()
+  }
+
+  function applyLevels(d) {
+    var list = ((d.data || {}).levels) || []
+    if (list.length === 0) return
+    root.thinkingLevels = list
+    root.levelsFor = root.provider + "/" + root.model
+    root.saveModelState()
+  }
+
+  // get_state, which is asked for at spawn and after either setter. This is the
+  // one reading that cannot be wrong -- see the clamping note above.
+  function applyState(d) {
+    var s = d.data || {}
+    if (s.model && s.model.id) {
+      root.provider = String(s.model.provider)
+      root.model = String(s.model.id)
+    }
+    root.thinkingLevel = String(s.thinkingLevel || "")
+    root.saveModelState()
+  }
+
+  // The rows the completion list merges in beside get_commands'. Same shape it
+  // already renders -- { name, description } -- with a `source` of "panel" so a
+  // reader of either file can tell where a row came from.
+  readonly property var panelCommands: [
+    { name: "model", source: "panel",
+      description: "switch model  ·  " + root.usableModels.length + " usable" },
+    { name: "effort", source: "panel",
+      description: "thinking level  ·  " + (root.thinkingLevels.join(" ") || "unknown until Ori has run once") }
+  ]
+
+  // The values each takes, for the completion list's second stage. This is the
+  // case CommandBar's own comment said did not exist -- an argument with a
+  // closed, knowable set -- and both of these have one.
+  function commandValues(name) {
+    var out = []
+    if (name === "effort") {
+      for (var i = 0; i < root.thinkingLevels.length; i++)
+        out.push({ name: String(root.thinkingLevels[i]), description: "" })
+      return out
+    }
+    if (name === "model") {
+      for (var j = 0; j < root.usableModels.length; j++) {
+        var m = root.usableModels[j]
+        out.push({ name: m.provider + "/" + m.id, description: String(m.name) })
+      }
+      return out
+    }
+    return out
+  }
+
+  // Called by ask() before anything else. Returns true when the draft was a
+  // panel command -- INCLUDING when it was a bad one, because a rejected
+  // `/model nope` must land on the error strip and not in the conversation.
+  function runPanelCommand(text) {
+    var m = /^\/(model|effort)(?:\s+([\s\S]*))?$/.exec(String(text || "").trim())
+    if (!m) return false
+    var arg = String(m[2] || "").trim()
+    if (m[1] === "effort") root.setEffort(arg)
+    else root.chooseModel(arg)
+    return true
+  }
+
+  function setEffort(level) {
+    // Nothing has ever run, so there is no list to check against and pi would
+    // clamp an unknown level to "off" without a word. Say so instead.
+    if (root.thinkingLevels.length === 0) {
+      root.error = "/effort: no level list yet -- ask Ori something once first"
+      return
+    }
+    if (level === "" || root.thinkingLevels.indexOf(level) < 0) {
+      root.error = "/effort " + root.thinkingLevels.join(" | ")
+      return
+    }
+    root.error = ""
+    root.effort = level
+    // Shown immediately, so a cold panel is not silent for the ten minutes
+    // before the next question spawns a child that can confirm it. get_state
+    // corrects this at that spawn if pi disagrees.
+    root.thinkingLevel = level
+    root.saveModelState()
+    if (proc.running) send({ type: "set_thinking_level", level: level })
+  }
+
+  // Accepts "provider/id" -- what the completion writes and what set_model
+  // needs -- and a bare id, because a bare id is what the footer shows, and
+  // making someone retype a prefix the panel never showed them is a trap.
+  function chooseModel(spec) {
+    if (root.availableModels.length === 0) {
+      root.error = "/model: no model list yet -- ask Ori something once first"
+      return
+    }
+    if (spec === "") { root.error = "/model <provider>/<id>"; return }
+
+    var hit = null, bare = []
+    for (var i = 0; i < root.availableModels.length; i++) {
+      var m = root.availableModels[i]
+      if (m.provider + "/" + m.id === spec) { hit = m; break }
+      if (m.id === spec) bare.push(m)
+    }
+    if (!hit && bare.length === 1) hit = bare[0]
+    if (!hit) {
+      root.error = bare.length > 1
+        ? "/model: \"" + spec + "\" is on " + bare.length + " providers -- name one"
+        : "/model: no such model \"" + spec + "\""
+      return
+    }
+
+    root.error = ""
+    // On a WARM child nothing is written here. The state moves when pi says it
+    // moved, in the set_model response.
+    //
+    // Writing it now and rolling back on failure was the first shape and it is
+    // worse in two ways. The obvious one: between the write and the rejection
+    // the footer names a model the child is not on. The less obvious one: that
+    // window is not short. set_model awaits checkAuth() before it validates
+    // anything, which on an OAuth provider is a network round trip -- and the
+    // response ordering measurement above came out of exactly this call
+    // overtaking nothing while a get_state queued behind it answered first.
+    if (proc.running) {
+      send({ type: "set_model", provider: hit.provider, modelId: hit.id })
+      return
+    }
+    // Cold: there is no child to disagree, so the choice is the truth. It
+    // reaches pi as the next spawn's --provider/--model.
+    root.applyModelChoice(hit.provider, hit.id)
+  }
+
+  // The state half of a model switch, shared by the cold path above and the
+  // set_model response.
+  //
+  // The level and its list both belonged to the model being left. pi drops the
+  // level too on a switch -- setModel() re-derives it from the per-model
+  // override, then the global default -- and was watched doing it: deepseek at
+  // "off" became claude-haiku-4-5 at "high", unasked. Keeping a stale pin here
+  // would fight that for no reason and show a level the child does not have.
+  function applyModelChoice(provider, id) {
+    root.provider = String(provider)
+    root.model = String(id)
+    root.effort = ""
+    root.thinkingLevel = ""
+    root.thinkingLevels = []
+    root.levelsFor = ""
+    root.saveModelState()
+  }
+
   // --------------------------------------------------------------- protocol
   property string pending: ""
   property var pendingImages: []
@@ -1181,6 +1701,15 @@ Singleton {
     }
 
     switch (d.type) {
+    // Not in rpc-types.d.ts, but emitted by the real binary on every level that
+    // actually moves -- including the one set_model changes on its own, which is
+    // the only warning the footer gets that a model switch took the level with
+    // it. It stays silent when the level did not move, so it is a supplement to
+    // get_state and not a replacement for it.
+    case "thinking_level_changed":
+      root.thinkingLevel = String(d.level || "")
+      root.saveModelState()
+      break
     case "response":
       // The stats probe is bookkeeping, not conversation: read it when it
       // worked and drop it when it did not. It must never abort a turn or
@@ -1193,6 +1722,43 @@ Singleton {
       // that cannot list its commands is not a reason to break a question.
       if (d.command === "get_commands") {
         if (d.success !== false) root.applyCommands(d)
+        break
+      }
+      // The three readings /model and /effort are built on. Bookkeeping like
+      // the two above, and dropped as quietly when they fail.
+      if (d.command === "get_available_models") {
+        if (d.success !== false) root.applyModels(d)
+        break
+      }
+      if (d.command === "get_available_thinking_levels") {
+        if (d.success !== false) root.applyLevels(d)
+        break
+      }
+      if (d.command === "get_state") {
+        if (d.success !== false) root.applyState(d)
+        break
+      }
+      // A real failure, unlike the setter below: pi checked the id against its
+      // own catalogue and did not find it. It belongs on the error strip.
+      if (d.command === "set_model") {
+        if (d.success === false) { root.error = String(d.error || "set_model failed"); break }
+        var picked = d.data || {}
+        if (picked.id) root.applyModelChoice(picked.provider, picked.id)
+        // Both stale the instant the model changed: the level list is per model,
+        // and set_model re-derives the level itself without telling anyone.
+        // Chained off the RESPONSE rather than sent alongside the setter,
+        // because responses do not arrive in order -- set_model awaits an auth
+        // check, and a get_state queued behind it was observed answering first,
+        // with the OLD model in it.
+        send({ type: "get_available_thinking_levels" })
+        send({ type: "get_state" })
+        break
+      }
+      // Deliberately not read. It says success:true for every string it was
+      // ever given, clamped ones included -- see the measurement in the panel
+      // commands block. get_state is the only honest answer to "what is it now".
+      if (d.command === "set_thinking_level") {
+        send({ type: "get_state" })
         break
       }
       // The transcript is asked for only after the switch is ACKED -- entries
@@ -1298,6 +1864,30 @@ Singleton {
       root.error = root.extensionNotice
       break
 
+    // The failure a dead provider actually produces, which is none of the
+    // shapes this file already watches for. There is no `response
+    // success:false` and no error event: the turn starts, runs, settles
+    // normally, and the answer is simply EMPTY, with the reason buried in the
+    // assistant message pi has just finished writing.
+    //
+    //   {"type":"message_end","message":{...,"stopReason":"error",
+    //    "errorMessage":"OAuth refresh failed for anthropic: ...
+    //    Refresh token expired ..."}}
+    //
+    // Without this the panel shows a blank answer and says nothing about why.
+    // That was survivable while the model was fixed in the settings block; it is
+    // not survivable now that `/model` can move it, so this is read.
+    //
+    // Only the first clause is kept. pi's message here carries the URL, the
+    // response body and a JS stack, which is a paragraph on a strip sized for a
+    // line -- and the first clause is the half that says what went wrong.
+    case "message_end":
+      if (d.message && d.message.stopReason === "error") {
+        var why = String(d.message.errorMessage || "the model returned an error")
+        root.error = why.split(";")[0].split("\n")[0]
+      }
+      break
+
     case "agent_settled":
       root.busy = false
       settleTurn()
@@ -1395,6 +1985,17 @@ Singleton {
     var parts = ["SHIM_URL=" + root.shimUrl, "exec " + root.binary,
                  "--mode rpc", "-ne",
                  "--provider " + root.provider, "--model " + root.model]
+    // This is what makes /effort outlive the child that heard it. Omitted while
+    // nothing has been pinned, so the panel keeps deferring to pi's own default
+    // until someone actually asks for a level.
+    //
+    // `--thinking <level>` rather than the `--model <id>:<level>` shorthand the
+    // help text also offers. The shorthand parses by splitting on the LAST
+    // colon, and this machine's model id is `deepseek-v4-flash:0731` -- it does
+    // survive that (exact match is tried before any split), but naming the flag
+    // outright costs nothing and cannot be broken by the next model id that
+    // happens to end in a word.
+    if (root.effort !== "") parts.push("--thinking " + root.effort)
     // Quoted: session filenames carry an ISO timestamp with colons in it, which
     // a login shell would otherwise be free to interpret.
     if (root.resumePath !== "") parts.push("--session '" + root.resumePath + "'")
@@ -1459,6 +2060,19 @@ Singleton {
       // Queueing both ahead of the question costs nothing the first token can
       // tell -- see the timing measurement on `commands`.
       root.send({ type: "get_commands" })
+      // And the three /model and /effort need, for the same reason again: all
+      // three are knowable the moment the child is up and none of them can
+      // change without a spawn or an explicit command. get_state is the one
+      // that matters most -- it is where a level silently clamped by the
+      // --thinking flag becomes visible.
+      //
+      // Measured, three runs, spawn to each reply landing: get_session_stats at
+      // 0.62-0.79s and the whole set within 32-53ms behind it, the 45KB model
+      // list costing the last 15ms of that. Against a 2.5s cold start and a
+      // first token 6.8s out, all five are free.
+      root.send({ type: "get_state" })
+      root.send({ type: "get_available_thinking_levels" })
+      root.send({ type: "get_available_models" })
       root.flush()
     }
 

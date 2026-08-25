@@ -19,31 +19,45 @@ import ".."
 //   breaks the moment you type the second character.
 //
 // -------------------------------------------------------------- what it lists
-// PiSession.commands, which is get_commands verbatim: { name, description,
-// source }. That is NOT the pi TUI's slash menu. `/model`, `/compact`,
-// `/ollama-usage` and friends do not exist over RPC -- they are separate
-// message types (set_model, compact, ...), and a prompt whose text is "/model"
-// is sent to the model as the literal string "/model". Offering them would be
-// inventing commands, so what is offered is exactly what the engine says it
-// has: 16 skills and 1 extension on this machine.
+// Two lists, concatenated.
+//
+// PiSession.commands is get_commands verbatim: { name, description, source }.
+// That is NOT the pi TUI's slash menu -- `/compact`, `/ollama-usage` and
+// friends do not exist over RPC. They are separate message types, and a prompt
+// whose text is "/compact" is sent to the model as that literal string.
+//
+// PiSession.panelCommands is the short list this SHELL implements for exactly
+// that reason: `/model` and `/effort`, which are set_model and
+// set_thinking_level and are intercepted in PiSession.ask() before a draft can
+// become a question. They are offered here because a user who types `/` is
+// asking what there is, and the honest answer includes the two the panel runs
+// itself. Nothing else is added: a command is listed here only if something
+// will actually run it.
 //
 // --------------------------------------------------------------- and its args
-// The lead asked whether the argument VALUES are worth completing too -- model
-// ids being known to the engine. They are not, and the reason is not effort:
-// there is nothing to complete. No command get_commands returns takes an
-// enumerable argument. A skill's argument is free text appended after the
-// expanded skill block (`_expandSkillCommand` does `args = text.slice(space+1)`
-// and pastes it under the block), so the value space is "anything you want to
-// say". The one command with a closed value set -- picking a model -- is
-// reached through the set_model RPC, not through a slash command, so completing
-// `/model <id>` would be completing an argument to a command that does not run.
-// If model switching ever wants a UI it belongs on the footer next to the model
-// name, not here.
+// This used to say flatly that no command takes an enumerable argument, and
+// that model ids therefore had nothing to complete against. Half of that is
+// still true and half of it is now wrong, so both halves, in order.
 //
-// So "ready for the argument" is all this does: completing writes
-// "/skill:tdd " with the trailing space, which un-arms the list (see `armed`)
-// and leaves the caret where the argument goes. A command used without one
-// keeps the stray space, which costs nothing -- pi trims it away.
+// Still true of the ENGINE's commands. A skill's argument is free text appended
+// after the expanded skill block (`_expandSkillCommand` does
+// `args = text.slice(space+1)` and pastes it under the block), so the value
+// space is "anything you want to say". There is nothing to offer.
+//
+// No longer true of the PANEL's two, which is the whole reason they exist here.
+// Both have a closed set the engine will name on request:
+//
+//   /effort   get_available_thinking_levels -> the levels THIS MODEL supports,
+//             which is not the seven in the type and not the same list twice:
+//             five on deepseek-v4-flash:0731, six on glm-5.2.
+//   /model    get_available_models -> ~120 rows, already filtered to providers
+//             with configured auth, so every one of them can actually be set.
+//
+// So completion has two stages. `/mod` completes to `/model `, whose trailing
+// space un-arms stage one and arms stage two; `/model gl` then completes to
+// `/model ollama/glm-5.2 `, whose trailing space un-arms that in turn and
+// leaves the next Enter free to send. Same trailing-space trick both times, and
+// it is what makes "type /eff, Enter, l, Enter, Enter" work without a mode.
 Rectangle {
   id: root
 
@@ -62,35 +76,59 @@ Rectangle {
   // mode" on the error strip -- so the worst outcome is now a command that
   // politely says it does not run here, and hiding a real command is worse than
   // that.
-  readonly property var commands: PiSession.commands || []
+  //
+  // Panel-implemented first. On this machine the engine reports one command and
+  // the panel two, so putting the engine's first would bury both of the ones
+  // someone types `/` looking for.
+  readonly property var commands: PiSession.panelCommands.concat(PiSession.commands || [])
 
   // ------------------------------------------------------------------- arming
   readonly property string draft: root.entry ? String(root.entry.text) : ""
-  // A slash and no whitespace after it. This is the whole trigger rule, and it
-  // does three jobs at once: it only fires at the start of the draft, it stops
+  // A slash and no whitespace after it. This is the whole stage-one trigger, and
+  // it does three jobs at once: it only fires at the start of the draft, it stops
   // firing the moment an argument begins, and it never fires on a slash inside
   // a sentence or a path.
-  readonly property bool armed: /^\/[^\s]*$/.test(root.draft)
+  readonly property bool naming: /^\/[^\s]*$/.test(root.draft)
+
+  // Stage two: a complete command name, whitespace, and a partial value. The
+  // engine is the one that decides whether a name HAS values -- commandValues()
+  // answers with an empty list for every command that does not -- so this arms
+  // for `/model` and `/effort` and stays shut for the sixteen skills without a
+  // name of either being written down here.
+  readonly property var argMatch: /^\/([^\s]+)\s+([^\s]*)$/.exec(root.draft)
+  readonly property var values: root.argMatch ? PiSession.commandValues(root.argMatch[1]) : []
+  readonly property bool arging: root.values.length > 0
+
+  readonly property bool armed: root.naming || root.arging
   // Escape means "stop suggesting", not "forget the draft". Cleared whenever
   // the draft leaves command shape, so deleting back to nothing and typing `/`
   // again brings the list back rather than staying silent for the session.
   property bool dismissed: false
   onArmedChanged: if (!root.armed) root.dismissed = false
+  // A stage change is a different list, so a dismissal of the previous one does
+  // not carry into it. Without this, escaping the command list and then finishing
+  // the name by hand leaves the VALUE list silently suppressed.
+  onArgingChanged: root.dismissed = false
 
-  readonly property string query: root.armed ? root.draft.slice(1).toLowerCase() : ""
+  readonly property string query: root.arging ? String(root.argMatch[2]).toLowerCase()
+                                : root.naming ? root.draft.slice(1).toLowerCase() : ""
+  readonly property var pool: root.arging ? root.values : root.commands
 
-  // Matched on the name with `skill:` stripped as well as whole, so `/cave`
-  // finds skill:caveman. Sixteen of seventeen commands carry that prefix;
-  // making the user type it to get past it would make completion useless for
-  // exactly the commands it exists for. Prefix hits sort above substring hits,
-  // which is the only ranking a list this short needs.
+  // Matched on the name with its namespace stripped as well as whole, so `/cave`
+  // finds skill:caveman and `/model glm` finds ollama/glm-5.2. Sixteen of
+  // seventeen engine commands carry a `skill:` prefix and every model id carries
+  // a provider one; making someone type past either would make completion
+  // useless for exactly the rows it exists for. Prefix hits sort above substring
+  // hits, which is the only ranking these lists need -- a hundred-odd models
+  // sounds like a lot until you have typed three letters at it.
   readonly property var matches: {
     var q = root.query
     var pre = [], sub = []
-    for (var i = 0; i < root.commands.length; i++) {
-      var c = root.commands[i]
+    for (var i = 0; i < root.pool.length; i++) {
+      var c = root.pool[i]
       var full = String(c.name).toLowerCase()
-      var bare = full.indexOf("skill:") === 0 ? full.slice(6) : full
+      var cut = full.indexOf("skill:") === 0 ? 6 : full.indexOf("/") + 1
+      var bare = full.slice(cut)
       if (q === "" || bare.indexOf(q) === 0 || full.indexOf(q) === 0) pre.push(c)
       else if (bare.indexOf(q) >= 0) sub.push(c)
     }
@@ -126,7 +164,11 @@ Rectangle {
   function take() {
     var c = root.matches[root.current]
     if (!c || !root.entry) return
-    root.entry.text = "/" + c.name + " "
+    // The trailing space is load-bearing in both stages: it un-arms the one that
+    // wrote it. After a name that means stage two takes over; after a value it
+    // means nothing is armed at all and the next Enter sends.
+    root.entry.text = root.arging ? "/" + root.argMatch[1] + " " + c.name + " "
+                                  : "/" + c.name + " "
     root.entry.cursorPosition = root.entry.text.length
   }
 
@@ -168,9 +210,13 @@ Rectangle {
     // to and a key hint that does nothing teaches the wrong thing. Not a
     // hypothetical: the engine's list is one row deep on this machine right
     // now, so the one-match case is the common one rather than the edge.
-    text: root.matches.length > 1
-        ? "commands  ·  ↑↓ move   ⇥ complete   esc dismiss"
-        : "commands  ·  ⇥ complete   esc dismiss"
+    // Says which list is on screen, because in stage two the rows are values
+    // and calling them "commands" would be a lie about what Enter is going to
+    // do with the one under the cursor.
+    text: (root.arging ? "/" + root.argMatch[1] : "commands")
+        + (root.matches.length > 1
+           ? "  ·  ↑↓ move   ⇥ complete   esc dismiss"
+           : "  ·  ⇥ complete   esc dismiss")
     color: Theme.overlay0
     elide: Text.ElideRight
     font.family: Style.font.family
@@ -216,7 +262,10 @@ Rectangle {
       Text {
         id: name
         anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter }
-        text: "/" + String(modelData.name)
+        // A leading slash on a command name and none on a value: `/model` is
+        // typed with one and `ollama/glm-5.2` is not, and a row that shows the
+        // wrong one teaches the wrong thing about what Enter will insert.
+        text: (root.arging ? "" : "/") + String(modelData.name)
         color: parent.on ? Theme.text : Theme.subtext0
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
