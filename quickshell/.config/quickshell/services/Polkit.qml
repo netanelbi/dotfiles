@@ -49,6 +49,15 @@ Scope {
       root.open = true
     }
 
+    // The request went away without anyone answering it. That is not exotic:
+    // the requester dying (`timeout`, Ctrl-C, a crash) withdraws it, and so
+    // does polkit answering from its own auth_admin_keep cache while the
+    // prompt is already on screen. Neither path is an "answer", so nothing
+    // downstream of a PAM conversation fires -- the flow simply becomes null,
+    // and a dialog watching only for a completed conversation is left mapped
+    // over the whole output with no request behind it.
+    onFlowChanged: if (!agent.flow) root.dismiss()
+
     onIsRegisteredChanged: {
       if (!isRegistered)
         console.warn("Polkit: agent registration lost -- pkexec will report no agent")
@@ -65,23 +74,36 @@ Scope {
   // to report to the user beyond dismissing -- the app that asked gets the
   // answer over D-Bus, and polkit has already shown the failure text in
   // supplementaryMessage during the retries.
+  //
+  // `failed` is deliberately NOT a teardown trigger: it marks one rejected
+  // attempt, after which polkit restarts the session and asks again. Closing
+  // on it would take the dialog away mid-retry.
   Connections {
     target: root.flow
     ignoreUnknownSignals: true
-    function onIsCompletedChanged() {
-      if (root.flow && root.flow.isCompleted) root.open = false
-    }
+    function onIsCompletedChanged() { if (root.flow && root.flow.isCompleted) root.dismiss() }
+    function onIsCancelledChanged() { if (root.flow && root.flow.isCancelled) root.dismiss() }
   }
 
   function submit(value) {
     if (flow && flow.isResponseRequired) flow.submit(value)
   }
 
+  // The ONE way the dialog goes away. Everything that ends a prompt routes
+  // here -- Escape, a click outside the card, the request completing, being
+  // cancelled, or being withdrawn -- so there is a single teardown to reason
+  // about and no path that can leave the surface mapped. The dialog clears its
+  // own field and its retry state off `open`, so dropping it here is enough to
+  // guarantee the next prompt starts blank.
+  function dismiss() {
+    root.open = false
+  }
+
   function cancel() {
     // Cancelling the request is what makes the caller fail fast instead of
     // hanging; closing the window alone would leave polkitd waiting.
     if (flow && !flow.isCompleted) flow.cancelAuthenticationRequest()
-    root.open = false
+    root.dismiss()
   }
 
   // The dialog is modal to the user, not to a monitor: one window, on whatever

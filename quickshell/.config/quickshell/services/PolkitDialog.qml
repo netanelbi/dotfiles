@@ -29,9 +29,15 @@ PanelWindow {
   readonly property var flow: controller ? controller.flow : null
   readonly property bool opened: controller !== null && controller.open
 
-  // Only meaningful while a flow exists; guarded everywhere it is read.
-  readonly property bool hasError: flow !== null && flow.supplementaryIsError
-      && flow.supplementaryMessage !== ""
+  // True once the user has actually submitted something during this request.
+  // Gates PAM's supplementary line -- see the comment on it below.
+  property bool attempted: false
+
+  // Drives the red border. Carries `attempted` for the same reason the message
+  // below does: a lockout counter PAM volunteers before the first keystroke
+  // must not turn the card red at a user who has not done anything yet.
+  readonly property bool hasError: attempted && flow !== null
+      && flow.supplementaryIsError && flow.supplementaryMessage !== ""
   readonly property color accent: hasError ? Theme.red : Theme.accent
 
   WlrLayershell.namespace: "quickshell-polkit"
@@ -55,7 +61,15 @@ PanelWindow {
     if (opened) {
       win.screen = win.focusedScreen()
       field.text = ""
+      win.attempted = false
       Qt.callLater(function () { field.forceActiveFocus() })
+    } else {
+      // Whatever tore the prompt down -- an answer, Escape, a click outside,
+      // or the requester withdrawing it -- anything half-typed dies with it
+      // rather than waiting in a buffer for the next prompt to reveal. The
+      // opening branch clears it again anyway; this is the one that runs when
+      // there is no next prompt.
+      field.text = ""
     }
     revealed = opened ? 1 : 0
   }
@@ -96,12 +110,20 @@ PanelWindow {
   }
 
   // --------------------------------------------------------------- backdrop
-  // No click-to-dismiss here, unlike the launchers: a stray click must not
-  // cancel a root action the user actually meant to take. Escape is the way out.
+  // Clicking outside the card cancels, the way the launchers dismiss. Safe in
+  // a way a button is not: the pointer's only reachable outcome is DENY. The
+  // one path to approval is a keystroke into the field, so no misclick, and no
+  // click-jacking of a window that appeared under the cursor, can ever grant
+  // anything.
   Rectangle {
     anchors.fill: parent
     color: Theme.alpha(Theme.crust, 0.5)
     opacity: win.revealed
+
+    MouseArea {
+      anchors.fill: parent
+      onClicked: if (win.controller) win.controller.cancel()
+    }
   }
 
   // ------------------------------------------------------------------- card
@@ -142,6 +164,12 @@ PanelWindow {
         Behavior on implicitHeight {
           NumberAnimation { duration: Style.anim.normal; easing.type: Style.anim.easing }
         }
+
+        // Eats clicks that land on the card so they do not reach the backdrop
+        // and cancel. Declared before the content, so the field still takes its
+        // own clicks and keeps text selection working. It has no handler of its
+        // own: clicking the card must do NOTHING, least of all submit.
+        MouseArea { anchors.fill: parent }
 
         Column {
           id: column
@@ -198,7 +226,13 @@ PanelWindow {
           }
 
           // ------------------------------------------------------- message
-          // polkit's own wording ("Authentication is required to run ...").
+          // polkit's own wording ("Authentication is required to run ..."),
+          // VERBATIM. This is the only line that says what is being approved,
+          // and it comes from polkitd rather than from this shell. Paraphrasing
+          // it, or swapping in friendlier text keyed off the action id, is
+          // exactly the move a spoofed prompt makes -- so it is not made here.
+          // The action id itself used to sit below this and is gone: it named
+          // the rule, not the deed, and meant nothing to the person asked.
           Text {
             width: parent.width
             text: win.flow ? win.flow.message : ""
@@ -206,18 +240,6 @@ PanelWindow {
             wrapMode: Text.WordWrap
             font.family: Style.font.family
             font.pixelSize: Style.font.size
-            renderType: Text.NativeRendering
-          }
-
-          // The action id is the thing a polkit rule is actually written
-          // against, so it is worth showing verbatim rather than prettifying.
-          Text {
-            width: parent.width
-            text: win.flow ? win.flow.actionId : ""
-            color: Theme.overlay0
-            elide: Text.ElideMiddle
-            font.family: Style.font.family
-            font.pixelSize: Style.font.tiny
             renderType: Text.NativeRendering
           }
 
@@ -282,8 +304,10 @@ PanelWindow {
                 SequentialAnimation on opacity {
                   loops: Animation.Infinite
                   // Gated: an animation left running under a hidden window
-                  // still burns frames.
-                  running: field.activeFocus && win.visible
+                  // still burns frames. Gated on `revealed` rather than on
+                  // the window's own `visible`, which reads back undefined
+                  // while the delegate is being built and warns.
+                  running: field.activeFocus && win.revealed > 0.001
                   NumberAnimation { to: 0.25; duration: 520; easing.type: Style.anim.easingSmooth }
                   NumberAnimation { to: 1; duration: 520; easing.type: Style.anim.easingSmooth }
                 }
@@ -292,12 +316,20 @@ PanelWindow {
           }
 
           // --------------------------------------------------- pam feedback
-          // "Authentication failure" after a bad password, and whatever else
-          // the stack chooses to say. Present only while there is something to
-          // say, which is what makes the card grow on a failed try.
+          // "Authentication failure" after a bad password.
+          //
+          // Gated on `attempted` rather than on the text being non-empty,
+          // because PAM says things before it has been asked anything. On a
+          // clean prompt the property is genuinely empty (measured), but once
+          // pam_faillock has a tally it announces "(N minutes left to unlock)"
+          // during preauth -- i.e. on a FIRST prompt, before a single keystroke,
+          // where a lockout counter reads as an accusation rather than as
+          // feedback. Nothing PAM volunteers pre-submission is shown; the
+          // counter still arrives, one attempt later, attached to the failure
+          // it explains.
           Text {
             width: parent.width
-            visible: text !== ""
+            visible: win.attempted && text !== ""
             text: win.flow ? win.flow.supplementaryMessage : ""
             color: win.hasError ? Theme.red : Theme.subtext0
             wrapMode: Text.WordWrap
@@ -306,29 +338,19 @@ PanelWindow {
             renderType: Text.NativeRendering
           }
 
-          // ------------------------------------------------------- buttons
-          Item {
+          // ---------------------------------------------------------- hint
+          // The dialog has no buttons: Enter confirms, Escape or a click
+          // outside the card cancels. That is one fewer thing to aim at, and
+          // it keeps the only route to APPROVAL a deliberate keystroke -- a
+          // click can never do anything but deny. This line is the whole of
+          // the affordance, so it is always present and deliberately quiet.
+          Text {
             width: parent.width
-            height: 36
-
-            Row {
-              anchors.right: parent.right
-              spacing: 8
-
-              DialogButton {
-                label: "Cancel"
-                accent: win.accent
-                onActivated: win.controller.cancel()
-              }
-
-              DialogButton {
-                label: "Authenticate"
-                primary: true
-                accent: win.accent
-                enabled: win.flow !== null && win.flow.isResponseRequired
-                onActivated: win.submit()
-              }
-            }
+            text: "Enter to confirm \u00b7 Esc to cancel"
+            color: Theme.overlay0
+            font.family: Style.font.family
+            font.pixelSize: Style.font.tiny
+            renderType: Text.NativeRendering
           }
         }
       }
@@ -337,6 +359,7 @@ PanelWindow {
 
   // ------------------------------------------------------------------ keys
   function submit() {
+    win.attempted = true
     if (controller) controller.submit(field.text)
     // Cleared immediately rather than on the next prompt: the answer has been
     // handed to PAM and there is no reason for it to stay in a text buffer.
@@ -354,57 +377,6 @@ PanelWindow {
       if (flow && flow.isResponseRequired) win.submit()
       event.accepted = true
       return
-    }
-  }
-
-  // ----------------------------------------------------------------- button
-  component DialogButton: Rectangle {
-    id: btn
-
-    property string label: ""
-    property bool primary: false
-    // Inline components do not see the enclosing component's ids, so the
-    // accent (which turns red on a failed try) has to be handed in.
-    property color accent: Theme.accent
-
-    signal activated()
-
-    width: btnText.implicitWidth + 32
-    height: 36
-    radius: 8
-    // `enabled` is Item's own: setting it also disables the MouseArea below,
-    // so the dimmed button is genuinely dead rather than merely dim.
-    opacity: btn.enabled ? 1 : 0.45
-
-    color: !btn.primary
-        ? (mouse.containsMouse ? Theme.surface1 : Theme.surface0)
-        : (mouse.containsMouse ? Theme.accentAlt : btn.accent)
-
-    Behavior on color {
-      ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
-    }
-
-    Behavior on opacity {
-      NumberAnimation { duration: Style.anim.opacityDuration; easing.type: Style.anim.easingSmooth }
-    }
-
-    Text {
-      id: btnText
-      anchors.centerIn: parent
-      text: btn.label
-      color: btn.primary ? Theme.base : Theme.text
-      font.family: Style.font.family
-      font.pixelSize: Style.font.size
-      font.weight: btn.primary ? Style.font.boldWeight : Style.font.normalWeight
-      renderType: Text.NativeRendering
-    }
-
-    MouseArea {
-      id: mouse
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onClicked: btn.activated()
     }
   }
 }
