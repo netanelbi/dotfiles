@@ -37,6 +37,10 @@ ShellRoot {
   // org.freedesktop.Notifications: popups + control center, replacing swaync.
   Notifications { }
 
+  // org.freedesktop.PolicyKit1.AuthenticationAgent. This machine had NO agent
+  // at all -- polkitd alone -- so anything asking for root failed silently.
+  Polkit { }
+
   // Fullscreen GPU screensaver on idle, replacing the kitty + tte pair.
   // Built only once hypridle calls `ipc call screensaver start`.
   Screensaver { }
