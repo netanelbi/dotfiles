@@ -47,12 +47,13 @@ Item {
     NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
   }
 
-  // rofi's `cycle` default is true: moving past either end wraps.
+  // Deliberately NOT rofi's `cycle: true`. Wrapping means Up on the first row
+  // teleports to the last, which in the clipboard -- hundreds of entries deep,
+  // most of them looking alike -- loses your place completely for the sake of
+  // a keypress you did not mean. Both ends just stop.
   function move(delta) {
     if (view.count === 0) return
-    var next = (view.currentIndex + delta) % view.count
-    if (next < 0) next += view.count
-    view.currentIndex = next
+    view.currentIndex = Math.max(0, Math.min(view.currentIndex + delta, view.count - 1))
   }
 
   function moveTo(index) {

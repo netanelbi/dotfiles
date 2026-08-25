@@ -27,7 +27,7 @@ import ".."
 //
 // ----------------------------------------------------------------- keyboard
 // Bindings mirror rofi's defaults: Up/Down + Ctrl+K/Ctrl+J + Tab/Shift+Tab to
-// move (wrapping, like rofi's cycle:true), PageUp/PageDown by a screenful,
+// move (stopping at either end), PageUp/PageDown by a screenful,
 // Home/End to the ends, Enter to accept, Escape to dismiss, and Alt+P for the
 // secondary action (rofi's kb-custom-1, which config.rasi already binds).
 PanelWindow {
