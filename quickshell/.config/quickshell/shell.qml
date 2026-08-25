@@ -6,6 +6,7 @@
 // tray icon silently does nothing.
 import Quickshell
 
+import "assistant"
 import "launchers"
 import "screensaver"
 import "services"
@@ -45,6 +46,12 @@ ShellRoot {
   // Fullscreen GPU screensaver on idle, replacing the kitty + tte pair.
   // Built only once hypridle calls `ipc call screensaver start`.
   Screensaver { }
+
+  // A conversation docked to the right edge, on `pi`. Not a launcher: it takes
+  // the keyboard on demand rather than exclusively, so it can stay open beside
+  // a terminal. Nothing is built -- and no `pi` process spawned -- until it is
+  // first opened.
+  Assistant { }
 
   // The xdg-desktop-portal-hyprland screen-share picker, replacing
   // /usr/bin/hyprland-share-picker's three tabs of text with live thumbnails.

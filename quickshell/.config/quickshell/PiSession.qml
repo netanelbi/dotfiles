@@ -65,30 +65,61 @@ Singleton {
   // `busy` is the one the UI keys off: true from the moment a question is
   // accepted until the agent settles.
   property bool busy: false
-  // Streamed reasoning. Arrives ~300ms in, well before the answer, and is the
-  // ONLY honest loading state there is -- a spinner would say nothing while
-  // this says what it understood.
-  property string thinking: ""
-  property string answer: ""
-  // "bash find ..." while a tool runs, "" otherwise.
-  property string tool: ""
   // Set when pi refuses a command or the child dies; cleared on the next ask.
   property string error: ""
 
   readonly property bool warm: proc.running
 
   signal settled()
+  // Emitted whenever the newest turn grows, so the view can keep itself pinned
+  // to the bottom without polling.
+  signal appended()
+
+  // ----------------------------------------------------------------- turns
+  // The conversation, oldest first -- the panel is a view of THIS, not of a
+  // pair of "last question / last answer" strings. Keeping it here rather than
+  // in the panel is what lets the window be closed and reopened mid-answer with
+  // the transcript intact, and what makes the process's own session and the
+  // thing on screen the same conversation.
+  //
+  //   role      "user" | "assistant"
+  //   text      the message; for an assistant turn it grows token by token
+  //   thinking  streamed reasoning, kept SEPARATE from text so the view can
+  //             show it while the answer is empty and drop it afterwards
+  //   tool      the tool call in flight on this turn, "" when none
+  //   pending   true while this turn is still being written
+  ListModel { id: turnModel }
+  readonly property alias turns: turnModel
+
+  function lastAssistant() {
+    for (var i = turnModel.count - 1; i >= 0; i--) {
+      if (turnModel.get(i).role === "assistant") return i
+    }
+    return -1
+  }
+
+  function grow(field, delta) {
+    var i = lastAssistant()
+    if (i < 0) return
+    turnModel.setProperty(i, field, turnModel.get(i)[field] + delta)
+    root.appended()
+  }
 
   // ------------------------------------------------------------------- api
+  // Returns whether the question was ACCEPTED. The composer keys its "clear the
+  // draft" on this: a message typed while a turn is still running is refused,
+  // and silently wiping the field in that case loses what you wrote.
   function ask(text) {
     var msg = String(text || "").trim()
-    if (msg === "" || root.busy) return
+    if (msg === "" || root.busy) return false
 
     root.error = ""
-    root.thinking = ""
-    root.answer = ""
-    root.tool = ""
     root.busy = true
+    turnModel.append({ role: "user", text: msg, thinking: "", tool: "", pending: false })
+    // The assistant's turn exists before a single token arrives, so the view has
+    // a row to stream into and the conversation never visibly jumps.
+    turnModel.append({ role: "assistant", text: "", thinking: "", tool: "", pending: true })
+    root.appended()
 
     idleTimer.stop()
     // Queued rather than sent, because the child may not exist yet. `flush()`
@@ -97,6 +128,7 @@ Singleton {
     pending = msg
     if (proc.running) flush()
     else proc.running = true
+    return true
   }
 
   function abort() {
@@ -107,11 +139,11 @@ Singleton {
   }
 
   // Drop the conversation without dropping the process -- the cheap "start
-  // over" that keeps the 1.2s warm latency.
-  function reset() {
-    root.thinking = ""
-    root.answer = ""
-    root.tool = ""
+  // over" that keeps the 1.2s warm latency. `new_session` clears pi's own
+  // context so the model forgets it too, not just the screen.
+  function newChat() {
+    if (root.busy) abort()
+    turnModel.clear()
     root.error = ""
     if (proc.running) send({ type: "new_session" })
   }
@@ -155,6 +187,7 @@ Singleton {
       if (d.success === false) {
         root.error = String(d.error || "rejected")
         root.busy = false
+        settleTurn()
         idleTimer.restart()
       }
       break
@@ -166,26 +199,42 @@ Singleton {
       // text_delta, each with its own _start and _end). Keeping them apart is
       // what lets the panel show the thinking as a loading state and then
       // replace it with the answer, instead of running the two together.
-      if (e.type === "thinking_delta") root.thinking += String(e.delta || "")
-      else if (e.type === "text_delta") root.answer += String(e.delta || "")
+      if (e.type === "thinking_delta") root.grow("thinking", String(e.delta || ""))
+      else if (e.type === "text_delta") root.grow("text", String(e.delta || ""))
       break
     }
 
     case "tool_execution_start":
-      root.tool = String(d.toolName || "tool") + " " + summarizeArgs(d.args)
+      setTurn("tool", String(d.toolName || "tool") + " " + summarizeArgs(d.args))
       break
 
     case "tool_execution_end":
-      root.tool = ""
+      setTurn("tool", "")
       break
 
     case "agent_settled":
       root.busy = false
-      root.tool = ""
+      settleTurn()
       root.settled()
       idleTimer.restart()
       break
     }
+  }
+
+  function setTurn(field, value) {
+    var i = lastAssistant()
+    if (i >= 0) turnModel.setProperty(i, field, value)
+  }
+
+  // Close out the open turn: no tool in flight, no longer growing. The thinking
+  // text is kept rather than cleared -- it is the record of how the answer was
+  // reached, and the view decides whether to show it.
+  function settleTurn() {
+    var i = lastAssistant()
+    if (i < 0) return
+    turnModel.setProperty(i, "tool", "")
+    turnModel.setProperty(i, "pending", false)
+    root.appended()
   }
 
   // One line of "what is it actually doing", from whichever argument carries
@@ -226,8 +275,8 @@ Singleton {
       // leaving the panel spinning forever on an answer that will never come.
       if (root.busy) {
         root.busy = false
-        root.tool = ""
         if (root.error === "") root.error = "pi exited (" + exitCode + ")"
+        settleTurn()
       }
     }
   }
