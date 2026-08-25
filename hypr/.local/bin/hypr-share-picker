@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+#
+# hypr-share-picker -- the screen-share picker that xdg-desktop-portal-hyprland
+# runs, replacing /usr/bin/hyprland-share-picker with the Quickshell one that
+# shows LIVE thumbnails instead of a list of strings like
+# "Screen 0 at 1920, 0 (1280x800) (eDP-1)".
+#
+# Wired up in ~/.config/hypr/xdph.conf:
+#     screencopy { custom_picker_binary = ~/.local/bin/hypr-share-picker }
+#
+# ------------------------------------------------------------------ protocol
+# Confirmed against xdg-desktop-portal-hyprland v1.4.1 (the installed version)
+# -- src/shared/ScreencopyShared.cpp promptForScreencopySelection() and
+# hyprland-share-picker/main.cpp -- not guessed:
+#
+#   in   argv contains --allow-token when `allow_token_by_default` is set;
+#        it only preselects the checkbox, it does not force the flag.
+#   in   $XDPH_WINDOW_SHARING_LIST is the shareable window list, built by
+#        buildWindowList(). One record per window, no separator between them:
+#            <handle>[HC>]<class>[HT>]<title>[HE>]<hyprland addr>[HA>]
+#        <handle> is the low 32 bits of xdph's OWN wl_proxy for the window's
+#        wlr-foreign-toplevel handle, in decimal. It is a pointer inside
+#        another process, so it CANNOT be derived -- this env var is the only
+#        way to name a window back to xdph, which is why it is forwarded whole.
+#   out  exactly one line on stdout:
+#            [SELECTION]<flags>/screen:<output name>
+#            [SELECTION]<flags>/window:<handle>
+#            [SELECTION]<flags>/region:<output>@<x>,<y>,<w>,<h>
+#        <flags> is a character set; only 'r' is defined (allow a restore
+#        token). Anything else makes xdph log "unknown flag from share-picker".
+#        Region coordinates are relative to that output's origin.
+#
+# Two things about stdout that will silently corrupt a selection if ignored:
+#   * The trailing newline is REQUIRED. xdph parses `screen:` with substr(7)
+#     followed by pop_back(), i.e. it drops the last character on the
+#     assumption that it is the newline. Without it, eDP-1 arrives as eDP-.
+#   * Nothing may be printed AFTER the selection line. xdph keeps the whole
+#     remainder of stdout past "[SELECTION]", so a trailing log line ends up
+#     inside the output name. Every diagnostic here goes to stderr.
+#
+# --------------------------------------------------------------- the waiting
+# A picker has to block until a human chooses, and an IpcHandler function
+# returns immediately -- `qs ipc call sharepicker open` cannot itself wait. So
+# the shell owns the blocking: it creates a FIFO, hands the path to Quickshell,
+# and reads. The QML writes one line when the user picks. A FIFO rather than a
+# result file because a read blocks until a writer appears, which is an event,
+# not a poll.
+#
+# ----------------------------------------------------------------- fallback
+# If ANYTHING is off -- Quickshell down, IPC error, another picker already
+# open, timeout, a result that does not parse -- this execs the stock picker.
+# Being unable to share your screen at all is a far worse failure than an ugly
+# picker, so every doubtful path ends at /usr/bin/hyprland-share-picker.
+
+set -uo pipefail
+
+STOCK_PICKER=/usr/bin/hyprland-share-picker
+QS_CONFIG="$HOME/.config/quickshell"
+# Generous: this is a human reading thumbnails, not a machine. Only a wedged
+# shell should ever reach it.
+TIMEOUT=120
+
+log() { printf 'hypr-share-picker: %s\n' "$*" >&2; }
+
+# Held because fallback() has to re-exec with the picker's ORIGINAL argv, and
+# "$@" inside a function is the function's own arguments.
+ARGV=("$@")
+
+fallback() {
+    log "falling back to the stock picker ($*)"
+    # Best-effort: if our overlay is up, take it down first, or the user ends
+    # up staring at two pickers.
+    qs -p "$QS_CONFIG" ipc call sharepicker cancel >/dev/null 2>&1
+    # exec replaces this process, taking the EXIT trap with it, so the workdir
+    # has to go now or it outlives us. Unset first: mktemp may not have run yet.
+    [ -n "${workdir:-}" ] && rm -rf "$workdir"
+    exec "$STOCK_PICKER" "${ARGV[@]}"
+}
+
+command -v qs >/dev/null 2>&1 || fallback "no qs binary"
+
+# --allow-token means "tick the restore-token box by default", per main.cpp.
+allow_token=0
+for arg in "$@"; do
+    [ "$arg" = "--allow-token" ] && allow_token=1
+done
+
+# Per-request directory under the runtime dir: tmpfs, user-private, and gone at
+# logout even if every trap below is missed. Deliberately NOT /tmp -- a picker
+# FIFO in a world-writable directory is a handle onto what you are about to
+# share.
+runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+workdir=$(mktemp -d "$runtime/hypr-share-picker.XXXXXX") || fallback "mktemp failed"
+trap 'rm -rf "$workdir"' EXIT
+# Bash killed by a signal does not run its EXIT trap, and the timeout that
+# wraps a stuck picker sends TERM -- so turn the signal into an exit and let
+# the EXIT trap do the cleanup, rather than leaving a FIFO behind every time.
+trap 'exit 143' TERM HUP INT
+fifo="$workdir/selection"
+mkfifo -m 600 "$fifo" || fallback "mkfifo failed"
+
+# Ask the shell to open. A non-"ok" answer covers every up-front failure
+# (Quickshell down, handler missing, a picker already open for another app) and
+# is the cheap check that avoids ever waiting the full timeout for nothing.
+reply=$(qs -p "$QS_CONFIG" ipc call sharepicker open \
+            "$fifo" "${XDPH_WINDOW_SHARING_LIST:-}" "$allow_token" 2>&1)
+if [ "$reply" != "ok" ]; then
+    fallback "ipc open returned '${reply}'"
+fi
+
+# Blocks on open(2) until the QML writes -- no polling. `timeout` bounds a
+# wedged shell; the FIFO read itself has no deadline of its own.
+if ! selection=$(timeout "$TIMEOUT" cat "$fifo"); then
+    fallback "timed out after ${TIMEOUT}s waiting for a selection"
+fi
+
+flags=""
+[ "${selection%%/*}" = "r" ] && flags="r"
+body="${selection#*/}"
+
+case "$body" in
+    fallback)
+        # Quickshell tore its picker down without an answer -- a config reload,
+        # or the shell going away. Nothing was chosen, so ask the stock picker.
+        fallback "quickshell dropped the request"
+        ;;
+    cancel)
+        # A real "no thanks". NOT a fallback: popping the stock picker up after
+        # the user pressed Escape would be maddening. Printing no [SELECTION]
+        # is exactly how xdph is told the request was refused.
+        log "cancelled by the user"
+        exit 0
+        ;;
+    region)
+        # slurp has to run with the overlay gone, so the QML closes first and
+        # defers to us. Same invocation and same math as the stock picker:
+        # slurp reports global coordinates, xdph wants output-relative ones.
+        # slurp exits 1 for both a cancel and an error, and after the user has
+        # deliberately chosen "Select region..." a cancel is by far the likelier
+        # of the two -- so this is a denial, not a reason to re-prompt them with
+        # the stock picker.
+        region=$(slurp -f '%o %x %y %w %h') || { log "region selection cancelled"; exit 0; }
+        read -r out gx gy w h <<<"$region"
+        origin=$(hyprctl monitors -j | jq -r --arg o "$out" \
+                    '.[] | select(.name == $o) | "\(.x) \(.y)"') \
+            || fallback "hyprctl monitors failed"
+        [ -n "$origin" ] || fallback "slurp named an output hyprland does not know: $out"
+        read -r ox oy <<<"$origin"
+        printf '[SELECTION]%s/region:%s@%d,%d,%d,%d\n' \
+               "$flags" "$out" "$((gx - ox))" "$((gy - oy))" "$w" "$h"
+        exit 0
+        ;;
+    screen:?*)
+        printf '[SELECTION]%s/%s\n' "$flags" "$body"
+        exit 0
+        ;;
+    window:[0-9]*)
+        # Guard the digits: xdph runs std::stoull on this and a non-numeric
+        # handle throws out of promptForScreencopySelection().
+        handle="${body#window:}"
+        case "$handle" in
+            *[!0-9]*) fallback "non-numeric window handle: $handle" ;;
+        esac
+        printf '[SELECTION]%s/%s\n' "$flags" "$body"
+        exit 0
+        ;;
+    *)
+        fallback "unparseable result from quickshell: $selection"
+        ;;
+esac

@@ -9,6 +9,7 @@ import Quickshell
 import "launchers"
 import "screensaver"
 import "services"
+import "sharepicker"
 import "wallpaper"
 
 // Entry point. One bar per connected monitor; Variants keeps that in sync as
@@ -44,4 +45,9 @@ ShellRoot {
   // Fullscreen GPU screensaver on idle, replacing the kitty + tte pair.
   // Built only once hypridle calls `ipc call screensaver start`.
   Screensaver { }
+
+  // The xdg-desktop-portal-hyprland screen-share picker, replacing
+  // /usr/bin/hyprland-share-picker's three tabs of text with live thumbnails.
+  // Built only when ~/.local/bin/hypr-share-picker asks it to open.
+  SharePicker { }
 }
