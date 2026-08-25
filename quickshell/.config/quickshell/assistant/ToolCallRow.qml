@@ -69,7 +69,7 @@ Item {
           color: row.accent
           elide: Text.ElideRight
           font.family: Style.font.family
-          font.pixelSize: Style.font.tiny
+          font.pixelSize: Style.font.panelMeta
           font.weight: Style.font.boldWeight
           renderType: Text.NativeRendering
         }
@@ -83,7 +83,7 @@ Item {
           text: row.live ? "running" : (row.call ? fmt.duration(row.call.ms) : "")
           color: Theme.overlay0
           font.family: Style.font.family
-          font.pixelSize: Style.font.tiny
+          font.pixelSize: Style.font.panelMeta
           renderType: Text.NativeRendering
 
           // A slow fade in place, not a blink: the same heartbeat the mark and
@@ -119,7 +119,7 @@ Item {
         maximumLineCount: 2
         elide: Text.ElideRight
         font.family: Style.font.family
-        font.pixelSize: Style.font.tiny
+        font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
       }
     }

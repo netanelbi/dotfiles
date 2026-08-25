@@ -245,7 +245,7 @@ PanelWindow {
         text: "Ori"
         color: Theme.text
         font.family: Style.font.family
-        font.pixelSize: Style.font.size
+        font.pixelSize: Style.font.panelBody
         font.weight: Style.font.boldWeight
         renderType: Text.NativeRendering
       }
@@ -258,7 +258,7 @@ PanelWindow {
         text: PiSession.workdir
         color: Theme.overlay0
         font.family: Style.font.family
-        font.pixelSize: Style.font.tiny
+        font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
       }
 
@@ -277,7 +277,7 @@ PanelWindow {
           text: "＋"
           color: newArea.containsMouse ? Theme.text : Theme.overlay0
           font.family: Style.font.family
-          font.pixelSize: Style.font.size
+          font.pixelSize: Style.font.panelBody
           renderType: Text.NativeRendering
         }
 
@@ -378,7 +378,7 @@ PanelWindow {
         color: Theme.subtext0
         wrapMode: Text.Wrap
         font.family: Style.font.family
-        font.pixelSize: Style.font.tiny
+        font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
       }
 
@@ -390,7 +390,7 @@ PanelWindow {
         text: "enter send · shift+enter newline\nctrl+n new · ctrl+c stop · esc close"
         color: Theme.alpha(Theme.overlay0, 0.75)
         font.family: Style.font.family
-        font.pixelSize: Style.font.tiny
+        font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
       }
     }
@@ -450,7 +450,7 @@ PanelWindow {
         color: panel.accent
         elide: Text.ElideRight
         font.family: Style.font.family
-        font.pixelSize: Style.font.tiny
+        font.pixelSize: Style.font.panelMeta
         font.weight: Style.font.boldWeight
         renderType: Text.NativeRendering
 
@@ -468,7 +468,7 @@ PanelWindow {
           + (PiSession.liveTokens > 0 ? "  ↓ " + fmt.tokens(PiSession.liveTokens) : "")
         color: Theme.overlay0
         font.family: Style.font.family
-        font.pixelSize: Style.font.tiny
+        font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
       }
     }
@@ -493,7 +493,7 @@ PanelWindow {
         color: Theme.red
         wrapMode: Text.Wrap
         font.family: Style.font.family
-        font.pixelSize: Style.font.small
+        font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
       }
     }
@@ -522,7 +522,7 @@ PanelWindow {
         text: "⟩"
         color: entry.activeFocus ? panel.accent : Theme.overlay0
         font.family: Style.font.family
-        font.pixelSize: Style.font.size
+        font.pixelSize: Style.font.panelBody
         renderType: Text.NativeRendering
 
         Behavior on color {
@@ -540,7 +540,7 @@ PanelWindow {
         selectByMouse: true
         wrapMode: TextEdit.Wrap
         font.family: Style.font.family
-        font.pixelSize: Style.font.size
+        font.pixelSize: Style.font.panelBody
         renderType: Text.NativeRendering
         clip: true
 
@@ -553,7 +553,7 @@ PanelWindow {
           text: PiSession.busy ? "ctrl+c to stop" : "Message"
           color: Theme.overlay0
           font.family: Style.font.family
-          font.pixelSize: Style.font.size
+          font.pixelSize: Style.font.panelBody
           renderType: Text.NativeRendering
         }
 
@@ -636,7 +636,7 @@ PanelWindow {
         color: Theme.overlay0
         elide: Text.ElideRight
         font.family: Style.font.family
-        font.pixelSize: Style.font.tiny
+        font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
       }
 
@@ -651,7 +651,7 @@ PanelWindow {
           + (PiSession.busy ? "live" : PiSession.warm ? "warm" : "cold")
         color: Theme.overlay0
         font.family: Style.font.family
-        font.pixelSize: Style.font.tiny
+        font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
       }
     }

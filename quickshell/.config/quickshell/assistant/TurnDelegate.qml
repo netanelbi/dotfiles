@@ -132,7 +132,7 @@ Item {
       color: Theme.text
       wrapMode: Text.Wrap
       font.family: Style.font.family
-      font.pixelSize: Style.font.size
+      font.pixelSize: Style.font.panelBody
       renderType: Text.NativeRendering
     }
   }
@@ -199,7 +199,7 @@ Item {
         font.italic: true
         wrapMode: Text.Wrap
         font.family: Style.font.family
-        font.pixelSize: Style.font.small
+        font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
       }
 
@@ -247,7 +247,7 @@ Item {
               color: Theme.accent
               elide: Text.ElideRight
               font.family: Style.font.family
-              font.pixelSize: Style.font.tiny
+              font.pixelSize: Style.font.panelMeta
               font.weight: Style.font.boldWeight
               renderType: Text.NativeRendering
 
@@ -282,7 +282,7 @@ Item {
               rotation: turnItem.toolsOpen ? 90 : 0
               transformOrigin: Item.Center
               font.family: Style.font.family
-              font.pixelSize: Style.font.tiny
+              font.pixelSize: Style.font.panelMeta
               renderType: Text.NativeRendering
 
               Behavior on rotation {
@@ -312,7 +312,7 @@ Item {
             elide: Text.ElideRight
             maximumLineCount: 1
             font.family: Style.font.family
-            font.pixelSize: Style.font.tiny
+            font.pixelSize: Style.font.panelMeta
             renderType: Text.NativeRendering
           }
         }
@@ -387,7 +387,7 @@ Item {
         // token rates.
         textFormat: Text.MarkdownText
         font.family: Style.font.family
-        font.pixelSize: Style.font.size
+        font.pixelSize: Style.font.panelBody
         renderType: Text.NativeRendering
       }
 
@@ -408,7 +408,7 @@ Item {
         color: Theme.overlay0
         elide: Text.ElideRight
         font.family: Style.font.family
-        font.pixelSize: Style.font.tiny
+        font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
       }
     }

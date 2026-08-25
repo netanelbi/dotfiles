@@ -70,6 +70,17 @@ Singleton {
     readonly property int tooltip: size
     readonly property int normalWeight: Font.Normal
     readonly property int boldWeight: Font.Bold
+
+    // ------------------------------------------------------------- panel
+    // The sizes above are BAR sizes, transcribed from waybar's style.css for a
+    // 30px strip you glance at. The assistant panel is a surface you READ --
+    // paragraphs, commands, whole answers -- and 14px in a 460px card is too
+    // tight for that. It gets its own pair so tuning the reading size can never
+    // shove the bar's geometry around.
+    readonly property int panelBody: 16
+    // Rails, footers, tool lines: subordinate to the body but still legible,
+    // rather than the bar's 12px which reads as a footnote at this distance.
+    readonly property int panelMeta: 13
   }
 
   // ----------------------------------------------------------------- motion
