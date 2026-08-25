@@ -37,6 +37,13 @@ Item {
   // clock of our own would be a second thing to stop at idle.
   property real nowMs: 0
 
+  // The answer text, placeholder included: a turn with nothing in it yet must
+  // not collapse to zero height, or the list jumps the moment the first token
+  // lands.
+  readonly property string bodyText: !turn ? ""
+    : turn.text !== "" ? turn.text
+    : (pending ? " " : "")
+
   // Whether this turn's tool batch is open. One flag per turn, and it starts
   // closed: the detail is a click away, not a wall.
   property bool toolsOpen: false
@@ -370,25 +377,63 @@ Item {
       }
 
       // ------------------------------------------------------------ said
-      Text {
+      // The answer, cut at its pictures. Ori shows a file by writing
+      // `![alt](/path.png)` and the picture is painted where the syntax stood
+      // (Fmt.split decides what counts; only local absolute paths do).
+      //
+      // A run of pieces rather than one Text because a QML Text cannot put an
+      // ITEM inside its flow -- there is no way to hang an Image off a
+      // character position -- so the text is ended before the picture and
+      // resumed after it. An answer with no image is one piece and behaves
+      // exactly as it did before.
+      Column {
         id: body
         width: parent.width
-        // A turn with nothing in it yet must not collapse to zero height, or
-        // the list jumps the moment the first token lands.
-        text: !turnItem.turn ? ""
-          : turnItem.turn.text !== "" ? turnItem.turn.text
-          : (turnItem.pending ? " " : "")
-        color: Theme.text
-        wrapMode: Text.Wrap
-        // The model answers in markdown, so render it -- otherwise every
-        // emphasis arrives as literal **asterisks** and every code span as
-        // backticks. Mid-stream an unclosed marker renders as plain text and
-        // settles the moment its partner arrives, which is invisible at these
-        // token rates.
-        textFormat: Text.MarkdownText
-        font.family: Style.font.family
-        font.pixelSize: Style.font.panelBody
-        renderType: Text.NativeRendering
+        spacing: 6
+
+        Repeater {
+          // Recomputed per token while the answer streams, which rebuilds
+          // these pieces each time. That is affordable because it always was:
+          // the single Text this replaced re-laid out the whole answer per
+          // token too, and an image re-created against Qt's pixmap cache
+          // repaints in the same frame.
+          model: fmt.split(turnItem.bodyText, turnItem.pending)
+
+          delegate: Item {
+            id: piece
+            required property var modelData
+
+            width: body.width
+            implicitHeight: piece.modelData.image ? shot.implicitHeight : chunk.implicitHeight
+            height: implicitHeight
+
+            Text {
+              id: chunk
+              width: parent.width
+              visible: !piece.modelData.image
+              text: piece.modelData.image ? "" : piece.modelData.text
+              color: Theme.text
+              wrapMode: Text.Wrap
+              // The model answers in markdown, so render it -- otherwise every
+              // emphasis arrives as literal **asterisks** and every code span as
+              // backticks. Mid-stream an unclosed marker renders as plain text and
+              // settles the moment its partner arrives, which is invisible at these
+              // token rates.
+              textFormat: Text.MarkdownText
+              font.family: Style.font.family
+              font.pixelSize: Style.font.panelBody
+              renderType: Text.NativeRendering
+            }
+
+            InlineImage {
+              id: shot
+              width: parent.width
+              visible: piece.modelData.image
+              source: piece.modelData.image ? piece.modelData.source : ""
+              alt: piece.modelData.image ? piece.modelData.alt : ""
+            }
+          }
+        }
       }
 
       // ------------------------------------------------------------ cost
