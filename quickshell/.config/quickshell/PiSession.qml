@@ -1496,11 +1496,49 @@ Singleton {
     root.saveModelState()
   }
 
+  // Levels the ENDPOINT has told us it does not accept, learned the only way
+  // there is: by being refused. pi's own list is universal --
+  // off/minimal/low/medium/high/xhigh/max, straight out of the bundle -- and it
+  // describes what pi can ask for, not what a given provider will take.
+  //
+  // Ollama Cloud answered `/effort minimal` with, verbatim:
+  //
+  //   400 invalid reasoning value: 'minimal'
+  //   (must be "high", "medium", "low", "max", or "none")
+  //
+  // so two of pi's seven are dead here. Seeded from that measurement rather
+  // than left empty, because the first person to find each one out pays a
+  // failed turn for it, and one of them has already been paid.
+  property var rejectedLevels: ["minimal", "xhigh"]
+
   function applyLevels(d) {
     var list = ((d.data || {}).levels) || []
     if (list.length === 0) return
-    root.thinkingLevels = list
+    var keep = []
+    for (var i = 0; i < list.length; i++)
+      if (root.rejectedLevels.indexOf(String(list[i])) < 0) keep.push(list[i])
+    root.thinkingLevels = keep
     root.levelsFor = root.provider + "/" + root.model
+    root.saveModelState()
+  }
+
+  // A pinned level that the endpoint refuses is worse than no level at all: it
+  // is written into buildCommand() as `--thinking <level>`, so it poisons every
+  // future child and every turn 400s until someone notices. Unpin it, remember
+  // it, and say so.
+  function rejectLevel(level, why) {
+    var bad = String(level || "")
+    if (bad !== "" && root.rejectedLevels.indexOf(bad) < 0) {
+      var next = root.rejectedLevels.slice()
+      next.push(bad)
+      root.rejectedLevels = next
+    }
+    var keep = []
+    for (var i = 0; i < root.thinkingLevels.length; i++)
+      if (root.thinkingLevels[i] !== bad) keep.push(root.thinkingLevels[i])
+    root.thinkingLevels = keep
+    if (root.effort === bad) root.effort = ""
+    root.error = "'" + bad + "' is not a thinking level this endpoint accepts"
     root.saveModelState()
   }
 
@@ -1820,10 +1858,18 @@ Singleton {
       // Only a FAILED response matters: success is just an ack that the prompt
       // was accepted, and the real work arrives as the events below.
       if (d.success === false) {
-        root.error = String(d.error || "rejected")
+        var msg = String(d.error || "rejected")
         root.busy = false
         settleTurn()
         idleTimer.restart()
+        // A pinned thinking level the endpoint refuses would otherwise fail
+        // EVERY turn from here on, because it is baked into buildCommand(). The
+        // upstream names the offender in the message, so take it at its word,
+        // unpin it and drop it from the list -- one failed turn instead of all
+        // of them.
+        var bad = msg.match(/invalid reasoning value:\s*'([^']+)'/)
+        if (bad) { root.rejectLevel(bad[1], msg); break }
+        root.error = msg
       }
       break
 
