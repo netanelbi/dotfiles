@@ -109,6 +109,12 @@ PanelWindow {
     // Opening it means wanting to type into it. callLater because the composer
     // does not exist yet on the frame `opened` flips.
     if (opened) Qt.callLater(function () { entry.forceActiveFocus() })
+    // ...and open ON the newest turn. Nothing did this before: the panel is
+    // built lazily, so a first open creates the list fresh and it rests where
+    // Qt leaves it, which is the OLDEST message -- you opened a conversation
+    // and were shown its beginning. Reopening was no better, since the list
+    // keeps whatever position it had when it was hidden.
+    if (opened) Qt.callLater(function () { transcript.goBottom() })
   }
 
   Behavior on revealed {
@@ -364,18 +370,8 @@ PanelWindow {
       // contentY origin MOVES with contentHeight, so there is no stable "this
       // value means bottom" to compare against -- while `yPosition == 1 -
       // heightRatio` is the end of the range in either layout direction.
-      // How far ABOVE the newest turn the view is sitting, in pixels.
-      //
-      // Under BottomToTop the newest turn rests at yPosition ZERO, which was
-      // measured rather than reasoned -- positionViewAtEnd() lands on
-      // contentY -38 (== originY) and positionViewAtBeginning() on 381, and
-      // -38 is where the list sits by itself with nobody touching it. So
-      // yPosition IS the distance from the bottom, and the earlier
-      // (1 - heightRatio - yPosition) form had it inverted: it read ~419px
-      // while the view was resting exactly where it belonged, and zero at the
-      // OLDEST message. That is why Ctrl+End walked to the top of the
-      // conversation and why sticking on submit landed on the first turn.
-      readonly property real belowBottom: Math.max(0, visibleArea.yPosition * contentHeight)
+      readonly property real belowBottom:
+          Math.max(0, (1 - visibleArea.heightRatio - visibleArea.yPosition) * contentHeight)
 
       // Slack, and it has to be pixels rather than `atYEnd`. atYEnd is an exact
       // comparison and it FLICKERS: at the tail of the same measured turn, with
@@ -387,23 +383,27 @@ PanelWindow {
       readonly property int stickSlack: 24
 
       function toBottom() {
-        // positionViewAtEnd, NOT AtBeginning, and the reasoning that said
-        // otherwise was backwards. The delegate does read its row back through
-        // `count - 1 - index`, so index 0 IS the newest turn -- but that says
-        // nothing about which end of the CONTENT the view has to sit at.
-        //
-        // `belowBottom` above settles it, and it was measured rather than
-        // reasoned: it reaches zero when yPosition is (1 - heightRatio), which
-        // is contentY at its MAXIMUM. Resting on the newest turn is resting at
-        // the END of the content. AtBeginning therefore jumped to the OLDEST
-        // message -- which is what Ctrl+End did, and what sticking did on every
-        // submit.
-        transcript.positionViewAtEnd()
+        // index 0 under BottomToTop is the NEWEST turn, at the bottom edge --
+        // the delegate reads its row back through `count - 1 - index`. So the
+        // beginning of the content is the bottom of the conversation.
+        transcript.positionViewAtBeginning()
       }
 
       function goBottom() {
         transcript.stuck = true
         transcript.toBottom()
+        // Again next frame. A single call uses whatever delegate heights are
+        // current, and after a model change or a first show they are not final
+        // yet -- the list then lands short and stays there, because nothing
+        // else is going to correct a position the user asked for by hand.
+        Qt.callLater(transcript.toBottom)
+      }
+
+      // The other end. Unsticks, because arriving at the oldest turn and then
+      // being dragged back the moment a token lands would make the key useless.
+      function goTop() {
+        transcript.stuck = false
+        transcript.positionViewAtEnd()
       }
 
       // Corrected every frame the content changes, NOT animated. An animation
@@ -700,16 +700,21 @@ PanelWindow {
             return
           }
           switch (event.key) {
-          case Qt.Key_End:
-            // Ctrl+End: back to the newest turn, and stick there again. The
-            // user asked for this key by name and it is the terminal
-            // convention, so it is taken as asked. What it costs: a TextEdit's
-            // own Ctrl+End is "cursor to end of draft". That is a fair trade
-            // here and not in a text editor -- the draft is a message, bare
-            // End already reaches the end of the line, and the composer is
-            // capped at 120px before it scrolls.
+          case Qt.Key_Down:
+            // Ctrl+Down: the newest turn, and stick there again.
+            // Ctrl+Up: the oldest. Asked for by name, in place of the Ctrl+End
+            // this used to be -- a pair of arrows says which way it goes,
+            // where End only says "the end" of something the panel has two of.
+            // Hyprland binds SUPER and SUPER+CTRL arrows, not bare Ctrl ones,
+            // so nothing upstream swallows these.
             if (event.modifiers & Qt.ControlModifier) {
               transcript.goBottom()
+              event.accepted = true
+            }
+            return
+          case Qt.Key_Up:
+            if (event.modifiers & Qt.ControlModifier) {
+              transcript.goTop()
               event.accepted = true
             }
             return
