@@ -30,13 +30,21 @@ Item {
   property string alt: ""
 
   // See above. Not a Style token: it is a fact about this card's proportions,
-  // not a value the rest of the shell shares.
-  readonly property int maxHeight: 240
+  // not a value the rest of the shell shares. Settable because the user's own
+  // attachments are shown smaller than this -- see the pill in TurnDelegate.
+  property int maxHeight: 240
 
   readonly property bool ready: pic.status === Image.Ready && pic.paintedHeight > 0
 
   implicitHeight: ready ? Math.ceil(pic.paintedHeight) : failed.implicitHeight
   height: implicitHeight
+  // Reported so a caller can shrink a box around the picture rather than
+  // leaving a wide empty margin beside a narrow one -- and so can the fallback
+  // line, or a pill sized to this would collapse to nothing and let the text
+  // spill out of it. Safe to read: everything inside is bounded by `width`,
+  // never by this, so nothing can size itself in a circle.
+  implicitWidth: ready ? Math.ceil(pic.paintedWidth)
+    : Math.min(width, failed.implicitWidth)
 
   Image {
     id: pic

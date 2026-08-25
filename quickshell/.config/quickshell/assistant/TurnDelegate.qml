@@ -118,29 +118,121 @@ Item {
   }
 
   // ------------------------------------------------------------------- ask
+  // What the user attached, as the engine recorded it: absolute paths for a
+  // paste, a label for anything that never had a file (Fmt.attached explains
+  // which is which).
+  readonly property var sent: turn && turn.images
+    ? fmt.attached(turn.images) : []
+
+  // The width thumbnails are laid out in. Deliberately the pill's WIDEST
+  // possible content rather than its actual width: the pill sizes itself to
+  // what is inside it, so measuring the pictures against the pill would be a
+  // circle. Fixed here, the pictures come out at their own size and the pill
+  // wraps them.
+  readonly property int sentWidth: Math.round(width * 0.85) - 24
+
   Rectangle {
     id: pill
     visible: turnItem.user
 
-    width: Math.min(turnItem.width * 0.85, said.implicitWidth + 24)
+    width: Math.min(turnItem.width * 0.85,
+                    Math.max(said.implicitWidth, shots.implicitWidth) + 24)
     x: turnItem.width - width
-    height: said.implicitHeight + 16
+    height: asked.implicitHeight + 16
     radius: 10
     // The one blunted corner points back at the composer the message came
     // from, the way the notification cards enter from the edge they arrived on.
     bottomRightRadius: 3
     color: Theme.surface1
 
-    Text {
-      id: said
+    Column {
+      id: asked
       anchors { left: parent.left; right: parent.right; top: parent.top
                 leftMargin: 12; rightMargin: 12; topMargin: 8 }
-      text: turnItem.turn ? turnItem.turn.text : ""
-      color: Theme.text
-      wrapMode: Text.Wrap
-      font.family: Style.font.family
-      font.pixelSize: Style.font.panelBody
-      renderType: Text.NativeRendering
+      spacing: 6
+
+      Text {
+        id: said
+        width: parent.width
+        // An image-only question is a real thing -- paste, send, no words --
+        // and an empty Text would still pay for a line of height.
+        visible: text !== ""
+        text: turnItem.turn ? turnItem.turn.text : ""
+        color: Theme.text
+        wrapMode: Text.Wrap
+        font.family: Style.font.family
+        font.pixelSize: Style.font.panelBody
+        renderType: Text.NativeRendering
+      }
+
+      // ------------------------------------------------------- attachments
+      // The picture you sent, under the words you sent with it. The draft
+      // keeps its `[Image 1]` marker -- that is what ties a specific picture
+      // to a specific place in the sentence, and deleting the marker is still
+      // how you drop the attachment -- so this is the marker's referent, not a
+      // replacement for it.
+      //
+      // Capped at HALF what an answer's picture gets. The two are not the same
+      // thing: a picture Ori chose to show is the content of its answer and
+      // has to be readable, while your own attachment is a receipt for
+      // something you were looking at a second ago when you pasted it. Big
+      // enough to confirm you sent the right screenshot, small enough that
+      // three of them do not bury the conversation you sent them into.
+      // Every row here sizes itself to its own content and NOT to this column,
+      // because the pill is sized from it: a row that took its width from the
+      // column would be measuring the pill with the pill, and the first thing
+      // that happened when it did was an image-only question collapsing to a
+      // 30px stub with its label spilling out of the side.
+      Column {
+        id: shots
+        spacing: 4
+
+        Repeater {
+          model: turnItem.sent
+
+          delegate: Item {
+            id: sent
+            required property var modelData
+
+            implicitWidth: sent.modelData.image ? thumb.implicitWidth : gone.width
+            implicitHeight: sent.modelData.image ? thumb.implicitHeight : gone.implicitHeight
+            width: implicitWidth
+            height: implicitHeight
+
+            InlineImage {
+              id: thumb
+              // The BOX, not the picture: it paints top-left inside this and
+              // reports back how much of it it used.
+              width: turnItem.sentWidth
+              maxHeight: 120
+              visible: sent.modelData.image
+              source: sent.modelData.image ? sent.modelData.source : ""
+              // No alt to give -- the user picked a file, they did not name it
+              // -- so an unreadable one falls back to the path, which is the
+              // only thing that says which of three pastes went missing.
+              alt: ""
+            }
+
+            // Not a path, so there is no picture to paint: a resumed
+            // transcript, or a data URI that never had a file. Printed rather
+            // than dropped -- it is the only mark left that this question
+            // carried a picture at all.
+            Text {
+              id: gone
+              width: Math.min(turnItem.sentWidth, implicitWidth)
+              visible: !sent.modelData.image
+              text: sent.modelData.label
+              color: Theme.subtext0
+              font.italic: true
+              elide: Text.ElideRight
+              maximumLineCount: 1
+              font.family: Style.font.family
+              font.pixelSize: Style.font.panelMeta
+              renderType: Text.NativeRendering
+            }
+          }
+        }
+      }
     }
   }
 

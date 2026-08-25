@@ -65,6 +65,37 @@ QtObject {
     return "file://" + encodeURI(t).replace(/#/g, "%23").replace(/\?/g, "%3F")
   }
 
+  // ------------------------------------------------------------- attachments
+  // The other direction: what the USER sent. A user turn carries its
+  // attachments in the `images` role, newline-separated -- and not one of those
+  // lines is guaranteed to be a path, which is the whole reason this is a
+  // function and not a Repeater over `text.split("\n")`:
+  //
+  //   ask() with a file      the absolute path. A pasted screenshot is a real
+  //                          file under $XDG_RUNTIME_DIR/ori, so it can be
+  //                          shown, and it is the case that matters.
+  //   ask() with a data URI  the words "pasted image". There never was a file.
+  //   a resumed transcript   "(attached image/png)", written by rehydrate():
+  //                          a session file carries the BYTES, not the path
+  //                          they came from, so the picture cannot be found
+  //                          again from disk.
+  //
+  // The last two are not paintable and must not be dropped either -- they are
+  // the only thing left saying the question had a picture in it at all. So they
+  // come back as labels and the delegate prints them.
+  function attached(images) {
+    var out = []
+    var lines = String(images || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim()
+      if (line === "") continue
+      var url = localImage(line)
+      out.push(url !== "" ? { image: true, source: url, label: line }
+                          : { image: false, source: "", label: line })
+    }
+    return out
+  }
+
   // Whether position `i` is in prose rather than inside a ``` block. Counting
   // the fences before it is enough: they alternate open, close, open, so an odd
   // count means the last one is still open. Asked how it shows a picture, Ori
