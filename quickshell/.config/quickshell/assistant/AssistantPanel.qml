@@ -215,7 +215,7 @@ PanelWindow {
     // it reads as a console resting on the desktop rather than a sidebar welded
     // to it. The surface behind it is still fixed-size -- only the card moves.
     width: panel.panelWidth
-    height: Math.round(parent.height * 0.72)
+    height: Math.round(parent.height * 0.78)
     anchors.verticalCenter: parent.verticalCenter
     // Slides in from the left edge it is anchored to.
     x: 16 - (1 - panel.revealed) * (width + 32)
@@ -413,11 +413,34 @@ PanelWindow {
       // the text flows up past it, which is what "smooth" means here.
       // callLater because the delegate heights settle after the model change:
       // positioning on the same frame uses the layout the change invalidated.
-      onContentHeightChanged: if (transcript.stuck) Qt.callLater(transcript.toBottom)
+      // Corrected on THIS frame and again on the next, not only on the next.
+      //
+      // callLater alone is what the user saw as "a scrolling jump back and
+      // forth, very little but noticeable" while the agent ran command after
+      // command: the content grows, the view paints once at the OLD position
+      // because the correction has not run yet, and lands on the next frame.
+      // One command does that once and it passes for streaming; a tool loop
+      // does it several times a second and it reads as the transcript
+      // twitching.
+      //
+      // The immediate call kills that frame. The callLater is still needed
+      // behind it, because delegate heights settle AFTER the model change and
+      // a correction on the same frame uses the layout the change invalidated
+      // -- so the first lands the common case and the second catches the late
+      // one. Together they are silent; either alone is not.
+      onContentHeightChanged: {
+        if (!transcript.stuck) return
+        transcript.toBottom()
+        Qt.callLater(transcript.toBottom)
+      }
 
       Connections {
         target: PiSession
-        function onAppended() { if (transcript.stuck) Qt.callLater(transcript.toBottom) }
+        function onAppended() {
+          if (!transcript.stuck) return
+          transcript.toBottom()
+          Qt.callLater(transcript.toBottom)
+        }
       }
 
       // Only a move the USER caused may change whether we are stuck. Qt raises
@@ -862,15 +885,53 @@ PanelWindow {
       // (`max` becomes `high` on this model), so the two can differ, and the
       // one worth showing is this one.
       //
-      // Appended to the existing label rather than given a slot of its own,
-      // because the footer is 24px with a context readout already on the right
-      // and a second element would be laying claim to room another widget may
-      // want. The level is blank until a child has reported one, so a panel that
-      // has never run says nothing rather than guessing.
+      // The level, pinned to the right of the left slot so it cannot be elided
+      // away. It is written before the model below purely so the model can
+      // anchor to it.
+      //
+      // Two elements rather than one string, which was the first attempt and was
+      // wrong on measurement. This strip is 460px carrying four readouts, and
+      // the model is the only one that grows: bound
+      // `moonshotai/Kimi-K2-Instruct-0905  ·  minimal` to the ~180px this slot
+      // has and ElideRight eats the level first, every time -- including on the
+      // default model, where `deepseek-v4-flash:0731  ·  medium` wants 250px. So
+      // the level would vanish exactly when someone had just set it, which is
+      // the one moment it has to be readable.
+      //
+      // Blank until a child has reported one, so a panel that has never run says
+      // nothing rather than guessing, and the model gets the whole slot back.
       Text {
-        anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter
+        id: effortText
+        anchors { right: planUsage.left; rightMargin: 10
+                  verticalCenter: parent.verticalCenter; verticalCenterOffset: 1 }
+        // Carries its own separator, so that the dot goes with the level rather
+        // than being left stranded on the end of an elided model id.
+        text: PiSession.effortLabel !== "" ? "·  " + PiSession.effortLabel : ""
+        color: Theme.overlay0
+        font.family: Style.font.family
+        font.pixelSize: Style.font.panelMeta
+        renderType: Text.NativeRendering
+      }
+
+      // The model. Both this and the level are what `/model` and `/effort`
+      // change, and this pair is the whole of what those commands SHOW --
+      // deliberately, because a state readout that already existed is a better
+      // confirmation than a message announcing a change: it is still true five
+      // minutes later, and it reports the level pi actually settled on rather
+      // than the one that was asked for. set_thinking_level clamps silently
+      // (`max` becomes `high` on deepseek-v4-flash:0731), so the two can differ,
+      // and the one worth showing is this one.
+      //
+      // The right anchor is what makes the ElideRight below real -- it was
+      // declared here long before any of this and could never fire, because
+      // nothing bounded the label's width. Now a long id is cut off at the level
+      // rather than printed straight through it.
+      Text {
+        anchors { left: parent.left; leftMargin: 12
+                  right: effortText.left; rightMargin: PiSession.effortLabel === "" ? 0 : 8
+                  verticalCenter: parent.verticalCenter
                   verticalCenterOffset: 1 }
-        text: PiSession.model + (PiSession.effortLabel !== "" ? "  ·  " + PiSession.effortLabel : "")
+        text: PiSession.model
         color: Theme.overlay0
         elide: Text.ElideRight
         font.family: Style.font.family
@@ -899,6 +960,7 @@ PanelWindow {
       // moves this one not at all. One window rather than two, and a dash
       // rather than a zero when it does not know -- see Usage.qml for both.
       Text {
+        id: planUsage
         anchors { horizontalCenter: parent.horizontalCenter
                   verticalCenter: parent.verticalCenter; verticalCenterOffset: 1 }
         text: Usage.label
