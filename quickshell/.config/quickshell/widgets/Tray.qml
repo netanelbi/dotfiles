@@ -42,8 +42,9 @@ BarWidget {
   // against waybar's 100. The gap lives in the Row's spacing now, and the
   // entries carry none, so the icons sit at waybar's pitch.
   horizontalPadding: 3
-  // config "spacing": 10, minus the 4px padding each neighbouring icon carries.
-  spacing: 10          // config.jsonc tray "spacing": 10
+  // waybar's tray pitch is 10; 12 is a deliberate 2px more, by eye -- the
+  // icons here are busier than waybar's and read as crowded at parity.
+  spacing: 12
 
   // waybar draws nothing at all when no app has registered.
   shown: SystemTray.items.values.length > 0
