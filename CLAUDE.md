@@ -110,9 +110,6 @@ sudo pacman -S hyprland hyprlock hypridle xdg-desktop-portal-hyprland \
   grim slurp wl-copy cliphist jq pamixer
 ```
 
-Plus `tte` (terminaltexteffects) for the screensaver, which is not in the
-repos: `uv tool install terminaltexteffects`.
-
 waybar, swaync, swayosd, awww and rofi were all removed once Quickshell
 replaced them; see the retired-packages note above.
 

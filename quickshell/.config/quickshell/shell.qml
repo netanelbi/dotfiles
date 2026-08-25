@@ -7,6 +7,7 @@
 import Quickshell
 
 import "launchers"
+import "screensaver"
 import "services"
 import "wallpaper"
 
@@ -35,4 +36,8 @@ ShellRoot {
 
   // org.freedesktop.Notifications: popups + control center, replacing swaync.
   Notifications { }
+
+  // Fullscreen GPU screensaver on idle, replacing the kitty + tte pair.
+  // Built only once hypridle calls `ipc call screensaver start`.
+  Screensaver { }
 }

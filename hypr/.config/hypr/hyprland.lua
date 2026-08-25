@@ -234,15 +234,6 @@ hl.bind(mainMod .. " + Escape", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc 
 ----------------------
 
 -- Prevent idle lock for games (gamepad input doesn't reset idle timer)
--- Screensaver: a fullscreen kitty running tte.
--- Deliberately NOT idle_inhibit. hypridle takes its idle signal from the
--- compositor, so a window that inhibits idle freezes the very countdown
--- that launched it: the screensaver came up at 150s and the 300s lock then
--- never arrived, because as far as Hyprland was concerned the machine had
--- stopped being idle. Let the clock run so lock_cmd can kill the
--- screensaver and hand over to hyprlock.
-hl.window_rule({ name = "vivo-screensaver", match = { class = "^org\\.vivo\\.screensaver$" },
-    fullscreen = true })
 
 hl.window_rule({ name = "idle-inhibit-steam",     match = { class = "^steam_app" }, idle_inhibit = "always" })
 hl.window_rule({ name = "idle-inhibit-gamescope", match = { class = "^gamescope" }, idle_inhibit = "always" })
