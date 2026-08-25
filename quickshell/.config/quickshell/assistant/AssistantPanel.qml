@@ -364,8 +364,18 @@ PanelWindow {
       // contentY origin MOVES with contentHeight, so there is no stable "this
       // value means bottom" to compare against -- while `yPosition == 1 -
       // heightRatio` is the end of the range in either layout direction.
-      readonly property real belowBottom:
-          Math.max(0, (1 - visibleArea.heightRatio - visibleArea.yPosition) * contentHeight)
+      // How far ABOVE the newest turn the view is sitting, in pixels.
+      //
+      // Under BottomToTop the newest turn rests at yPosition ZERO, which was
+      // measured rather than reasoned -- positionViewAtEnd() lands on
+      // contentY -38 (== originY) and positionViewAtBeginning() on 381, and
+      // -38 is where the list sits by itself with nobody touching it. So
+      // yPosition IS the distance from the bottom, and the earlier
+      // (1 - heightRatio - yPosition) form had it inverted: it read ~419px
+      // while the view was resting exactly where it belonged, and zero at the
+      // OLDEST message. That is why Ctrl+End walked to the top of the
+      // conversation and why sticking on submit landed on the first turn.
+      readonly property real belowBottom: Math.max(0, visibleArea.yPosition * contentHeight)
 
       // Slack, and it has to be pixels rather than `atYEnd`. atYEnd is an exact
       // comparison and it FLICKERS: at the tail of the same measured turn, with
@@ -377,10 +387,18 @@ PanelWindow {
       readonly property int stickSlack: 24
 
       function toBottom() {
-        // index 0 under BottomToTop is the NEWEST turn, at the bottom edge --
-        // the delegate reads its row back through `count - 1 - index`. So the
-        // beginning of the content is the bottom of the conversation.
-        transcript.positionViewAtBeginning()
+        // positionViewAtEnd, NOT AtBeginning, and the reasoning that said
+        // otherwise was backwards. The delegate does read its row back through
+        // `count - 1 - index`, so index 0 IS the newest turn -- but that says
+        // nothing about which end of the CONTENT the view has to sit at.
+        //
+        // `belowBottom` above settles it, and it was measured rather than
+        // reasoned: it reaches zero when yPosition is (1 - heightRatio), which
+        // is contentY at its MAXIMUM. Resting on the newest turn is resting at
+        // the END of the content. AtBeginning therefore jumped to the OLDEST
+        // message -- which is what Ctrl+End did, and what sticking did on every
+        // submit.
+        transcript.positionViewAtEnd()
       }
 
       function goBottom() {

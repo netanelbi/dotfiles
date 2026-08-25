@@ -40,9 +40,15 @@ Item {
   // The answer text, placeholder included: a turn with nothing in it yet must
   // not collapse to zero height, or the list jumps the moment the first token
   // lands.
+  //
+  // The placeholder stands down once reasoning starts, because the reasoning
+  // line below occupies exactly the same one line. Reserving both was the
+  // remaining half of the transcript jumping: an answer grew by a line when
+  // reasoning began and shrank by one when it gave way to text, so every row
+  // above it moved twice per turn while the view chased the bottom.
   readonly property string bodyText: !turn ? ""
     : turn.text !== "" ? turn.text
-    : (pending ? " " : "")
+    : (pending && turn.thinking === "" ? " " : "")
 
   // Whether this turn's tool batch is open. One flag per turn, and it starts
   // closed: the detail is a click away, not a wall.
