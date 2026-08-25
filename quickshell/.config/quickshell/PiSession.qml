@@ -120,7 +120,23 @@ Singleton {
   // Two worth knowing before adding any:
   //   openai-codex-usage.ts  CRASHES here -- see the -ne note above. Never add it.
   //   pi-web-access          web search/fetch; the obvious first one to add.
-  readonly property var extensions: []
+  readonly property var extensions: [
+    // web_search / web_fetch. The search runs on the shim (that is where the
+    // Brave and Ollama keys live); the fetch runs here, so Ori can read
+    // 127.0.0.1 and the LAN, which a VPS cannot. Loading this also makes the
+    // shim's own OpenAI search loop stand down -- it skips any client that
+    // declares web tools itself -- so there is exactly one searcher.
+    //
+    // The point of doing it this way round: pi makes the call, so pi emits
+    // tool_execution_start, so the panel can SHOW the search. A shim-side loop
+    // is invisible to the client by construction.
+    "~/Development/Personal/my-pi/extensions/shim-web.ts"
+  ]
+
+  // Where shim-web sends its searches. The local systemd instance rather than
+  // the VPS: it is the same code, it is already running for `ccr`, and it saves
+  // a round trip to a datacentre for something the laptop can ask for directly.
+  readonly property string shimUrl: "http://127.0.0.1:11435"
 
   // Kill the child after this much silence. Long enough to cover a
   // back-and-forth, short enough that a stray question does not leave 200MB
@@ -512,7 +528,8 @@ Singleton {
   // one place anything is configured. The `cd` comes first because pi reads
   // CLAUDE.md from its working directory.
   function buildCommand() {
-    var parts = ["exec " + root.binary, "--mode rpc", "-ne", "--no-session",
+    var parts = ["SHIM_URL=" + root.shimUrl, "exec " + root.binary,
+                 "--mode rpc", "-ne", "--no-session",
                  "--provider " + root.provider, "--model " + root.model]
     for (var i = 0; i < root.promptFiles.length; i++)
       parts.push("--append-system-prompt " + root.promptFiles[i])
