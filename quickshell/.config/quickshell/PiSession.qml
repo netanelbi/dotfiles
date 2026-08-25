@@ -604,6 +604,78 @@ Singleton {
     return true
   }
 
+  // -------------------------------------------------------------- clipboard
+  // Pasting an image. Wayland has no "give me the clipboard as bytes" call in
+  // QML, so this asks wl-paste -- which is how anything on this desktop reads
+  // the clipboard, and is already a dependency of the clipboard history.
+  //
+  // The image is written to a FILE and the path is what gets attached, rather
+  // than being carried around as base64 in the panel. Two reasons: the path is
+  // what imageBlock() already takes, and a path is something the model can be
+  // handed to a tool later, which a blob in a text field never can be.
+  //
+  // The marker put in the draft is Claude Code's, deliberately: `[Image 1]`
+  // stands in for the picture so the field stays a text field, and the numbers
+  // are how the two halves stay matched when you delete one.
+  property var attachments: []      // { n, path }
+  property int attachSeq: 0
+  // Announced so the composer can insert the marker at the cursor. The path is
+  // carried on the signal so nothing has to go looking for it.
+  signal attachedImage(int n, string path)
+  signal attachFailed(string why)
+
+  Process {
+    id: pasteProc
+    // Ask for the offered types first: wl-paste with no image on the clipboard
+    // writes the TEXT to the file, and a text file called .png would only fail
+    // later, at sniffMime, with a confusing message.
+    command: ["sh", "-c",
+      "t=$(wl-paste --list-types 2>/dev/null | grep -m1 '^image/'); " +
+      "[ -n \"$t\" ] || exit 3; " +
+      "d=\"${XDG_RUNTIME_DIR:-/tmp}/ori\"; mkdir -p \"$d\" || exit 4; " +
+      "f=\"$d/paste-$(date +%s%N).${t#image/}\"; " +
+      "wl-paste --type \"$t\" > \"$f\" 2>/dev/null && [ -s \"$f\" ] && printf %s \"$f\""]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var path = String(this.text || "").trim()
+        if (path === "") return
+        var n = ++root.attachSeq
+        var next = root.attachments.slice()
+        next.push({ n: n, path: path })
+        root.attachments = next
+        root.attachedImage(n, path)
+      }
+    }
+    onExited: function (code) {
+      // 3 is "nothing image-shaped on the clipboard", which is an ordinary
+      // Ctrl+V of text and must stay silent -- the field pastes it itself.
+      if (code === 3 || code === 0) return
+      root.attachFailed("could not read the clipboard image")
+    }
+  }
+
+  // Returns nothing useful: whether there was an image is only known once
+  // wl-paste has answered, and the composer learns it from attachedImage().
+  function pasteImage() {
+    if (pasteProc.running) return
+    pasteProc.running = true
+  }
+
+  // Called by the composer on send, with the markers still present in the
+  // draft, so an attachment whose `[Image n]` was deleted is dropped instead of
+  // being sent invisibly.
+  function takeAttachments(draft) {
+    var keep = [], paths = []
+    for (var i = 0; i < root.attachments.length; i++) {
+      var a = root.attachments[i]
+      if (String(draft).indexOf("[Image " + a.n + "]") >= 0) paths.push(a.path)
+    }
+    root.attachments = keep
+    return paths
+  }
+
+  function clearAttachments() { root.attachments = [] }
+
   // ------------------------------------------------------------------ images
   // Set by imageBlock(), read once by ask(). Kept as its own property rather
   // than written straight to `error` so a failure survives ask()'s own reset.

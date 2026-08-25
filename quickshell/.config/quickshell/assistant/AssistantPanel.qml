@@ -189,6 +189,16 @@ PanelWindow {
     // One ring on the mark as the answer lands. The bar deliberately stays
     // quiet when the panel is open; this is the full stop, not an alert.
     function onSettled() { if (panel.opened) mark.ping() }
+    // An attached image is announced rather than returned, because wl-paste
+    // answers long after the keypress. The marker goes in at the cursor, the
+    // way Claude Code does it: the field stays a text field, and the number is
+    // what ties the two halves together -- delete `[Image 1]` and that image is
+    // not sent.
+    function onAttachedImage(n, path) {
+      var m = "[Image " + n + "]"
+      if (entry.text !== "" && !/\s$/.test(entry.text)) m = " " + m
+      entry.insert(entry.cursorPosition, m + " ")
+    }
   }
 
   // ------------------------------------------------------------------- card
@@ -325,6 +335,16 @@ PanelWindow {
       // live tool batch can count its elapsed time off the same tick as the
       // rail -- and stop dead with it when the turn settles.
       delegate: TurnDelegate { accent: panel.accent; nowMs: panel.nowMs }
+    }
+
+    // Ctrl+R. Sits exactly over the transcript rather than over the whole card,
+    // so the composer and the footer stay visible and the panel never stops
+    // looking like the same panel.
+    SessionPicker {
+      id: picker
+      anchors.fill: transcript
+      accent: panel.accent
+      returnFocus: entry
     }
 
     // A scroll position, not a scrollbar: there is nothing to grab, it only
@@ -567,7 +587,8 @@ PanelWindow {
             // Only clear the draft if it was actually taken. Asking while a turn
             // is still running is refused, and clearing anyway would delete what
             // you just typed with nothing to show for it.
-            if (PiSession.ask(entry.text)) entry.text = ""
+            if (PiSession.ask(entry.text, PiSession.takeAttachments(entry.text)))
+              entry.text = ""
             event.accepted = true
             return
           case Qt.Key_Escape:
@@ -579,6 +600,20 @@ PanelWindow {
               PiSession.newChat()
               event.accepted = true
             }
+            return
+          case Qt.Key_R:
+            // Ctrl+R for history, the shell's own gesture for it.
+            if (event.modifiers & Qt.ControlModifier) {
+              picker.open()
+              event.accepted = true
+            }
+            return
+          case Qt.Key_V:
+            // NOT accepted: whether the clipboard holds an image is only known
+            // once wl-paste has answered, so the field's own paste has to be
+            // allowed to run. It inserts nothing when the clipboard offers no
+            // text, which is exactly the case where an image is attached.
+            if (event.modifiers & Qt.ControlModifier) PiSession.pasteImage()
             return
           case Qt.Key_C:
             // Ctrl+C stops the model; with a selection it is a copy, so only
