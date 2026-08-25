@@ -28,6 +28,58 @@ Scope {
   property var allEntries: []
   property var results: []
 
+  // ------------------------------------------------------------- usage
+  // rofi's drun sorts by how often you actually launch things, not by name --
+  // which is why zen and zapzap were at the top there and "About Xfce" was
+  // not. That history is a plain file it has been keeping for months:
+  //
+  //   ~/.cache/rofi3.druncache      "<count> <desktop-id>.desktop" per line
+  //
+  // Read it rather than starting a fresh count from zero, and write back to
+  // the SAME file on launch, so rofi and this launcher keep one shared history
+  // and either can be used without losing the ordering.
+  readonly property string druncachePath: Quickshell.env("HOME") + "/.cache/rofi3.druncache"
+  property var usage: ({})
+
+  FileView {
+    path: root.druncachePath
+    watchChanges: true
+    onLoaded: root.ingestUsage(this.text())
+    onFileChanged: this.reload()
+  }
+
+  function ingestUsage(txt) {
+    var map = {}
+    var lines = String(txt).split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var m = /^\s*(\d+)\s+(.+?)\s*$/.exec(lines[i])
+      if (m) map[m[2]] = parseInt(m[1], 10)
+    }
+    root.usage = map
+    root.rebuild()
+  }
+
+  function usageOf(entry) {
+    if (!entry) return 0
+    var n = root.usage[entry.id + ".desktop"]
+    return n === undefined ? 0 : n
+  }
+
+  function bumpUsage(entry) {
+    if (!entry) return
+    // Increment in the file itself, so rofi sees it too. Written via awk to
+    // keep it a single atomic-ish rewrite rather than a read/modify/write from
+    // QML that could race the FileView reload.
+    bumper.command = ["sh", "-lc",
+      "f=\"$HOME/.cache/rofi3.druncache\"; id='" + entry.id + ".desktop'; " +
+      "touch \"$f\"; awk -v id=\"$id\" 'BEGIN{done=0} " +
+      "{ if ($2==id) { print $1+1, $2; done=1 } else print } " +
+      "END{ if (!done) print 1, id }' \"$f\" > \"$f.tmp\" && mv \"$f.tmp\" \"$f\""]
+    bumper.running = true
+  }
+
+  Process { id: bumper }
+
   function rebuild() {
     var apps = DesktopEntries.applications.values
     var out = []
@@ -35,7 +87,11 @@ Scope {
       // rofi hides NoDisplay=true entries; so do we.
       if (!apps[i].noDisplay) out.push(apps[i])
     }
-    out.sort(function (a, b) { return a.name.localeCompare(b.name) })
+    // Most-used first, alphabetical within the same count -- rofi's order.
+    out.sort(function (a, b) {
+      var d = root.usageOf(b) - root.usageOf(a)
+      return d !== 0 ? d : a.name.localeCompare(b.name)
+    })
     root.allEntries = out
     root.refilter()
   }
@@ -60,8 +116,11 @@ Scope {
       s = Math.max(s, panel.matchScore(e.comment, q) - 320)
       if (s > 0) scored.push({ entry: e, score: s })
     }
+    // Ties go to whatever you launch most -- typing "z" should put zen first.
     scored.sort(function (a, b) {
-      return b.score - a.score || a.entry.name.localeCompare(b.entry.name)
+      return b.score - a.score
+          || root.usageOf(b.entry) - root.usageOf(a.entry)
+          || a.entry.name.localeCompare(b.entry.name)
     })
 
     var out = []
@@ -80,6 +139,7 @@ Scope {
     var cwd = e.workingDirectory
 
     panel.dismiss()
+    root.bumpUsage(e)
 
     // DesktopEntry.execute() does NOT spawn a terminal for Terminal=true
     // entries. Quickshell exposes runInTerminal as a read-only flag and
