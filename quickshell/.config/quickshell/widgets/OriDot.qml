@@ -1,7 +1,6 @@
 import QtQml
 import QtQuick
 import Quickshell
-import Quickshell.Io
 import "root:/"
 
 // Ori's presence in the bar: a readout, not an icon.
@@ -388,28 +387,58 @@ BarWidget {
       if (PiSession.panelOpen) return
       PiSession.unread = true
       ping.restart()
-      notify.running = true
     }
   }
 
-  // The desktop's own notification server is this same process, so a plain
-  // `notify-send` is the shortest path back to it -- no internal coupling, and
-  // it lands in the notification centre with everything else, which is where
-  // someone would look for a message they missed.
-  Process {
-    id: notify
-    command: ["notify-send", "-a", "Ori", "-i", "dialog-information", "Ori",
-              PiSession.error !== "" ? PiSession.error : root.lastAnswer()]
+  // WHERE THE MARK IS, in this bar window's coordinates. Bar.qml hands it to
+  // OriArrival so the thread of light the words hang from comes out of THIS
+  // glyph rather than out of the middle of the screen.
+  //
+  // It has to keep up, and the reason is this widget itself: the instant an
+  // answer lands the readout opens from nothing to ~200px, the centre island
+  // grows around it, and -- because the island is centre-anchored -- every
+  // module in it slides left for the next 240ms. Measured once at the settle,
+  // the thread lands 25px to the right of the glyph it is supposed to be coming
+  // out of. Measured LIVE, it stays welded to the mark through the reflow,
+  // which is the whole claim this surface makes.
+  //
+  // `mapToItem` is not a reactive expression, so the two things that can move
+  // this glyph are read explicitly to make them dependencies: our own width
+  // (the readout opening) and our x in the row (any module to our left
+  // appearing). One layout pass stale at worst -- invisible at 60fps.
+  readonly property real markX: {
+    // Read for the dependency, not for the value -- the fallback branch is
+    // unreachable while this widget is in a scene, and returning something
+    // roughly right beats returning zero if it ever is not.
+    var reflow = root.x + root.width
+    var p = glyphSlot.mapToItem(null, glyphSlot.width / 2, 0)
+    return p ? p.x : reflow
   }
 
-  function lastAnswer() {
-    var i = PiSession.lastAssistant()
-    if (i < 0) return "Done."
-    var t = String(PiSession.turns.get(i).text).trim()
-    if (t === "") return "Done."
-    // The popup is a few lines tall; the full answer is in the panel.
-    return t.length > 220 ? t.substring(0, 220) + "…" : t
-  }
+  // ------------------------------------------------ why there is no notify-send
+  // This used to spawn `notify-send` on every settle. That drew a rounded card
+  // in the top right -- app name, icon, close button -- identical to a Slack
+  // ping, produced by starting a process to talk to a notification server that
+  // is this very process. OriArrival says it now, in the shell's own vocabulary
+  // and out of this glyph.
+  //
+  // The one thing that goes with it is the row it left in the notification
+  // centre, and the centre is genuinely where a person looks for a message they
+  // did not catch. That is answered here twice:
+  //
+  //   NOTHING ORI SAYS EXPIRES. The centre exists because a card is gone in ten
+  //   seconds whether or not anyone saw it. Ori's unread state has no timeout:
+  //   this glyph stays filled and bright and the aura keeps the edge lit until
+  //   the panel is actually opened. A missed arrival is still on screen.
+  //
+  //   THE TRANSCRIPT IS THE BETTER ARCHIVE. The centre row carried 220
+  //   truncated characters with the rest unrecoverable. The panel holds every
+  //   turn in full, with its tools and its cost, and SUPER+A is the same
+  //   gesture as opening the centre. A lossy duplicate filed among other
+  //   applications' interruptions is exactly what this change is undoing.
+  //
+  // (CalendarReminders still posts through notify-send, correctly: a reminder
+  // has no second home to be recovered from.)
 
   onShownChanged: if (shown) appear.restart()
 

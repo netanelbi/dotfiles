@@ -154,7 +154,7 @@ PanelWindow {
       // Ori's readout. Gone when there is nothing to say, a dim glyph while
       // warm, and a live strip -- verb, elapsed, characters streamed, scan
       // line -- while it works or while an answer waits unread.
-      OriDot { }
+      OriDot { id: oriDot }
     }
 
     Island {
@@ -218,6 +218,50 @@ PanelWindow {
     component: OriAura {
       barScreen: bar.screen
       onFadingChanged: bar.auraRetain = fading
+    }
+  }
+
+  // ----------------------------------------------------------- ori's answer
+  // The third and last surface the assistant owns on this monitor: the WORDS,
+  // hung under the bar on a thread of light that leaves the seam at the ◆'s own
+  // x. It replaces the `notify-send` OriDot used to spawn -- see the block in
+  // OriDot.qml for why the notification centre is not missed.
+  //
+  // Mounted beside the aura and for the same reasons: one per monitor, exactly
+  // like the mark and the light, built already-visible, and gone entirely when
+  // Ori has nothing to say. Also above the widgets in this file, and also
+  // harmless there -- a separate surface whose input mask is the text block
+  // alone (the INPUT note at the top of this file is about `content`).
+  property bool arrivalLive: false
+
+  Connections {
+    target: PiSession
+    // The same gate the mark and the aura use: with the panel open the answer
+    // is already arriving in front of you, and repeating its first line under
+    // the bar is noise.
+    function onSettled() {
+      if (PiSession.panelOpen) return
+      bar.arrivalLive = true
+      // Already speaking -- a second answer must replace the sentence rather
+      // than be dropped, and the surface it needs is the one already up.
+      if (arrivalLoader.item) arrivalLoader.item.announce()
+    }
+  }
+
+  LazyLoader {
+    id: arrivalLoader
+    active: bar.arrivalLive
+
+    component: OriArrival {
+      barScreen: bar.screen
+      // A live binding, not a measurement: the readout opens the moment an
+      // answer lands and slides the whole centre island for 240ms afterwards,
+      // so a value latched at the settle points 25px away from the mark it
+      // claims to come out of. See OriDot.markX.
+      originX: Style.bar.marginSide + oriDot.markX
+      // PUSHED, like the aura's `fading` -- a loader whose `active` reads a
+      // property of the object it decides the existence of is a binding loop.
+      onDone: bar.arrivalLive = false
     }
   }
 
