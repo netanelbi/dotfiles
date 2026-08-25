@@ -63,26 +63,31 @@ PanelWindow {
     property real time: clock.elapsedTime
     property vector2d resolution: Qt.vector2d(width, height)
     property real fade: win.fade
+    // Hands the shader the art's current position, so its clearing follows.
+    property vector2d center: Qt.vector2d(
+      0.5 + (width > 0 ? win.driftX / width : 0),
+      0.5 + (height > 0 ? win.driftY / height : 0))
   }
 
   // ------------------------------------------------------------ the art
   // Drifts slowly around the centre. Screensavers move for a reason: a static
   // bright mark parked on a panel for twenty minutes is burn-in.
-  // The drift is animated into `driftX/driftY` and only then rounded onto `x/y`.
-  // Block-drawing glyphs have to tile edge to edge; at a fractional offset they
-  // land on subpixels and thin seams open up right through the letterforms.
+  // Two slow sines on deliberately unrelated periods, so the path never
+  // retraces itself and the art reads as floating rather than as sliding on a
+  // track. Amplitudes are a few percent of the screen: enough to see over a
+  // minute, not enough to notice moment to moment.
   property real driftX: 0
   property real driftY: 0
 
   SequentialAnimation on driftX {
     loops: Animation.Infinite
-    NumberAnimation { from: -50; to: 50; duration: 47000; easing.type: Easing.InOutSine }
-    NumberAnimation { from: 50; to: -50; duration: 47000; easing.type: Easing.InOutSine }
+    NumberAnimation { from: -0.03 * win.width; to: 0.03 * win.width; duration: 37000; easing.type: Easing.InOutSine }
+    NumberAnimation { from: 0.03 * win.width; to: -0.03 * win.width; duration: 37000; easing.type: Easing.InOutSine }
   }
   SequentialAnimation on driftY {
     loops: Animation.Infinite
-    NumberAnimation { from: 28; to: -28; duration: 31000; easing.type: Easing.InOutSine }
-    NumberAnimation { from: -28; to: 28; duration: 31000; easing.type: Easing.InOutSine }
+    NumberAnimation { from: 0.035 * win.height; to: -0.035 * win.height; duration: 53000; easing.type: Easing.InOutSine }
+    NumberAnimation { from: -0.035 * win.height; to: 0.035 * win.height; duration: 53000; easing.type: Easing.InOutSine }
   }
 
   DecryptArt {
@@ -90,8 +95,8 @@ PanelWindow {
     anchors.fill: parent
     opacity: win.fade
     t: clock.elapsedTime * 1000
-    x: Math.round(win.driftX)
-    y: Math.round(win.driftY)
+    driftX: win.driftX
+    driftY: win.driftY
   }
 
   // ------------------------------------------------------------- dismissal

@@ -16,6 +16,7 @@ layout(std140, binding = 0) uniform buf {
     float time;         // seconds since the screensaver opened
     vec2  resolution;   // pixels, for aspect correction
     float fade;         // 0..1 master fade, drives the entrance
+    vec2  center;       // where the art currently sits, in 0..1 uv
 };
 
 // Cheap hash. Deterministic per column/cell, no texture lookup.
@@ -70,17 +71,20 @@ void main() {
     vec3 lavender = vec3(0.706, 0.745, 0.996);
     vec3 col = mix(mauve, lavender, headGlow);
 
-    // Two falloffs, and they pull in opposite directions on purpose.
-    vec2  c   = uv - 0.5;
-    float rad = length(c * vec2(resolution.x / resolution.y, 1.0));
+    // Two falloffs, and they are centred on different things on purpose.
+    vec2 aspect = vec2(resolution.x / resolution.y, 1.0);
 
-    // A clearing in the middle: the wordmark needs somewhere quiet to sit, so
-    // the rain thins out behind it rather than competing with it.
+    // The clearing tracks the art. It is the quiet patch the wordmark sits in,
+    // so it has to drift with it -- pinned to screen centre it stays put while
+    // the art floats out of it, and the hole reads as a second box sliding
+    // around inside the first.
+    float rad = length((uv - center) * aspect);
     float clearing = 1.0 - smoothstep(0.0, 0.46, rad);
     lum *= mix(1.0, 0.12, clearing);
 
-    // And a conventional vignette at the very edges, to close the frame.
-    lum *= mix(1.0, 0.45, smoothstep(0.55, 0.95, rad));
+    // The vignette frames the screen, so this one stays screen-centred.
+    float edge = length((uv - 0.5) * aspect);
+    lum *= mix(1.0, 0.45, smoothstep(0.55, 0.95, edge));
 
     fragColor = vec4(mix(crust, col, clamp(lum, 0.0, 1.0)) * fade, 1.0) * qt_Opacity;
 }

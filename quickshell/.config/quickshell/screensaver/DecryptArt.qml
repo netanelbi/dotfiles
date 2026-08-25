@@ -29,6 +29,12 @@ Item {
   // Wall clock for the whole effect, in ms.
   property real t: 0
 
+  // Slow float, driven from the window. Applied as centre offsets rather than
+  // x/y: the canvas is anchored, and an anchored item ignores x/y outright --
+  // which is exactly how an earlier version of this drifted nowhere at all.
+  property real driftX: 0
+  property real driftY: 0
+
   // Art, as an array of equal-length rows.
   property var rows: []
   readonly property int cols: rows.length ? rows[0].length : 0
@@ -204,6 +210,26 @@ Item {
     return Math.max(6, Math.floor(Math.min(byWidth, byHeight)))
   }
 
+  // Letter groups: runs of columns that carry ink, split on columns that are
+  // blank in every row. The art is one string per row, but "floating" has to
+  // happen per letter, and a letter is exactly such a run.
+  readonly property var groups: {
+    if (!art.rows.length) return []
+    var n = art.cols
+    var out = []
+    var start = -1
+    for (var c = 0; c < n; c++) {
+      var ink = false
+      for (var r = 0; r < art.rows.length; r++) {
+        if (art.rows[r].charAt(c) !== " ") { ink = true; break }
+      }
+      if (ink && start < 0) start = c
+      if (!ink && start >= 0) { out.push({ start: start, end: c }); start = -1 }
+    }
+    if (start >= 0) out.push({ start: start, end: n })
+    return out
+  }
+
   // Colours. tte finishes on a gradient across the art (its default is a
   // vertical one) and ciphers in a contrasting colour; these are the
   // Catppuccin stand-ins for that. Change these two lines to retheme.
@@ -213,7 +239,7 @@ Item {
 
   // Real metrics at the real size. One Text per row needs an exact row pitch:
   // the block glyphs have to tile edge to edge, and a guessed line height
-  // makes them overlap or gap. fm2.height is what the font itself uses.
+  // makes them overlap or gap. fm2 is what the font itself uses.
   FontMetrics {
     id: fm2
     font.family: Style.font.family
@@ -221,45 +247,108 @@ Item {
   }
   readonly property real cellH: fm2.height
 
+  // Cell width is measured off a real rendered Text, not asked of
+  // FontMetrics. The two disagreed by a factor of three here, which made the
+  // canvas far narrower than its contents -- so centring it parked the art
+  // well right of centre. Measuring what actually gets drawn cannot drift.
+  Text {
+    id: metric
+    visible: false
+    text: "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588"
+    font.family: Style.font.family
+    font.pixelSize: art.fontSize
+    renderType: Text.NativeRendering
+  }
+  readonly property real cellW: metric.implicitWidth / 10
+
+  // The art is padded to a rectangle, and its rows carry eight blank leading
+  // columns. Centring the padded box therefore parks the word right of centre;
+  // centre on the ink instead.
+  readonly property int inkStart: groups.length ? groups[0].start : 0
+  readonly property int inkEnd: groups.length ? groups[groups.length - 1].end : cols
+
   Item {
     id: canvas
     anchors.centerIn: parent
-    width: childrenRect.width
+    anchors.horizontalCenterOffset: art.driftX
+    anchors.verticalCenterOffset: art.driftY
+    width: (art.inkEnd - art.inkStart) * art.cellW
     height: art.rows.length * art.cellH
 
     Repeater {
-      model: art.rows.length
+      model: art.groups
 
+      // One letter. Each drifts on its own pair of sines, on periods that do
+      // not divide into each other, so no two letters ever share a beat and
+      // the word never snaps back into a rigid block.
       delegate: Item {
-        id: row
+        id: letter
         required property int index
+        required property var modelData
 
-        y: Math.round(row.index * art.cellH)
-        width: settled.implicitWidth
-        height: art.cellH
+        // Travel is a fraction of the CELL, not of the font size. Those differ
+        // by more than they look: at this art's size the font lands near 40px,
+        // so the first attempt at 0.16 of it gave +-6px of travel -- moving,
+        // measurably, but far too little for the eye to read as motion.
+        //
+        // Vertical gets the larger share. The art has a blank row above and
+        // below, so there is room to rise and fall, while sideways travel is
+        // bounded by the one-column gap between letters.
+        // Two sines per axis on periods that do not divide into each other.
+        // A single sine per axis traces a straight line back and forth; the
+        // second one bends the path into a slow wander that never repeats the
+        // same way twice, which is what reads as floating rather than sliding.
+        readonly property real bobX: art.cellW * (
+            0.34 * Math.sin(art.t / (640 + letter.index * 95) + letter.index * 1.7)
+          + 0.22 * Math.sin(art.t / (1130 + letter.index * 70) + letter.index * 0.6))
+        readonly property real bobY: art.cellH * (
+            0.36 * Math.sin(art.t / (530 + letter.index * 80) + letter.index * 2.3)
+          + 0.24 * Math.sin(art.t / (970 + letter.index * 60) + letter.index * 1.1))
 
-        // The resolved character takes its colour from where it sits in the
-        // art, which is what turns a flat wordmark into a gradient.
-        readonly property color tint: Qt.tint(
-          art.topColor,
-          Qt.rgba(art.bottomColor.r, art.bottomColor.g, art.bottomColor.b,
-                  art.rows.length > 1 ? row.index / (art.rows.length - 1) : 0))
+        x: (modelData.start - art.inkStart) * art.cellW + bobX
+        y: bobY
+        width: (modelData.end - modelData.start) * art.cellW
+        height: canvas.height
 
-        Text {
-          text: (art.cipherRows[row.index] !== undefined) ? art.cipherRows[row.index] : ""
-          color: art.cipherColor
-          font.family: Style.font.family
-          font.pixelSize: art.fontSize
-          renderType: Text.NativeRendering
-        }
+        Repeater {
+          model: art.rows.length
 
-        Text {
-          id: settled
-          text: (art.plainRows[row.index] !== undefined) ? art.plainRows[row.index] : ""
-          color: row.tint
-          font.family: Style.font.family
-          font.pixelSize: art.fontSize
-          renderType: Text.NativeRendering
+          delegate: Item {
+            id: row
+            required property int index
+
+            y: Math.round(row.index * art.cellH)
+            width: letter.width
+            height: art.cellH
+
+            // The resolved character takes its colour from where it sits in
+            // the art, which is what turns a flat wordmark into a gradient.
+            readonly property color tint: Qt.tint(
+              art.topColor,
+              Qt.rgba(art.bottomColor.r, art.bottomColor.g, art.bottomColor.b,
+                      art.rows.length > 1 ? row.index / (art.rows.length - 1) : 0))
+
+            function slice(src) {
+              var line = src[row.index]
+              return line === undefined ? "" : line.substring(letter.modelData.start, letter.modelData.end)
+            }
+
+            Text {
+              text: row.slice(art.cipherRows)
+              color: art.cipherColor
+              font.family: Style.font.family
+              font.pixelSize: art.fontSize
+              renderType: Text.NativeRendering
+            }
+
+            Text {
+              text: row.slice(art.plainRows)
+              color: row.tint
+              font.family: Style.font.family
+              font.pixelSize: art.fontSize
+              renderType: Text.NativeRendering
+            }
+          }
         }
       }
     }
