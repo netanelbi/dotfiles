@@ -285,18 +285,30 @@ Item {
       spacing: 6
 
       // ------------------------------------------------------- reasoning
-      // Shown only while the answer itself is still empty: it arrives ~300ms
-      // in, so it is the loading state, and unlike a spinner it tells you
-      // within a second whether it understood you. Dropped once real text
-      // starts -- the answer is what you asked for.
+      // The reasoning USED to be streamed here verbatim, as the loading state:
+      // it arrives ~300ms in, so unlike a spinner it told you within a second
+      // whether the question had been understood. In use that argument did not
+      // survive contact with the model -- the reasoning goes past far faster
+      // than anyone reads, so it was churn rather than information, and it was
+      // gone before it could be read anyway.
+      //
+      // Kept as ONE fixed line instead. That preserves the only part that was
+      // load-bearing (something is happening, and it is thinking rather than
+      // running a command) and drops the part that was not.
+      //
+      // Fixed is the operative word. A block whose height tracked streaming
+      // text grew and then vanished, which moved every row under it twice per
+      // turn -- half of the transcript jumping the user reported. One line that
+      // never changes size cannot do that.
       Text {
         width: parent.width
         visible: !turnItem.user && turnItem.turn
           && turnItem.turn.text === "" && turnItem.turn.thinking !== ""
-        text: turnItem.turn ? turnItem.turn.thinking : ""
+        text: "thinking…"
         color: Theme.overlay0
         font.italic: true
-        wrapMode: Text.Wrap
+        maximumLineCount: 1
+        elide: Text.ElideRight
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
