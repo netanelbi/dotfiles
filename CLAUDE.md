@@ -27,9 +27,11 @@ package/.config/package/ -> ~/.config/package
 | vivo | vivo (AMD/1200p Vivobook, the main driver) — AMD TDP scripts, keyboard RGB, Sunshine streaming, per-machine Hyprland/waybar fragments |
 | lenovo | lenovo (Intel/1080p laptop) — per-machine Hyprland/waybar fragments | |
 
-**Retired, kept unstowed for rollback:** `waybar`, `swaync`, `swayosd`, `rofi`.
-Quickshell replaced all four. Nothing launches them and nothing references them;
-the `pre-quickshell` tag is the full working rollback point.
+**Retired:** `waybar`, `swaync`, `swayosd`, `rofi`. Quickshell replaced all four.
+The packages are unstowed and the binaries uninstalled (along with `awww`,
+`rofi-calc`, `rofi-emoji`). The `pre-quickshell` tag is the rollback point --
+it still holds the machine waybar configs, which were deleted from `vivo/` and
+`lenovo/` here.
 
 ## Multi-machine model
 
@@ -104,9 +106,15 @@ pkill -SIGUSR2 waybar
 
 ```bash
 sudo pacman -S hyprland hyprlock hypridle xdg-desktop-portal-hyprland \
-  kitty rofi waybar swaync swww stow socat \
+  quickshell kitty stow socat \
   grim slurp wl-copy cliphist jq pamixer
 ```
+
+Plus `tte` (terminaltexteffects) for the screensaver, which is not in the
+repos: `uv tool install terminaltexteffects`.
+
+waybar, swaync, swayosd, awww and rofi were all removed once Quickshell
+replaced them; see the retired-packages note above.
 
 ## Features
 
@@ -293,24 +301,22 @@ Example:
 
 ## Troubleshooting
 
-### swaync silently steals the notifications
-`/usr/share/dbus-1/services/org.erikreider.swaync.service` claims
+### A D-Bus-activatable daemon can steal a well-known name
+swaync shipped `/usr/share/dbus-1/services/org.erikreider.swaync.service` with
 `Name=org.freedesktop.Notifications`, so **any** notification sent while
-Quickshell is down D-Bus-activates swaync, which then holds the name until it is
-killed. Symptom: notifications look and behave differently after a Quickshell
-restart, for no apparent reason. Blocked with:
-
-```bash
-systemctl --user mask swaync.service     # undo: systemctl --user unmask
-```
-
-Quickshell re-acquires the name on its own the moment swaync exits — it logs
-"Registration will be attempted again if the active service is unregistered"
-and means it. Check the current owner with:
+Quickshell was down D-Bus-activated swaync, which then held the name until it
+was killed. Symptom: notifications quietly looked and behaved differently after
+a Quickshell restart, for no apparent reason. swaync is uninstalled now, so this
+is history -- but the trap generalises to any replaced daemon that ships a
+`.service` activation file. Check the current owner with:
 
 ```bash
 busctl --user list | grep org.freedesktop.Notifications
 ```
+
+Quickshell re-acquires the name on its own the moment a squatter exits -- it
+logs "Registration will be attempted again if the active service is
+unregistered" and means it.
 
 ### Layer-shell windows must not resize while animating
 A layer surface that changes size has to wait for a compositor configure/ack
