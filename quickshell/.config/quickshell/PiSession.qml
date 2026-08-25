@@ -239,6 +239,29 @@ Singleton {
   // business.
   readonly property int maxSessions: 40
 
+  // ------------------------------------------------------- restore on start
+  // A shell reload should not cost the conversation. On start the newest
+  // session is put back on screen AND armed as the next cold spawn's
+  // `--session`, so the first follow-up reaches a model that still remembers
+  // it rather than a stranger looking at someone else's transcript.
+  //
+  // No pi process is started to do this. The file pi writes is JSONL of
+  // exactly the entries `get_entries` returns, so the transcript is read
+  // straight off disk: restoring a conversation costs a file read, not 200MB
+  // of node sitting resident from login until you happen to ask something.
+  readonly property bool restoreOnStart: true
+  // Past this, a restart is a new day rather than a reload, and last week's
+  // conversation reappearing is a surprise rather than a continuation. The
+  // session stays in the list either way -- this only decides what is on
+  // screen before you have asked for anything.
+  readonly property int restoreMaxAgeMs: 12 * 60 * 60 * 1000
+  // Transcripts here reach ~9MB. The read and the per-line JSON.parse both run
+  // on the UI thread, so only the TAIL goes back on screen: enough to see
+  // where you were, bounded so a long conversation cannot stall the shell at
+  // startup. pi's own context is not truncated by this -- that arrives whole,
+  // from `--session`.
+  readonly property int restoreMaxEntries: 120
+
   // Refuse to encode an image bigger than this. pi downscales anything large
   // itself, but the base64 pass below runs on the UI thread, so a 40MB file
   // would be a visible freeze rather than a slow answer.
@@ -708,6 +731,7 @@ Singleton {
         root.sessions = []
       }
       root.sessionsLoaded = true
+      root.restoreLastSession()
     }
     // No file yet is an empty history, not an error.
     onLoadFailed: {
@@ -719,6 +743,62 @@ Singleton {
   // Nothing is written back before the read has landed: a write from a turn
   // that settled first would replace the whole history with one row.
   property bool sessionsLoaded: false
+
+  // Reads the newest session's transcript at startup. Deliberately NOT
+  // `preload`: the path is unknown until the index above has loaded.
+  FileView {
+    id: restoreFile
+    printErrors: false
+    onLoaded: {
+      root.rehydrateFromJsonl(text())
+      // Release the buffer -- nothing watches this file, and holding a whole
+      // transcript in memory for the rest of the session is the cost this
+      // feature was supposed to avoid.
+      Qt.callLater(function () { restoreFile.path = "" })
+    }
+    // Unreadable or deleted: the transcript is gone, but resumePath is already
+    // armed, so asking still lands in the right conversation.
+    onLoadFailed: Qt.callLater(function () { restoreFile.path = "" })
+  }
+
+  // Called once, when the index has loaded.
+  function restoreLastSession() {
+    if (!root.restoreOnStart) return
+    if (root.sessions.length === 0) return
+    // Reading the index is asynchronous, so a fast question can beat it. What
+    // is already on screen wins.
+    if (root.busy || turnModel.count > 0 || proc.running) return
+
+    var s = root.sessions[0]
+    if (!s || !s.file || s.file === "") return
+    if (Date.now() - (s.at || 0) > root.restoreMaxAgeMs) return
+
+    // Armed before the read, and left armed even if the read fails: pi's memory
+    // of the conversation is the half that matters, and that comes from the
+    // path, not from what is on screen.
+    root.resumePath = s.file
+    root.sessionFile = s.file
+    root.sessionId = s.id
+    restoreFile.path = s.file
+  }
+
+  // The session file is JSONL of the same entries `get_entries` returns, so its
+  // tail can go straight into rehydrate() -- which already tolerates starting
+  // mid-conversation, because an assistant entry with no user entry ahead of it
+  // opens its own row.
+  function rehydrateFromJsonl(body) {
+    if (root.busy || turnModel.count > 0) return
+    var lines = String(body || "").split("\n")
+    var entries = []
+    for (var i = Math.max(0, lines.length - root.restoreMaxEntries); i < lines.length; i++) {
+      var s = lines[i]
+      // A torn final line is normal: pi appends to this file, and it may have
+      // been mid-write when the shell went down.
+      if (s === "" || s.charAt(0) !== "{") continue
+      try { entries.push(JSON.parse(s)) } catch (e) { }
+    }
+    if (entries.length > 0) rehydrate(entries)
+  }
 
   // How a conversation is named in the list: its opening question. Nothing
   // asks pi for a title -- that would be a whole extra turn to name something
@@ -793,6 +873,12 @@ Singleton {
   function rehydrate(entries) {
     turnModel.clear()
     var log = {}
+    // The assistant row currently being filled, or -1 for "the next assistant
+    // entry starts a new one". Tracked here rather than by searching the model
+    // for the last assistant row: several turns in a row leave older assistant
+    // rows in place, and a search finds the wrong one and welds three separate
+    // answers into a single paragraph.
+    var row = -1
 
     for (var i = 0; i < entries.length; i++) {
       var e = entries[i]
@@ -807,14 +893,15 @@ Singleton {
           else if (uc[a].type === "image") uimg.push("(attached " + (uc[a].mimeType || "image") + ")")
         }
         appendTurn("user", ut, "", "", false, uimg.join("\n"))
+        row = -1
         continue
       }
       if (m.role !== "assistant") continue   // toolResult: the call is enough
 
-      // No user entry ahead of it (a compaction summary, a resumed fork): open
-      // a row so the text is not dropped.
-      var row = lastAssistant()
-      if (row < 0 || !turnModel.get(row).pending) {
+      // A new question, or an assistant entry with no user entry ahead of it at
+      // all (a compaction summary, a resumed fork): open a row either way, so
+      // the text is never dropped and never merged into the previous answer.
+      if (row < 0) {
         appendTurn("assistant", "", "", "", true, "")
         row = turnModel.count - 1
       }
