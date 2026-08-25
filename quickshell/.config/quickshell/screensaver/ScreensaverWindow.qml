@@ -72,23 +72,13 @@ PanelWindow {
   // ------------------------------------------------------------ the art
   // Drifts slowly around the centre. Screensavers move for a reason: a static
   // bright mark parked on a panel for twenty minutes is burn-in.
-  // Two slow sines on deliberately unrelated periods, so the path never
-  // retraces itself and the art reads as floating rather than as sliding on a
-  // track. Amplitudes are a few percent of the screen: enough to see over a
-  // minute, not enough to notice moment to moment.
-  property real driftX: 0
-  property real driftY: 0
-
-  SequentialAnimation on driftX {
-    loops: Animation.Infinite
-    NumberAnimation { from: -0.03 * win.width; to: 0.03 * win.width; duration: 37000; easing.type: Easing.InOutSine }
-    NumberAnimation { from: 0.03 * win.width; to: -0.03 * win.width; duration: 37000; easing.type: Easing.InOutSine }
-  }
-  SequentialAnimation on driftY {
-    loops: Animation.Infinite
-    NumberAnimation { from: 0.035 * win.height; to: -0.035 * win.height; duration: 53000; easing.type: Easing.InOutSine }
-    NumberAnimation { from: -0.035 * win.height; to: 0.035 * win.height; duration: 53000; easing.type: Easing.InOutSine }
-  }
+  // Whole-art wander, on top of the per-letter float. Driven from the clock
+  // rather than by a SequentialAnimation, because an animation declared
+  // `from: -A` STARTS at -A: the art opened hard against the left of its
+  // travel instead of where it was laid out. A sine of the elapsed time is
+  // zero at zero, so the first frame is dead centre and it drifts from there.
+  readonly property real driftX: 0.018 * width * Math.sin(clock.elapsedTime / 11.0)
+  readonly property real driftY: 0.022 * height * Math.sin(clock.elapsedTime / 8.3)
 
   DecryptArt {
     id: art

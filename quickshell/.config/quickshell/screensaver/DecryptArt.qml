@@ -298,12 +298,20 @@ Item {
         // A single sine per axis traces a straight line back and forth; the
         // second one bends the path into a slow wander that never repeats the
         // same way twice, which is what reads as floating rather than sliding.
+        // No phase offsets: sin(0) is 0, so every letter opens exactly where it
+        // was laid out and the word is intact on the first frame. Divergence
+        // comes from the periods instead, which differ per letter, so they
+        // pull apart within a second or two and never resync.
+        //
+        // Two sines per axis. A single one traces a straight line back and
+        // forth; the second bends the path into a wander that does not repeat,
+        // which is what reads as floating rather than sliding.
         readonly property real bobX: art.cellW * (
-            0.34 * Math.sin(art.t / (640 + letter.index * 95) + letter.index * 1.7)
-          + 0.22 * Math.sin(art.t / (1130 + letter.index * 70) + letter.index * 0.6))
+            0.34 * Math.sin(art.t / (640 + letter.index * 95))
+          + 0.22 * Math.sin(art.t / (1130 + letter.index * 70)))
         readonly property real bobY: art.cellH * (
-            0.36 * Math.sin(art.t / (530 + letter.index * 80) + letter.index * 2.3)
-          + 0.24 * Math.sin(art.t / (970 + letter.index * 60) + letter.index * 1.1))
+            0.36 * Math.sin(art.t / (530 + letter.index * 80))
+          + 0.24 * Math.sin(art.t / (970 + letter.index * 60)))
 
         x: (modelData.start - art.inkStart) * art.cellW + bobX
         y: bobY
