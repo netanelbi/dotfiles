@@ -119,7 +119,16 @@ Item {
     var t = 0
     for (var i = 0; i < calls.length; i++) {
       var c = calls[i]
-      t += c.ms > 0 ? c.ms : Math.max(0, turnItem.nowMs - c.t0)
+      if (c.ms > 0) { t += c.ms; continue }
+      // t0 of 0 means UNKNOWN, not "the epoch". rehydrate() writes it that way
+      // for a restored transcript, because a session file records what a tool
+      // was asked to do and not when. Subtracting it from the panel's clock
+      // rendered `Ran 5 steps · 148974714m 11s` -- fifty-seven years, which is
+      // the current unix time in minutes and the giveaway.
+      //
+      // A restored call therefore contributes nothing. Saying nothing about a
+      // duration nobody recorded is right; the alternative is inventing one.
+      if (c.t0 > 0) t += Math.max(0, turnItem.nowMs - c.t0)
     }
     return t
   }
