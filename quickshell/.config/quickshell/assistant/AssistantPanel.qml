@@ -335,6 +335,80 @@ PanelWindow {
       // live tool batch can count its elapsed time off the same tick as the
       // rail -- and stop dead with it when the turn settles.
       delegate: TurnDelegate { accent: panel.accent; nowMs: panel.nowMs }
+
+      // --------------------------------------------------------- sticking
+      // BottomToTop pins the view to the newest token for free WHILE THE
+      // CONTENT ONLY GROWS. It stops being free the moment a delegate
+      // SHRINKS -- which is exactly what a thinking block does when the first
+      // answer token lands. The block is `visible: text === "" && thinking
+      // !== ""` and it is a child of a Column, so the Column drops it from
+      // layout outright and the delegate loses its whole height in one frame.
+      //
+      // Measured on a real turn rather than reasoned about (deepseek-v4-flash,
+      // "what is 2+2?", instrumented ListView, timings in ms):
+      //
+      //   +0     textlen 0 -> 1     contentHeight 1477 -> 1024   (-453px, ONE frame)
+      //   +135   atYEnd false       contentY still -415
+      //   ...    contentHeight 1064 -> 1449 over the next 650ms, contentY frozen
+      //   +718   contentY moves again, then catches up ~22px per frame
+      //
+      // So the "jump" is three faults, not one: the content loses 453px
+      // instantly, the view comes off the end and stops following for 0.7s
+      // while the answer is written off screen, and then Qt re-latches and
+      // lurches to catch up. Only the last two are fixable from here; the
+      // instant collapse belongs to the delegate.
+      property bool stuck: true
+
+      // How far the newest turn sits below the bottom edge, in pixels. Read off
+      // visibleArea rather than contentY on purpose: under BottomToTop the
+      // contentY origin MOVES with contentHeight, so there is no stable "this
+      // value means bottom" to compare against -- while `yPosition == 1 -
+      // heightRatio` is the end of the range in either layout direction.
+      readonly property real belowBottom:
+          Math.max(0, (1 - visibleArea.heightRatio - visibleArea.yPosition) * contentHeight)
+
+      // Slack, and it has to be pixels rather than `atYEnd`. atYEnd is an exact
+      // comparison and it FLICKERS: at the tail of the same measured turn, with
+      // contentY unchanged at -539.0 across eight consecutive frames, it
+      // reported true, false, true, false. Sticking on that would unstick
+      // itself while nothing moved at all. 24px is roughly one line of
+      // panelMeta -- near enough that you plainly meant to be at the bottom,
+      // far enough that a re-wrap or a rounding error cannot cross it.
+      readonly property int stickSlack: 24
+
+      function toBottom() {
+        // index 0 under BottomToTop is the NEWEST turn, at the bottom edge --
+        // the delegate reads its row back through `count - 1 - index`. So the
+        // beginning of the content is the bottom of the conversation.
+        transcript.positionViewAtBeginning()
+      }
+
+      function goBottom() {
+        transcript.stuck = true
+        transcript.toBottom()
+      }
+
+      // Corrected every frame the content changes, NOT animated. An animation
+      // on contentY would be chasing a target that moves again every ~40ms
+      // while tokens land, so it would never arrive and would read as
+      // permanent lag. Held exactly at the edge, the newest line stays put and
+      // the text flows up past it, which is what "smooth" means here.
+      // callLater because the delegate heights settle after the model change:
+      // positioning on the same frame uses the layout the change invalidated.
+      onContentHeightChanged: if (transcript.stuck) Qt.callLater(transcript.toBottom)
+
+      Connections {
+        target: PiSession
+        function onAppended() { if (transcript.stuck) Qt.callLater(transcript.toBottom) }
+      }
+
+      // Only a move the USER caused may change whether we are stuck. Qt raises
+      // `moving` for a wheel or a drag and leaves it false for
+      // positionViewAtBeginning(), which is the whole reason the stick cannot
+      // unstick itself -- and the reason scrolling up is never overruled.
+      onMovingChanged: transcript.stuck = transcript.belowBottom <= transcript.stickSlack
+      onContentYChanged: if (transcript.moving)
+          transcript.stuck = transcript.belowBottom <= transcript.stickSlack
     }
 
     // Ctrl+R. Sits exactly over the transcript rather than over the whole card,
@@ -413,6 +487,27 @@ PanelWindow {
         font.pixelSize: Style.font.panelMeta
         renderType: Text.NativeRendering
       }
+    }
+
+    // Slash completion. Anchored to the composer rather than filling the
+    // transcript the way the picker does: it is an extension of the field you
+    // are typing in, so it grows up out of it and leaves the conversation
+    // visible above. It rests on the rail, which is zero-high while nothing is
+    // running -- so at rest it sits straight on the composer, and mid-turn it
+    // moves up off the live line instead of burying it.
+    //
+    // Declared LAST of the things that share the transcript's box, because
+    // painting order here is declaration order and both the scroll thumb and
+    // the empty state would otherwise draw through it. The empty state is the
+    // one that matters: a brand new conversation is exactly when someone types
+    // a slash to find out what there is.
+    CommandBar {
+      id: commands
+      anchors { left: transcript.left; right: transcript.right
+                bottom: rail.top; bottomMargin: 4 }
+      height: implicitHeight
+      accent: panel.accent
+      entry: entry
     }
 
     // ------------------------------------------------------------------ rail
@@ -578,7 +673,28 @@ PanelWindow {
         }
 
         Keys.onPressed: function (event) {
+          // The completion list gets first refusal, so while it is up ↑↓ move
+          // it, ⇥/⏎ complete, and Escape dismisses it instead of closing the
+          // panel. It claims nothing while it is shut, and it never claims the
+          // Ctrl chords below -- those keep working mid-completion.
+          if (commands.handleKey(event)) {
+            event.accepted = true
+            return
+          }
           switch (event.key) {
+          case Qt.Key_End:
+            // Ctrl+End: back to the newest turn, and stick there again. The
+            // user asked for this key by name and it is the terminal
+            // convention, so it is taken as asked. What it costs: a TextEdit's
+            // own Ctrl+End is "cursor to end of draft". That is a fair trade
+            // here and not in a text editor -- the draft is a message, bare
+            // End already reaches the end of the line, and the composer is
+            // capped at 120px before it scrolls.
+            if (event.modifiers & Qt.ControlModifier) {
+              transcript.goBottom()
+              event.accepted = true
+            }
+            return
           case Qt.Key_Return:
           case Qt.Key_Enter:
             // Shift+Enter is a newline; a bare Enter sends. The multi-line field
@@ -602,8 +718,11 @@ PanelWindow {
             }
             return
           case Qt.Key_R:
-            // Ctrl+R for history, the shell's own gesture for it.
+            // Ctrl+R for history, the shell's own gesture for it. The picker
+            // wants the keyboard and the completion list assumes it does not
+            // have it, so only one of the two may be up at a time.
             if (event.modifiers & Qt.ControlModifier) {
+              commands.close()
               picker.open()
               event.accepted = true
             }
