@@ -115,7 +115,7 @@ PanelWindow {
 
       Text {
         anchors { left: parent.left; leftMargin: 14; verticalCenter: parent.verticalCenter }
-        text: "Vivo"
+        text: "Ori"
         color: Theme.sapphire
         font.family: Style.font.family
         font.pixelSize: Style.font.size
