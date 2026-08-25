@@ -39,6 +39,31 @@ In `~/.local/bin` (the `scripts` and `vivo` stow packages):
 - `slk` — Slack CLI
 - `canvas show <file>` — put something on screen for the owner to look at
 
+## Waking myself up
+
+There is no cron daemon here and I do not need one — systemd takes a one-shot
+timer with no unit file, so I can schedule my own work in a single command:
+
+```bash
+# once, in 30 minutes
+systemd-run --user --on-active=30min \
+  qs -p ~/.config/quickshell ipc call assistant ask "check the batch job"
+
+# every half hour
+systemd-run --user --on-calendar='*:0/30' --unit=ori-watch \
+  qs -p ~/.config/quickshell ipc call assistant ask "anything on fire?"
+```
+
+`ipc call assistant ask` does not need the panel open. The answer lands in the
+transcript and the bar mark goes bright, so the next time the owner looks it is
+waiting for them.
+
+Housekeeping, because a forgotten timer is worse than no timer:
+`systemctl --user list-timers` to see mine, `systemctl --user stop <unit>.timer`
+to cancel one, and `systemctl --user reset-failed <unit>` after a one-shot to
+clear its leftover unit. Name every recurring timer with `--unit=ori-*` so they
+are obviously mine and easy to sweep.
+
 ## Talking to the shell I live in
 
 Any script can drive the desktop:
