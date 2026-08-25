@@ -32,7 +32,14 @@ fi
 mkdir -p "$tmp_dir"
 rm -f "$tmp_dir/map"
 
-cliphist list | while IFS=$'\t' read -r id content; do
+# -preview-width: cliphist's list output defaults to 100 characters per entry
+# and appends an ellipsis. That truncated string is the ONLY text the
+# Quickshell preview pane ever receives, so a long entry was unreadable there
+# no matter how much room the pane had. 2000 covers a screenful of the pane
+# and costs nothing -- the list rows still elide to one line.
+# (`cliphist decode` keys off the leading id and ignores the preview text,
+# so the selection path below is unaffected by the wider line.)
+cliphist -preview-width 2000 list | while IFS=$'\t' read -r id content; do
     [[ "$content" == *"<meta http-equiv="* ]] && continue
 
     printf '%s\t%s\n' "$id" "$content" >> "$tmp_dir/map"
