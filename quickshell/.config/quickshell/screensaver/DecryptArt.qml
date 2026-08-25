@@ -34,12 +34,12 @@ Item {
   readonly property int cols: rows.length ? rows[0].length : 0
 
   // --------------------------------------------------------------- timing
-  readonly property int colStagger: 16     // per column, sweeping right
-  readonly property int rowStagger: 45     // per row, so it cascades
-  readonly property int typeMs: 260        // block-glyph fill
-  readonly property int fastMs: 900        // rapid symbol flipping
-  readonly property int slowMs: 1100       // flips stretching out
-  readonly property int holdMs: 7000       // settled, before it runs again
+  readonly property int colStagger: 26     // per column, sweeping right
+  readonly property int rowStagger: 70     // per row, so it cascades
+  readonly property int typeMs: 420        // block-glyph fill
+  readonly property int fastMs: 1400       // rapid symbol flipping
+  readonly property int slowMs: 1700       // flips stretching out
+  readonly property int holdMs: 3000       // settled, before it re-encrypts
 
   // Each cell decrypts for its own length, up to this much longer than the
   // base. tte does the same ("1-15 longer duration units"), and it is what
@@ -47,9 +47,15 @@ Item {
   // clean diagonal wave.
   readonly property int jitterMs: 1400
 
-  readonly property int cycleMs:
+  // One pass of the effect, ignoring the settled hold.
+  readonly property int passMs:
     colStagger * cols + rowStagger * rows.length
-    + typeMs + fastMs + slowMs + jitterMs + holdMs
+    + typeMs + fastMs + slowMs + jitterMs
+
+  // In, settle, back out, repeat. Running the same pass with time reversed is
+  // what makes it read as continuous rather than as a clip restarting: the art
+  // scrambles back apart instead of blinking away.
+  readonly property int cycleMs: passMs * 2 + holdMs
 
   readonly property string blocks: "░▒▓█"
   // Built once: rebuilding this per flip would allocate ~300 strings a frame.
@@ -110,8 +116,20 @@ Item {
           continue
         }
 
-        var e = t - (c * art.colStagger + r * art.rowStagger)
+        var stagger = c * art.colStagger + r * art.rowStagger
         var slow = art.slowMs + art.noise(r, c, 7717) % art.jitterMs
+
+        var e
+        if (t < art.passMs) {
+          e = t - stagger                                   // decrypting in
+        } else if (t < art.passMs + art.holdMs) {
+          e = Number.MAX_VALUE                              // settled
+        } else {
+          // Time runs backwards through the identical phase machine, so the
+          // cell re-scrambles and then un-types. The stagger reverses with it,
+          // which peels the art apart from the far edge inwards.
+          e = (art.cycleMs - t) - stagger
+        }
 
         if (e < 0) {
           cipherLine += " "
@@ -186,30 +204,64 @@ Item {
     return Math.max(6, Math.floor(Math.min(byWidth, byHeight)))
   }
 
-  // Two Text items for the WHOLE art, not one per row. Per-row Items had to
-  // guess a line height, and any guess that disagrees with the font's own
-  // makes the block glyphs overlap or gap instead of tiling. Handing Qt the
-  // newlines lets it lay the grid out itself, exactly as a terminal would.
+  // Colours. tte finishes on a gradient across the art (its default is a
+  // vertical one) and ciphers in a contrasting colour; these are the
+  // Catppuccin stand-ins for that. Change these two lines to retheme.
+  readonly property color cipherColor: Theme.mauve
+  readonly property color topColor: Theme.lavender
+  readonly property color bottomColor: Theme.sapphire
+
+  // Real metrics at the real size. One Text per row needs an exact row pitch:
+  // the block glyphs have to tile edge to edge, and a guessed line height
+  // makes them overlap or gap. fm2.height is what the font itself uses.
+  FontMetrics {
+    id: fm2
+    font.family: Style.font.family
+    font.pixelSize: art.fontSize
+  }
+  readonly property real cellH: fm2.height
+
   Item {
+    id: canvas
     anchors.centerIn: parent
-    width: plain.implicitWidth
-    height: plain.implicitHeight
+    width: childrenRect.width
+    height: art.rows.length * art.cellH
 
-    Text {
-      text: art.cipherRows.join("\n")
-      color: Theme.mauve
-      font.family: Style.font.family
-      font.pixelSize: art.fontSize
-      renderType: Text.NativeRendering
-    }
+    Repeater {
+      model: art.rows.length
 
-    Text {
-      id: plain
-      text: art.plainRows.join("\n")
-      color: Theme.text
-      font.family: Style.font.family
-      font.pixelSize: art.fontSize
-      renderType: Text.NativeRendering
+      delegate: Item {
+        id: row
+        required property int index
+
+        y: Math.round(row.index * art.cellH)
+        width: settled.implicitWidth
+        height: art.cellH
+
+        // The resolved character takes its colour from where it sits in the
+        // art, which is what turns a flat wordmark into a gradient.
+        readonly property color tint: Qt.tint(
+          art.topColor,
+          Qt.rgba(art.bottomColor.r, art.bottomColor.g, art.bottomColor.b,
+                  art.rows.length > 1 ? row.index / (art.rows.length - 1) : 0))
+
+        Text {
+          text: (art.cipherRows[row.index] !== undefined) ? art.cipherRows[row.index] : ""
+          color: art.cipherColor
+          font.family: Style.font.family
+          font.pixelSize: art.fontSize
+          renderType: Text.NativeRendering
+        }
+
+        Text {
+          id: settled
+          text: (art.plainRows[row.index] !== undefined) ? art.plainRows[row.index] : ""
+          color: row.tint
+          font.family: Style.font.family
+          font.pixelSize: art.fontSize
+          renderType: Text.NativeRendering
+        }
+      }
     }
   }
 }
