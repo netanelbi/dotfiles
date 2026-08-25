@@ -3,7 +3,7 @@
 hl.config({
     input = {
         kb_layout          = "us,il",
-        kb_options         = "compose:caps,grp:alt_shift_toggle",
+        kb_options         = "grp:alt_shift_toggle",
         follow_mouse       = 1,
         repeat_rate        = 40,
         repeat_delay       = 600,
