@@ -113,6 +113,16 @@ Singleton {
 
   readonly property bool warm: proc.running
 
+  // ------------------------------------------------------------ view state
+  // Whether the panel is on screen, and whether an answer landed while it was
+  // not. This is UI state living on the engine on purpose: the panel and the bar
+  // indicator are two different windows that must agree, and "was anyone looking
+  // when this finished" is the question that decides whether an answer gets
+  // announced at all. The alternative is a third singleton whose whole job is to
+  // hold two booleans.
+  property bool panelOpen: false
+  property bool unread: false
+
   signal settled()
   // Emitted whenever the newest turn grows, so the view can keep itself pinned
   // to the bottom without polling.

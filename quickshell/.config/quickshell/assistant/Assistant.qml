@@ -15,7 +15,9 @@ import ".."
 Scope {
   id: root
 
-  property bool opened: false
+  // The bar indicator toggles the panel too, so "is it open" cannot live in
+  // this file alone -- it is on PiSession, which both windows can see.
+  readonly property bool opened: PiSession.panelOpen
 
   // Held true through the exit animation so the panel can slide out before it is
   // destroyed. It is a plain flag PUSHED by the panel rather than `active`
@@ -32,6 +34,9 @@ Scope {
 
     component: AssistantPanel {
       opened: root.opened
+      // Opening it IS reading it -- the bright dot in the bar cannot be
+      // dismissed without the answer actually being on screen.
+      onOpenedChanged: if (opened) PiSession.unread = false
       onRevealedChanged: root.retain = revealed > 0.001
     }
   }
@@ -40,17 +45,17 @@ Scope {
     target: "assistant"
 
     function toggle(): string {
-      root.opened = !root.opened
-      return root.opened ? "opened" : "closed"
+      PiSession.panelOpen = !PiSession.panelOpen
+      return PiSession.panelOpen ? "opened" : "closed"
     }
 
     function open(): string {
-      root.opened = true
+      PiSession.panelOpen = true
       return "opened"
     }
 
     function close(): string {
-      root.opened = false
+      PiSession.panelOpen = false
       return "closed"
     }
 

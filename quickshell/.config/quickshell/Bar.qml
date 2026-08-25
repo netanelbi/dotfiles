@@ -150,6 +150,10 @@ PanelWindow {
 
       // custom/gamepads -- one span per connected pad, in its own lightbar colour.
       Gamepads { }
+
+      // Ori's heartbeat. Gone when there is nothing to say, dim while warm,
+      // pulsing while thinking, bright when an answer is waiting unread.
+      OriDot { }
     }
 
     Island {
