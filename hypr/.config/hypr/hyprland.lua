@@ -12,7 +12,6 @@ package.path = os.getenv("HOME") .. "/.config/hypr/?.lua;" .. package.path
 local v        = require("vars")
 local mainMod  = v.mainMod
 local terminal = v.terminal
-local menu     = v.menu
 
 require("monitor")
 require("input")

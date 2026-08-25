@@ -15,11 +15,8 @@ package/.config/package/ -> ~/.config/package
 | Package | Description |
 |---------|-------------|
 | hypr | Hyprland, hyprlock, hypridle configs |
-| waybar | Status bar (island style) |
-| swaync | Notification center |
-| swayosd | OSD for volume/brightness |
+| quickshell | The whole desktop shell: bar, notifications, OSD, wallpaper, launchers |
 | kitty | Terminal emulator |
-| rofi | Application launcher |
 | fish | Fish shell config |
 | starship | Prompt customization |
 | fastfetch | System info display |
@@ -30,15 +27,19 @@ package/.config/package/ -> ~/.config/package
 | vivo | vivo (AMD/1200p Vivobook, the main driver) — AMD TDP scripts, keyboard RGB, Sunshine streaming, per-machine Hyprland/waybar fragments |
 | lenovo | lenovo (Intel/1080p laptop) — per-machine Hyprland/waybar fragments | |
 
+**Retired, kept unstowed for rollback:** `waybar`, `swaync`, `swayosd`, `rofi`.
+Quickshell replaced all four. Nothing launches them and nothing references them;
+the `pre-quickshell` tag is the full working rollback point.
+
 ## Multi-machine model
 
 This repo is single-branch (`master`); machine differences live in **stow packages**, not branches. Stow the shared packages plus your machine's package:
 
 ```bash
 # on vivo (main driver):
-stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop gtk qt scripts vivo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt scripts vivo
 # on lenovo:
-stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop gtk qt scripts lenovo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt scripts lenovo
 ```
 
 A file lives in **either** a shared package **or** a machine package (never both — stow would conflict). Files that differ per machine but both need use a shared base that `source`s/`include`s/`require`s a machine fragment (e.g. `hyprland.lua` requires `monitor.lua`/`machine.lua`). vivo-only extras (AMD TDP, keyboard RGB, Sunshine) live in `vivo/` so lenovo doesn't carry them.
@@ -47,7 +48,7 @@ A file lives in **either** a shared package **or** a machine package (never both
 
 ```bash
 cd ~/.dotfiles
-stow hypr waybar swaync swayosd kitty rofi fish starship fastfetch btop gtk qt scripts vivo   # on vivo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt scripts vivo   # on vivo
 # replace `vivo` with `lenovo` on the lenovo machine
 ```
 
