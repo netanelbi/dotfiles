@@ -995,9 +995,22 @@ Singleton {
       }
       if (m.role !== "assistant") continue   // toolResult: the call is enough
 
-      // A new question, or an assistant entry with no user entry ahead of it at
-      // all (a compaction summary, a resumed fork): open a row either way, so
-      // the text is never dropped and never merged into the previous answer.
+      // A new question, an assistant entry with no user entry ahead of it at
+      // all (a compaction summary, a resumed fork), or an answer that simply
+      // follows another answer: open a row, so the text is never dropped and
+      // never merged into the previous one.
+      //
+      // "Follows another answer" is the case this got wrong. Consecutive
+      // assistant entries were folded together unconditionally, on the grounds
+      // that a tool loop records itself as several of them. True -- but so does
+      // a session file two clients appended to, and so does any transcript
+      // whose user entries did not survive. The result was one answer welded to
+      // the front of the next: `HOLDThought a bit, checked the machine:`, which
+      // is two questions, two answers, and one row.
+      //
+      // Only a tool loop may continue a row, and a tool loop is exactly an
+      // assistant entry that ENDED asking for a tool. Anything else starts
+      // fresh.
       if (row < 0) {
         appendTurn("assistant", "", "", "", true, "")
         row = turnModel.count - 1
@@ -1005,6 +1018,7 @@ Singleton {
       var text = turnModel.get(row).text
       var think = turnModel.get(row).thinking
       var ac = m.content || []
+      var calledTool = false
       for (var b = 0; b < ac.length; b++) {
         var blk = ac[b]
         if (blk.type === "text") text += blk.text
@@ -1014,10 +1028,13 @@ Singleton {
           list.push({ name: String(blk.name || "tool"),
                       arg: summarizeArgs(blk.arguments), t0: 0, ms: 0 })
           log[row] = list
+          calledTool = true
         }
       }
       turnModel.setProperty(row, "text", text)
       turnModel.setProperty(row, "thinking", think)
+      // Left open only while the model is still in a tool loop.
+      if (!calledTool) row = -1
     }
 
     // Nothing is in flight in a transcript read off disk.
