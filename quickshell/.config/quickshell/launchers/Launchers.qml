@@ -18,6 +18,7 @@ import Quickshell
 //     hl.bind(mainMod .. " + K",      hl.dsp.exec_cmd("qs ipc call calc toggle"))
 //     hl.bind("XF86Bluetooth",        hl.dsp.exec_cmd("qs ipc call emoji toggle"))
 //     hl.bind(mainMod .. " + Escape", hl.dsp.exec_cmd("qs ipc call power toggle"))
+//     hl.bind(mainMod .. " + A",      hl.dsp.exec_cmd("qs ipc call assistant toggle"))
 //
 // `toggle` reproduces the old `pkill -x rofi || <launcher>` shape: pressing
 // the same key again closes the overlay.
@@ -43,4 +44,7 @@ Scope {
   Calc        { group: group }
   Emoji       { group: group }
   PowerMenu   { group: group }
+  // Not a rofi replacement -- rofi never did this. Same chrome and same group,
+  // so it inherits the one-overlay-at-a-time rule for free.
+  Assistant   { group: group }
 }

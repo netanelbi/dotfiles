@@ -219,6 +219,7 @@ hl.bind("XF86Bluetooth", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call em
 
 -- Calculator (live results)
 hl.bind(mainMod .. " + K", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call calc toggle"))
+hl.bind(mainMod .. " + A", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call assistant toggle"))
 
 -- Resize cycle (tiled: 33%->50%->67%, floating: 90% centered)
 -- Percent sizes have no typed equivalent in the 0.55+ Lua dispatchers (x/y are
