@@ -44,13 +44,37 @@ PanelWindow {
 
   // rofi opens on the monitor with focus; Quickshell.screens is indexed by Qt
   // screen, so go through Hyprland's monitor mapping to find the match.
+  // A HEADLESS output is not a place to put a picker, and it is not a thing
+  // anyone means to share. They exist because tooling creates them --
+  // `hyprctl output create headless` for off-screen rendering -- and they
+  // outlive whatever made them if it exits badly. Four were left on this
+  // machine at once; the picker opened on one of them, and from the user's
+  // side screen sharing simply stopped working with no error anywhere.
+  //
+  // Hyprland always keeps one disabled 0x0 HEADLESS-1 of its own, so the name
+  // test alone is not paranoia about a corner case -- there is always at least
+  // one output here that must never be chosen.
+  function realScreen(s) {
+    if (!s) return false
+    if (String(s.name).indexOf("HEADLESS") === 0) return false
+    var m = Hyprland.monitorFor(s)
+    return !(m && m.disabled)
+  }
+
   function focusedScreen() {
-    var focused = Hyprland.focusedMonitor
-    if (!focused) return null
     var screens = Quickshell.screens
-    for (var i = 0; i < screens.length; i++) {
-      if (Hyprland.monitorFor(screens[i]) === focused) return screens[i]
+    var focused = Hyprland.focusedMonitor
+    if (focused) {
+      for (var i = 0; i < screens.length; i++) {
+        if (Hyprland.monitorFor(screens[i]) === focused && win.realScreen(screens[i]))
+          return screens[i]
+      }
     }
+    // Focus was on an output nobody can see. Any real screen beats none: a
+    // picker on the wrong monitor is recoverable, a picker on no monitor is
+    // the failure this guard exists for.
+    for (var j = 0; j < screens.length; j++)
+      if (win.realScreen(screens[j])) return screens[j]
     return null
   }
 
@@ -60,7 +84,9 @@ PanelWindow {
   property bool shown: false
   Component.onCompleted: win.shown = true
 
-  readonly property var screens: Quickshell.screens
+  // Filtered, for the same reason focusedScreen() is: offering a headless
+  // output as a share target hands the far end a black rectangle.
+  readonly property var screens: Quickshell.screens.filter(win.realScreen)
   readonly property var windows: controller ? controller.windowEntries : []
 
   // 0 = Screens, 1 = Windows. Held per tab so switching back returns you to
