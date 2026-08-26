@@ -412,11 +412,24 @@ Singleton {
   }
 
   // ------------------------------------------------------------------ tools
-  // What each turn touched -- { name, arg, ms } per call, keyed by row and kept
-  // AFTER the call ends. ingest() clears `tool` the moment a tool returns,
-  // which is right for "what is running now" and useless for "what did it do";
-  // this is the record a terminal gets for free from scrollback and a 460px
-  // panel has to keep on purpose.
+  // What each turn touched -- { name, arg, t0, ms, at } per call, keyed by row
+  // and kept AFTER the call ends. ingest() clears `tool` the moment a tool
+  // returns, which is right for "what is running now" and useless for "what did
+  // it do"; this is the record a terminal gets for free from scrollback and a
+  // 460px panel has to keep on purpose.
+  //
+  // `at` is WHERE, and it is the field the panel was missing. A turn that does
+  // real work is speak, run, speak, run -- but every delta goes through grow()
+  // onto one string, and a flat call list has no idea which part of that string
+  // it ran between. So the transcript rendered as a single welded paragraph
+  // (`...write and test it first.The child got TERM...`) with one batch line
+  // over the top of all of it. Stamping the answer's LENGTH at the moment a
+  // call starts is enough for Fmt.split to cut the text there and put the batch
+  // back where it happened.
+  //
+  // A marker written into the text would have been the easier change and is
+  // wrong: this panel renders markdown the MODEL wrote, so any sentinel is a
+  // string Ori can emit. An offset cannot be typed.
   //
   // Rebuilt by assignment rather than mutated, because a plain `var` only
   // notifies on assignment. Tool calls are seconds apart, so the copy is free.
@@ -435,12 +448,16 @@ Singleton {
         name: cut < 0 ? root.activeTool : root.activeTool.substring(0, cut),
         arg: cut < 0 ? "" : root.activeTool.substring(cut + 1),
         t0: Date.now(),
-        ms: 0
+        ms: 0,
+        // The answer as it stands RIGHT NOW, which is everything Ori said
+        // before reaching for this tool. Read off the same row the log is
+        // keyed by, so the two can never describe different turns.
+        at: String(turnModel.get(row).text).length
       })
     } else if (list.length > 0 && list[list.length - 1].ms === 0) {
       var open = list[list.length - 1]
       list[list.length - 1] = { name: open.name, arg: open.arg, t0: open.t0,
-                                ms: Date.now() - open.t0 }
+                                ms: Date.now() - open.t0, at: open.at }
     }
 
     var next = {}
@@ -1093,8 +1110,16 @@ Singleton {
         else if (blk.type === "thinking") think += (blk.thinking || "")
         else if (blk.type === "toolCall") {
           var list = (log[row] || []).slice()
+          // A session file records what a tool was asked to do and not when, so
+          // t0/ms stay 0 and the batch says nothing about duration. It DOES
+          // record where: the entries are in the order they happened and the
+          // text blocks either side of this one are already folded into `text`,
+          // so its current length is the same offset the live path stamps. That
+          // is what makes a restored turn fold exactly like a live one, which
+          // is the property this whole function exists to preserve.
           list.push({ name: String(blk.name || "tool"),
-                      arg: summarizeArgs(blk.arguments), t0: 0, ms: 0 })
+                      arg: summarizeArgs(blk.arguments), t0: 0, ms: 0,
+                      at: text.length })
           log[row] = list
           calledTool = true
         }

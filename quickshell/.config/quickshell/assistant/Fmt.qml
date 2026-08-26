@@ -31,9 +31,9 @@ QtObject {
 
   // ------------------------------------------------------------------ images
   // Ori shows a picture by WRITING one: `![the wallpaper](/home/me/x.png)` in
-  // its answer, and the panel paints the file where the syntax stood. split()
-  // is the half that finds them -- it cuts an answer into an ordered run of
-  // pieces, each either a stretch of markdown or one image.
+  // its answer, and the panel paints the file where the syntax stood. scan()
+  // is the half that finds them -- it cuts a stretch of answer into pieces,
+  // each either markdown or one image, for split() to order.
   //
   // localImage() is the half that says no, and it is why this lives in a
   // function rather than inline in the delegate. The target of that markdown is
@@ -106,11 +106,65 @@ QtObject {
     return src.slice(0, i).split("```").length % 2 === 1
   }
 
-  // The answer, as [{ image: false, text }, { image: true, source, alt }, …].
-  // `streaming` is true while the turn is still being written.
-  function split(body, streaming) {
+  // ------------------------------------------------------------------ order
+  // The answer, as an ordered run of pieces:
+  //
+  //   { image: false, text }              a stretch of markdown
+  //   { image: true, source, alt }        one picture
+  //   { tool: true, calls, n }            one batch of tool calls, where it ran
+  //
+  // `streaming` is true while the turn is still being written; `calls` is the
+  // turn's tool log, each entry carrying the `at` offset PiSession stamps.
+  //
+  // The batches are why this takes `calls` at all. A turn doing real work is
+  // speak, run, speak, run -- and it rendered as one paragraph with a single
+  // batch line above it, because the text is one string and the log was a flat
+  // list with no position in it. With the offsets, the answer is cut at them
+  // and each batch goes back between the text before it and the text after.
+  function split(body, streaming, calls) {
     var src = String(body || "")
+    var list = calls || []
+    var out = []
+    var at = 0        // how much of src has been emitted
+    var batch = []    // the batch being gathered
+    var n = 0         // which batch this is, so the delegate can key its drawer
 
+    for (var i = 0; i < list.length; i++) {
+      // Clamped, and monotonic: a restored call with no offset reads as 0, and
+      // a run of those must not walk backwards through the answer.
+      var stop = Math.max(at, Math.min(src.length, Number(list[i].at) || 0))
+      var gap = src.slice(at, stop)
+      // ONLY text starts a new batch. Three commands with nothing said between
+      // them stay one "Ran 3 commands" line -- that collapse is the point, and
+      // whitespace is not something Ori said.
+      if (gap.replace(/\s/g, "") !== "") {
+        if (batch.length > 0) { out.push({ image: false, tool: true, calls: batch, n: n++ }); batch = [] }
+        scan(out, gap, false)
+      }
+      at = stop
+      batch.push(list[i])
+    }
+    if (batch.length > 0) out.push({ image: false, tool: true, calls: batch, n: n++ })
+
+    // Only the tail is still being typed; everything before a tool call was
+    // finished the moment the call started.
+    scan(out, src.slice(at), streaming)
+
+    // An answer with no text at all still needs one piece, or the turn has
+    // nothing to give it height and the list jumps on the first token.
+    if (out.length === 0) out.push({ image: false, text: src })
+    return out
+  }
+
+  // The image pass, over one stretch of the answer. Split out of split() when
+  // the batches arrived: the batches cut the answer first, and each stretch
+  // between them is scanned for pictures on its own.
+  //
+  // Fence counting is therefore per stretch. That is right for every answer
+  // that exists -- a ``` block opening before a tool call and closing after it
+  // would be half a code block written, a command run, and the other half
+  // written; the model emits a fenced block in one run of deltas.
+  function scan(out, src, streaming) {
     // Text arrives token by token, so for a frame or two the tail of the answer
     // is a half-typed `![the wallpaper](/home/ne`. It matches nothing, so left
     // alone it would TYPE ITSELF OUT on screen -- the path crawling across the
@@ -126,7 +180,6 @@ QtObject {
         src = src.slice(0, open)
     }
 
-    var out = []
     // Built per call rather than kept as a property: a /g regex carries its
     // lastIndex between uses, and a shared one would skip half the matches on
     // every second delegate.
@@ -141,10 +194,6 @@ QtObject {
       at = m.index + m[0].length
     }
     push(out, src.slice(at))
-    // An answer with no text at all still needs one piece, or the turn has
-    // nothing to give it height and the list jumps on the first token.
-    if (out.length === 0) out.push({ image: false, text: src })
-    return out
   }
 
   // Text between images, minus the blank lines the markdown left behind (the
@@ -152,6 +201,12 @@ QtObject {
   // spaces it twice) -- and minus its teeth.
   function push(out, text) {
     var t = text.replace(/^\n+|\n+$/g, "")
+    // Nothing but space is nothing. It matters now that a batch can sit at the
+    // very start of a turn: the empty-answer placeholder is a single SPACE, and
+    // left in it drew an empty line of text under the batch line for the whole
+    // of the first tool call. split()'s own guard still puts it back when a
+    // piece is all the turn has.
+    if (t.replace(/\s/g, "") === "") return
     // Everything OUTSIDE the code fences, and nothing inside them: Text renders
     // a fenced block literally and fetches nothing from it, while rewriting one
     // would print a lie in a code example.
