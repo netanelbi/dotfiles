@@ -1,27 +1,24 @@
 import QtQuick
 import ".."
 
-// One turn of the conversation.
+// One turn of the conversation. A question is a pill hung off the right edge; an
+// answer is a full-width column on a rail down the left, and the rail of the turn
+// being written breathes.
 //
-// Who said what is carried by shape, not by labels: a question is a pill that
-// hangs off the right edge, an answer is a full-width column hung on a rail
-// down the left. The rail is the load-bearing part -- it gives the answer, its
-// reasoning, its tool calls and its cost one visible spine, so a scrolled-back
-// transcript reads as a sequence of machine actions rather than as loose text.
-// It is also the liveness cue: the rail of the turn being written breathes,
-// and it is the only one that does.
-//
-// Order inside an answer is the order things happened, and it is literal: the
-// text is cut where each tool call ran, so a turn that did real work reads
-// speak, run, speak, run, and ends with what it cost.
+// Order inside an answer is the order things happened -- the text is cut where
+// each tool call ran, so a working turn reads speak, run, speak, run. Which is
+// right WHILE it happens and wrong once it has: a finished turn is not a
+// recording of a process, it is an answer. So the moment a turn settles,
+// everything up to its last tool call rolls up into one receipt line and the
+// answer takes the card. Nothing is thrown away -- the receipt says what the work
+// was, in the words the batch lines used, and opens back onto all of it.
 Item {
   id: turnItem
 
   required property int index
   property color accent: Theme.sapphire
 
-  // The list is BottomToTop, so index 0 is the NEWEST row; read the model back
-  // through `count - 1 - index`.
+  // The list is BottomToTop, so index 0 is the NEWEST row.
   readonly property int row: PiSession.turns.count - 1 - index
   readonly property var turn: row >= 0 && row < PiSession.turns.count
     ? PiSession.turns.get(row) : null
@@ -32,42 +29,65 @@ Item {
   // { ms, tokens } once the turn has settled.
   readonly property var cost: PiSession.turnCost[row] || null
 
-  // The panel's frame clock, handed down rather than started again here: it
-  // already runs only while a turn is in flight with the panel on screen, and
-  // it is the only thing that makes the live batch's elapsed number move. A
-  // clock of our own would be a second thing to stop at idle.
+  // The turn, as pieces, and where its answer starts (Fmt.split / Fmt.answerAt).
+  // Rebuilt per token while the answer streams, which is affordable because it
+  // always was: the single Text this replaced re-laid out the whole answer too.
+  readonly property var pieces: fmt.split(bodyText, pending, calls)
+  readonly property int cut: fmt.answerAt(pieces)
+
+  // A turn in flight shows everything -- watching it work IS the point while it
+  // works, and there is no answer yet to find. The fold is what settling looks
+  // like, and it never folds a turn into nothing: an answer that ended ON a tool
+  // call has no other half, so it stays as it is.
+  readonly property bool folded: !user && !pending && !workOpen && cut > 0 && cut < pieces.length
+  readonly property var shown: folded ? pieces.slice(cut) : pieces
+
+  // The ledger of a settled turn on one line -- what it did, how long it took,
+  // what it cost -- in the words the batch lines already print, with ONE label
+  // over every call in the fold ("Ran 1 command · Ran 2 steps" is the inventory
+  // it replaces). Duration and tokens used to sit in a `◇` footer UNDER the
+  // answer, a strange place for the receipt of what you just read.
+  function receipt() {
+    var all = [], ms = 0
+    for (var i = 0; i < cut; i++) {
+      if (!pieces[i].tool) continue
+      all = all.concat(pieces[i].calls)
+      ms += batchMs(pieces[i].calls)
+    }
+    var parts = []
+    if (all.length > 0) parts.push(pastLabel(batchKind(all), all.length))
+    // The turn's total when the engine recorded one; the time inside the tool
+    // calls is all a restored transcript can offer.
+    var d = fmt.duration(cost ? cost.ms : ms)
+    if (d !== "") parts.push(d)
+    if (cost && cost.tokens > 0) parts.push(fmt.tokens(cost.tokens) + " tok")
+    return "\u25c7 " + parts.join(" · ")
+  }
+
+  // The panel's frame clock, handed down rather than started again here: it runs
+  // only while a turn is in flight with the panel on screen, and a clock of our
+  // own would be a second thing to stop at idle.
   property real nowMs: 0
 
-  // The answer text, placeholder included: a turn with nothing in it yet must
-  // not collapse to zero height, or the list jumps the moment the first token
-  // lands.
-  //
-  // One line, for the whole time an answer is empty. Not a word, not a
-  // reasoning stream, not a spinner: the panel's own header already names the
-  // state ("thinking", "answering", "running bash") in a fixed place that
-  // cannot move anything, so a second announcement in the transcript was
-  // saying the same thing twice AND was the last thing in a turn that changed
-  // a row's height mid-flight.
+  // One breath, shared: a cosine off that clock, so everything alive on this
+  // card rises and falls together instead of each running its own loop.
+  readonly property real breath:
+    0.65 + 0.35 * Math.cos(2 * Math.PI * nowMs / Style.ori.breathMs)
+
+  // The answer text, placeholder included: a turn with nothing in it yet must not
+  // collapse to zero height, or the list jumps on the first token. One SPACE, not
+  // a word or a spinner -- the panel header already names the state in a fixed
+  // place, and a second announcement changed a row's height mid-flight.
   readonly property string bodyText: !turn ? ""
     : turn.text !== "" ? turn.text
     : (pending ? " " : "")
 
-  // Which of this turn's tool batches are open, keyed by the batch's ordinal.
-  // All closed to start: the detail is a click away, not a wall.
-  //
-  // On the turn rather than in the delegate, because the piece list is rebuilt
-  // per token while the answer streams and a delegate's own flag would be
-  // destroyed with it -- a drawer you opened would shut itself on the next
-  // word. The ordinal is stable: a batch already on screen keeps its number,
-  // since only text that has already arrived can start a new one.
-  property var toolsOpen: ({})
-
-  function toggleTools(n) {
-    var next = {}
-    for (var k in toolsOpen) next[k] = toolsOpen[k]
-    next[n] = toolsOpen[n] !== true
-    toolsOpen = next
-  }
+  // Whether this turn's work is unrolled. ONE control for the whole turn, up on
+  // the receipt: every batch used to carry a drawer of its own as well, which is
+  // two nested disclosures on a 460px card, and the second one only ever said
+  // what the first already summarised. Unrolled means unrolled -- narration,
+  // batch lines and the commands themselves.
+  property bool workOpen: false
 
   width: ListView.view ? ListView.view.width : 0
   height: user ? pill.height : answer.height
@@ -75,11 +95,9 @@ Item {
   Fmt { id: fmt }
 
   // ------------------------------------------------------------- vocabulary
-  // A batch is a COUNT plus the latest action, never a list of rows -- the same
-  // shape the other assistant settles a turn into. Each kind of call carries
-  // three words: what it is doing, what it did, and the noun it is counted in,
-  // so a settled batch reads as English ("Ran 3 commands", "Read 1 file")
-  // rather than as an inventory of tool names.
+  // A batch is a COUNT plus the latest action, never a list of rows: each kind of
+  // call carries what it is doing, what it did and the noun it is counted in, so
+  // it reads as English. The receipt is built from the same words.
   function kindOf(name) {
     var n = String(name).toLowerCase()
     if (n.indexOf("search") >= 0 || n.indexOf("grep") >= 0 || n.indexOf("glob") >= 0) return "search"
@@ -91,23 +109,19 @@ Item {
   }
 
   function liveVerb(kind) {
-    return kind === "search" ? "Searching"
-      : kind === "edit" ? "Editing"
-      : kind === "read" ? "Reading"
-      : kind === "fetch" ? "Fetching"
-      : "Running"
+    return ({ search: "Searching", edit: "Editing", read: "Reading",
+              fetch: "Fetching" })[kind] || "Running"
   }
 
   // Past tense, and both numbers right: "Ran 1 command", never "Ran 1 commands".
+  // "Searched 3 searches" stutters, so a search is counted in searches; a batch
+  // of mixed kinds has no one noun and is counted in steps.
+  readonly property var noun: ({ read: "Read file", edit: "Edited file",
+    fetch: "Fetched page", search: "Ran search", bash: "Ran command" })
   function pastLabel(kind, n) {
-    if (kind === "read") return "Read " + n + (n === 1 ? " file" : " files")
-    if (kind === "edit") return "Edited " + n + (n === 1 ? " file" : " files")
-    if (kind === "fetch") return "Fetched " + n + (n === 1 ? " page" : " pages")
-    // "Searched 3 searches" stutters; the noun is the part that says what kind.
-    if (kind === "search") return "Ran " + n + (n === 1 ? " search" : " searches")
-    if (kind === "bash") return "Ran " + n + (n === 1 ? " command" : " commands")
-    // A batch of mixed kinds has no one noun, so it is counted in steps.
-    return "Ran " + n + (n === 1 ? " step" : " steps")
+    var w = String(noun[kind] || "Ran step").split(" ")
+    return w[0] + " " + n + " " + w[1]
+      + (n === 1 ? "" : w[1] === "search" ? "es" : "s")
   }
 
   // Functions over ONE batch, not properties over the turn: a turn now has as
@@ -131,38 +145,28 @@ Item {
   }
 
   // Time spent in a batch. The open call is measured against the panel's clock,
-  // so this counts up by itself while it runs and freezes at the moment the
-  // call returns.
+  // so this counts up by itself and freezes when the call returns.
   function batchMs(cs) {
     var t = 0
     for (var i = 0; i < cs.length; i++) {
       var c = cs[i]
       if (c.ms > 0) { t += c.ms; continue }
-      // t0 of 0 means UNKNOWN, not "the epoch". rehydrate() writes it that way
-      // for a restored transcript, because a session file records what a tool
-      // was asked to do and not when. Subtracting it from the panel's clock
-      // rendered `Ran 5 steps · 148974714m 11s` -- fifty-seven years, which is
-      // the current unix time in minutes and the giveaway.
-      //
-      // A restored call therefore contributes nothing. Saying nothing about a
-      // duration nobody recorded is right; the alternative is inventing one.
+      // t0 of 0 means UNKNOWN, not "the epoch": rehydrate() writes it that way,
+      // and subtracting it from the panel's clock rendered `Ran 5 steps ·
+      // 148974714m 11s`. A restored call contributes nothing instead.
       if (c.t0 > 0) t += Math.max(0, turnItem.nowMs - c.t0)
     }
     return t
   }
 
   // ------------------------------------------------------------------- ask
-  // What the user attached, as the engine recorded it: absolute paths for a
-  // paste, a label for anything that never had a file (Fmt.attached explains
-  // which is which).
+  // What the user attached: absolute paths for a paste, a label for anything
+  // that never had a file (Fmt.attached explains which is which).
   readonly property var sent: turn && turn.images
     ? fmt.attached(turn.images) : []
 
-  // The width thumbnails are laid out in. Deliberately the pill's WIDEST
-  // possible content rather than its actual width: the pill sizes itself to
-  // what is inside it, so measuring the pictures against the pill would be a
-  // circle. Fixed here, the pictures come out at their own size and the pill
-  // wraps them.
+  // The width thumbnails are laid out in: the pill's WIDEST possible content,
+  // not its actual width, which would be measuring the pill with the pill.
   readonly property int sentWidth: Math.round(width * 0.85) - 24
 
   Rectangle {
@@ -188,35 +192,24 @@ Item {
       Text {
         id: said
         width: parent.width
-        // An image-only question is a real thing -- paste, send, no words --
-        // and an empty Text would still pay for a line of height.
+        // An image-only question is a real thing, and an empty Text would
+        // still pay for a line of height.
         visible: text !== ""
         text: turnItem.turn ? turnItem.turn.text : ""
         color: Theme.text
         wrapMode: Text.Wrap
-        font.family: Style.font.family
+        font.family: Style.font.panelFamily
         font.pixelSize: Style.font.panelBody
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
 
       // ------------------------------------------------------- attachments
-      // The picture you sent, under the words you sent with it. The draft
-      // keeps its `[Image 1]` marker -- that is what ties a specific picture
-      // to a specific place in the sentence, and deleting the marker is still
-      // how you drop the attachment -- so this is the marker's referent, not a
-      // replacement for it.
-      //
-      // Capped at HALF what an answer's picture gets. The two are not the same
-      // thing: a picture Ori chose to show is the content of its answer and
-      // has to be readable, while your own attachment is a receipt for
-      // something you were looking at a second ago when you pasted it. Big
-      // enough to confirm you sent the right screenshot, small enough that
-      // three of them do not bury the conversation you sent them into.
-      // Every row here sizes itself to its own content and NOT to this column,
-      // because the pill is sized from it: a row that took its width from the
-      // column would be measuring the pill with the pill, and the first thing
-      // that happened when it did was an image-only question collapsing to a
-      // 30px stub with its label spilling out of the side.
+      // The picture you sent, under the words you sent with it -- the referent
+      // of the draft's `[Image 1]` marker. Capped at HALF what an answer's
+      // picture gets: that one is content, this one is a receipt. Every row
+      // sizes to its OWN content, never to this column, because the pill is
+      // sized from it -- taking width from the column collapsed an image-only
+      // question to a 30px stub with its label out of the side.
       Column {
         id: shots
         spacing: 4
@@ -235,22 +228,19 @@ Item {
 
             InlineImage {
               id: thumb
-              // The BOX, not the picture: it paints top-left inside this and
-              // reports back how much of it it used.
+              // The BOX, not the picture: it paints inside this and reports back.
               width: turnItem.sentWidth
               maxHeight: 120
               visible: sent.modelData.image
               source: sent.modelData.image ? sent.modelData.source : ""
-              // No alt to give -- the user picked a file, they did not name it
-              // -- so an unreadable one falls back to the path, which is the
-              // only thing that says which of three pastes went missing.
+              // No alt to give -- the user picked a file, they did not name it --
+              // so an unreadable one falls back to the path.
               alt: ""
             }
 
-            // Not a path, so there is no picture to paint: a resumed
-            // transcript, or a data URI that never had a file. Printed rather
-            // than dropped -- it is the only mark left that this question
-            // carried a picture at all.
+            // Not a path, so nothing to paint: a resumed transcript, or a data
+            // URI. Printed rather than dropped -- it is the only mark left that
+            // this question carried a picture.
             Text {
               id: gone
               width: Math.min(turnItem.sentWidth, implicitWidth)
@@ -262,7 +252,7 @@ Item {
               maximumLineCount: 1
               font.family: Style.font.family
               font.pixelSize: Style.font.panelMeta
-              renderType: Text.NativeRendering
+              renderType: Text.QtRendering
             }
           }
         }
@@ -277,9 +267,10 @@ Item {
     width: turnItem.width
     height: col.implicitHeight + 6
 
-    // The spine. Solid once the turn is done, breathing while it is being
-    // written -- the same 2600ms breath as the mark in the header and the dot
-    // in the bar, so everything alive on this desktop is alive at one rate.
+    // The spine. Solid once the turn is done, breathing while it is written --
+    // the same breath as the header mark and the bar dot, so everything alive on
+    // this desktop is alive at one rate. Off the panel's frame clock rather than
+    // a private animation, so no cycle is stranded mid-way when it settles.
     Rectangle {
       id: spine
       x: 0
@@ -288,28 +279,11 @@ Item {
       height: parent.height - 4
       radius: 1
       color: turnItem.pending ? turnItem.accent : Theme.surface1
+      opacity: turnItem.pending ? turnItem.breath : 1
 
       Behavior on color {
         ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
       }
-
-      SequentialAnimation {
-        running: turnItem.pending
-        loops: Animation.Infinite
-        alwaysRunToEnd: true
-        NumberAnimation {
-          target: spine; property: "opacity"; to: 0.3
-          duration: Style.ori.breathMs / 2; easing.type: Style.anim.easingSmooth
-        }
-        NumberAnimation {
-          target: spine; property: "opacity"; to: 1
-          duration: Style.ori.breathMs / 2; easing.type: Style.anim.easingSmooth
-        }
-      }
-
-      // Leaving the breath mid-cycle would strand the spine at whatever opacity
-      // the animation happened to reach.
-      onOpacityChanged: if (!turnItem.pending && opacity !== 1) opacity = 1
     }
 
     Column {
@@ -318,81 +292,172 @@ Item {
       width: parent.width - 14
       spacing: 6
 
+      // ------------------------------------------------------------ seam
+      // The receipt: one line standing where the work was, with a hairline off it
+      // to the card's edge -- the turn's header and its disclosure at once. A
+      // rule rather than a fill or a frame, because the work is not somewhere
+      // else on this card: it is NOT THERE, and a boundary is the honest mark for
+      // that. One row where the work cost four, and at a squint every settled
+      // turn is the same three beats: question, thin line, block of prose.
+      Item {
+        id: seam
+        width: parent.width
+        // A live turn has no receipt: nothing is settled to fold.
+        visible: !turnItem.pending && (turnItem.cut > 0 || turnItem.cost !== null)
+        height: visible ? 22 : 0
+
+        Text {
+          id: told
+          anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+          // Capped, not anchored to the caret: a rule with 3px to cross is a
+          // smudge, so the text gives way before the rule does.
+          width: Math.min(implicitWidth, parent.width - 90)
+          text: turnItem.receipt()
+          color: Theme.overlay0
+          elide: Text.ElideRight
+          font.family: Style.font.family
+          font.pixelSize: Style.font.panelMeta
+          renderType: Text.QtRendering
+        }
+
+        Rectangle {
+          anchors { left: told.right; right: caret.left; leftMargin: 10; rightMargin: 10
+                    verticalCenter: parent.verticalCenter }
+          height: 1
+          color: Theme.surface1
+        }
+
+        Text {
+          id: caret
+          anchors { right: parent.right; rightMargin: 4; verticalCenter: parent.verticalCenter }
+          // Nothing to unroll on a turn that only thought.
+          visible: turnItem.cut > 0
+          text: "\u203a"
+          color: Theme.overlay0
+          rotation: turnItem.workOpen ? 90 : 0
+          transformOrigin: Item.Center
+          font.family: Style.font.family
+          font.pixelSize: Style.font.panelMeta
+          renderType: Text.QtRendering
+
+          Behavior on rotation {
+            NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
+          }
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          enabled: turnItem.cut > 0
+          cursorShape: Qt.PointingHandCursor
+          onClicked: turnItem.workOpen = !turnItem.workOpen
+        }
+      }
+
       // ------------------------------------------------------------ said
-      // The answer in the order it happened: what it said, what it ran, what it
-      // said next. Ori shows a file by writing `![alt](/path.png)` and the
-      // picture is painted where the syntax stood; a tool call is folded into
-      // ONE batch line standing where it ran (Fmt.split cuts both out).
-      //
-      // The batches used to be a single block above all of this, which is what
-      // welded a working turn into one paragraph -- four calls and everything
-      // Ori said around them, in the wrong order, under one summary line.
-      //
-      // A run of pieces rather than one Text because a QML Text cannot put an
-      // ITEM inside its flow -- there is no way to hang an Image, or a drawer
-      // of commands, off a character position -- so the text is ended before
-      // and resumed after. An answer that showed nothing and ran nothing is
-      // one piece and behaves exactly as it did before.
+      // What is on screen, in the order it happened. A picture is painted where
+      // its `![alt](/path)` stood and a tool batch is ONE line standing where it
+      // ran (Fmt.split cuts both out). A run of pieces rather than one Text
+      // because a QML Text cannot put an ITEM inside its flow.
       Column {
         id: body
         width: parent.width
         spacing: 6
 
         Repeater {
-          // Recomputed per token while the answer streams, which rebuilds
-          // these pieces each time. That is affordable because it always was:
-          // the single Text this replaced re-laid out the whole answer per
-          // token too, and an image re-created against Qt's pixmap cache
-          // repaints in the same frame.
-          model: fmt.split(turnItem.bodyText, turnItem.pending, turnItem.calls)
+          // The fold is a MODEL, not a layout: a folded turn has fewer pieces,
+          // and nothing moves when it settles -- the list is BottomToTop, so the
+          // answer keeps its place and the work above it stops being drawn.
+          model: turnItem.shown
 
           delegate: Item {
             id: piece
             required property var modelData
 
             readonly property bool isTool: piece.modelData.tool === true
-            // The calls this piece stands for, [] for text and pictures.
+            readonly property bool code: piece.modelData.code === true
+            readonly property bool head: piece.modelData.head === true
+            readonly property bool bullet: piece.modelData.bullet === true
+            // Work, not the answer: on screen only while a turn is live or
+            // unrolled, and quieter than the answer in both cases.
+            readonly property bool aside: piece.modelData.aside === true
             readonly property var cs: piece.isTool ? piece.modelData.calls : []
             readonly property bool live: piece.isTool && turnItem.batchLive(piece.cs)
-            readonly property bool open: piece.isTool
-              && turnItem.toolsOpen[piece.modelData.n] === true
+            // The commands themselves. Never while the batch is live: the line
+            // above already names the command it is running this second, and
+            // three rows of shell under it is what the collapse exists to stop.
+            readonly property bool open: piece.isTool && turnItem.workOpen && !piece.live
+
+            // A list marker sits in the gutter and the item hangs off it: 14px,
+            // not the 55 Qt indents a markdown list by, which at 426px of measure
+            // cost a bullet its last word. Two levels of nesting, then it stops.
+            readonly property int gutter: piece.bullet ? 14 : 0
+            readonly property int lead: (piece.modelData.depth || 0) * 14
 
             width: body.width
             implicitHeight: piece.isTool ? batch.height
-              : piece.modelData.image ? shot.implicitHeight : chunk.implicitHeight
+              : piece.modelData.image ? shot.implicitHeight
+              : chunk.y + chunk.implicitHeight + (piece.code ? 6 : 0)
             height: implicitHeight
 
-            // A TextEdit, not a Text, for ONE reason: Text has no
-            // selectedText change signal, so there is no moment at which to
-            // notice that a selection happened. Read-only, and it never takes
-            // the keyboard (activeFocusOnPress false) -- the composer keeps
-            // focus, so dragging across an answer does not stop you typing.
+            // A fenced block, on its own surface. Inside the markdown it was
+            // prose-sized, container-less and CLIPPED: MarkdownText does not wrap
+            // one, so a long command stopped dead at the card's edge.
+            Rectangle {
+              anchors.fill: parent
+              visible: piece.code
+              radius: 6
+              color: Theme.alpha(Theme.surface0, 0.55)
+            }
+
+            // The bullet, in the gutter its item hangs off.
+            Text {
+              visible: piece.bullet
+              x: piece.lead
+              y: chunk.y
+              width: piece.gutter
+              text: piece.bullet ? piece.modelData.mark : ""
+              color: Theme.overlay0
+              font.family: Style.font.panelFamily
+              font.pixelSize: Style.font.panelBody
+              renderType: Text.QtRendering
+            }
+
+            // A TextEdit, not a Text, for ONE reason: Text has no selectedText
+            // change signal, so there is no moment at which to notice a
+            // selection. Read-only, and it never takes the keyboard.
             TextEdit {
               id: chunk
-              width: parent.width
+              x: piece.code ? 10 : piece.lead + piece.gutter
+              // A heading takes its space from ABOVE: it belongs to what follows
+              // it, and a column with one spacing cannot say so on its own.
+              y: piece.head ? 12 : piece.code ? 6 : 0
+              width: parent.width - x - (piece.code ? 10 : 0)
               visible: !piece.modelData.image
               text: piece.modelData.image ? "" : piece.modelData.text
-              color: Theme.text
+              color: piece.aside ? Theme.overlay0 : Theme.text
               readOnly: true
               activeFocusOnPress: false
               wrapMode: TextEdit.Wrap
-              // The model answers in markdown, so render it -- otherwise every
-              // emphasis arrives as literal **asterisks** and every code span as
-              // backticks. Mid-stream an unclosed marker renders as plain text and
-              // settles the moment its partner arrives, which is invisible at these
-              // token rates.
-              textFormat: TextEdit.MarkdownText
-              // Selecting copies, on its own -- see Copy.qml for why there is
-              // no confirming keypress. Per BLOCK, because the answer is a
-              // column of pieces so images can sit inline, and a drag cannot
-              // cross from one piece into the next.
+              // Markdown, or every emphasis arrives as literal **asterisks**; an
+              // unclosed marker mid-stream renders plain and settles on its
+              // partner. PlainText for a fence, where markdown would eat a
+              // shell line's punctuation.
+              textFormat: piece.code ? TextEdit.PlainText : TextEdit.MarkdownText
+              // Selecting copies, on its own (Copy.qml). Per BLOCK: the answer is
+              // a column of pieces, and a drag cannot cross from one to the next.
               selectByMouse: true
               selectionColor: Theme.sapphire
               selectedTextColor: Theme.base
-              onSelectedTextChanged: Copy.take(selectedText)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.panelBody
-              renderType: Text.NativeRendering
+              // Minus Fmt's invisible wrap guards, so a paste that looks right
+              // also RUNS: real hyphens, real spaces, no zero-width anything.
+              onSelectedTextChanged: Copy.take(selectedText
+                .replace(/\u200b/g, "").replace(/\u2011/g, "-").replace(/\u00a0/g, " "))
+              font.family: piece.code ? Style.font.family : Style.font.panelFamily
+              font.pixelSize: piece.code ? Style.font.panelMeta
+                : piece.head ? Style.font.panelHead
+                : piece.aside ? Style.font.panelAside : Style.font.panelBody
+              font.weight: piece.head ? Style.font.boldWeight : Style.font.normalWeight
+              renderType: Text.QtRendering
             }
 
             InlineImage {
@@ -404,20 +469,10 @@ Item {
             }
 
             // ------------------------------------------------------- tools
-            // ONE line for the whole batch, not one block per call. While the
-            // batch runs it is rewritten in place -- the current action, then a
-            // quiet tail of target, elapsed and a step COUNT -- and when the
-            // batch closes it freezes into a single past-tense line. Three
-            // commands is three lines of command text forever otherwise, which
-            // on a 460px card buries the answer.
-            //
-            // The verbosity is not deleted, only folded: clicking the line runs
-            // the drawer open on the real ToolCallRow blocks, commands and all.
-            //
-            // It is rebuilt whenever the piece list is (per token), and the
-            // breath survives that only because nothing streams while a tool
-            // runs: the live batch's delegate is created when the call starts
-            // and is not touched again until it returns.
+            // ONE line for the whole batch, not one block per call: rewritten in
+            // place while it runs, frozen into a past-tense line when it closes.
+            // The breath survives the per-token rebuild only because nothing
+            // streams while a tool runs.
             Item {
               id: batch
               width: piece.width
@@ -431,77 +486,36 @@ Item {
                 anchors { left: parent.left; right: parent.right; top: parent.top }
                 spacing: 1
 
-                Item {
+                Text {
+                  id: head
                   width: parent.width
-                  height: head.implicitHeight
-
-                  Text {
-                    id: head
-                    anchors { left: parent.left; right: chevron.left; rightMargin: 8 }
-                    // Live: what it is doing this second. Settled: what it did, in
-                    // total. The tool name only earns a word when the verb does not
-                    // already contain it -- "Running bash", but just "Reading".
-                    text: {
-                      if (!piece.live)
-                        return "⟩ " + turnItem.pastLabel(turnItem.batchKind(piece.cs), piece.cs.length)
-                          + (fmt.duration(turnItem.batchMs(piece.cs)) !== ""
-                              ? " · " + fmt.duration(turnItem.batchMs(piece.cs)) : "")
-                      var last = piece.cs[piece.cs.length - 1]
-                      var kind = turnItem.kindOf(last.name)
-                      var verb = turnItem.liveVerb(kind)
-                      return "⟩ " + (kind === "bash" || kind === "other"
-                        ? verb + " " + String(last.name).toLowerCase() : verb) + "…"
-                    }
-                    color: Theme.accent
-                    elide: Text.ElideRight
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.panelMeta
-                    font.weight: Style.font.boldWeight
-                    renderType: Text.NativeRendering
-
-                    // The same breath the spine and the bar dot keep, so the line
-                    // that is still being rewritten is visibly the live one. Gated on
-                    // `batchLive`, so a settled batch animates nothing.
-                    SequentialAnimation {
-                      running: piece.live
-                      loops: Animation.Infinite
-                      alwaysRunToEnd: true
-                      NumberAnimation {
-                        target: head; property: "opacity"; to: 0.45
-                        duration: Style.ori.breathMs / 2; easing.type: Style.anim.easingSmooth
-                      }
-                      NumberAnimation {
-                        target: head; property: "opacity"; to: 1
-                        duration: Style.ori.breathMs / 2; easing.type: Style.anim.easingSmooth
-                      }
-                    }
-
-                    onOpacityChanged: if (!piece.live && opacity !== 1) opacity = 1
+                  // Live: what it is doing this second. Settled: what it did, in
+                  // total. The tool name only earns a word when the verb does not
+                  // already contain it -- "Running bash", but just "Reading".
+                  text: {
+                    if (!piece.live)
+                      return "⟩ " + turnItem.pastLabel(turnItem.batchKind(piece.cs), piece.cs.length)
+                        + (fmt.duration(turnItem.batchMs(piece.cs)) !== ""
+                            ? " · " + fmt.duration(turnItem.batchMs(piece.cs)) : "")
+                    var last = piece.cs[piece.cs.length - 1]
+                    var kind = turnItem.kindOf(last.name)
+                    var verb = turnItem.liveVerb(kind)
+                    return "⟩ " + (kind === "bash" || kind === "other"
+                      ? verb + " " + String(last.name).toLowerCase() : verb) + "…"
                   }
-
-                  // The disclosure. It points down once the drawer is open, and it is
-                  // the only thing on the line that says the detail still exists.
-                  Text {
-                    id: chevron
-                    anchors.right: parent.right
-                    anchors.baseline: head.baseline
-                    text: "›"
-                    color: Theme.overlay0
-                    rotation: piece.open ? 90 : 0
-                    transformOrigin: Item.Center
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.panelMeta
-                    renderType: Text.NativeRendering
-
-                    Behavior on rotation {
-                      NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
-                    }
-                  }
+                  color: Theme.accent
+                  elide: Text.ElideRight
+                  // The same breath the spine and the bar dot keep, so the line
+                  // still being rewritten is visibly the live one.
+                  opacity: piece.live ? turnItem.breath : 1
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.panelMeta
+                  font.weight: Style.font.boldWeight
+                  renderType: Text.QtRendering
                 }
 
-                // The stat tail: everything that is NOT the current action, in one
-                // quiet line. It counts the steps rather than enumerating them --
-                // that is the whole point of the collapse.
+                // The stat tail: everything that is NOT the current action, in
+                // one quiet line, counted rather than enumerated.
                 Text {
                   width: parent.width
                   visible: piece.live
@@ -521,84 +535,42 @@ Item {
                   maximumLineCount: 1
                   font.family: Style.font.family
                   font.pixelSize: Style.font.panelMeta
-                  renderType: Text.NativeRendering
+                  renderType: Text.QtRendering
                 }
-              }
-
-              // The whole summary is the affordance, not a hit-box the size of a
-              // chevron. It does not cover the drawer: clicking a command you opened
-              // the drawer to read should not shut it again.
-              MouseArea {
-                anchors.fill: summary
-                cursorShape: Qt.PointingHandCursor
-                onClicked: turnItem.toggleTools(piece.modelData.n)
               }
 
               // ------------------------------------------------------- the detail
-              // Collapsed by animating to zero height, not by being switched off --
-              // the animation is what removes the row, the same idiom the
-              // notification cards close with.
-              Item {
+              // The commands themselves, when the work is unrolled. Switched, not
+              // animated: the narration and the batch lines above it appear the
+              // instant the receipt is clicked, and one row sliding under three
+              // that did not is worse than none sliding at all.
+              Column {
                 id: drawer
                 anchors { left: parent.left; right: parent.right; top: summary.bottom }
-                height: piece.open ? detail.implicitHeight : 0
-                clip: true
-                // At rest and closed it leaves the column entirely, so it cannot pay
-                // for a row of spacing it does not use.
-                visible: piece.open || height > 0.01
+                topPadding: 4
+                spacing: 4
+                visible: piece.open
+                height: piece.open ? implicitHeight : 0
 
-                Behavior on height {
-                  NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
-                }
+                Repeater {
+                  model: piece.cs
 
-                Column {
-                  id: detail
-                  width: parent.width
-                  topPadding: 4
-                  spacing: 4
-
-                  Repeater {
-                    model: piece.cs
-
-                    delegate: ToolCallRow {
-                      required property var modelData
-                      width: detail.width
-                      call: modelData
-                      // Only the last call of the turn being written can still be
-                      // open; `ms` is stamped the moment a call returns.
-                      live: turnItem.pending && modelData.ms === 0
-                      // Deliberately NOT the panel's live accent: a tool block is
-                      // mauve for good, so scrolling back you can tell at a glance
-                      // which parts of a conversation touched the machine. Only the
-                      // panel chrome tracks the state of the turn in flight.
-                    }
+                  delegate: ToolCallRow {
+                    required property var modelData
+                    width: drawer.width
+                    call: modelData
+                    // Only the last call of the turn being written can still be
+                    // open; `ms` is stamped the moment a call returns.
+                    live: turnItem.pending && modelData.ms === 0
+                    // Deliberately NOT the panel's live accent: a tool block is
+                    // mauve for good, so scrolling back you can tell which parts
+                    // of a conversation touched the machine.
                   }
                 }
               }
             }
           }
         }
-      }
-
-      // ------------------------------------------------------------ cost
-      // What the answer cost, kept with the answer. The rail above the
-      // composer only ever describes the turn in flight; this is how a turn
-      // from ten minutes ago still says how long it took and what it touched.
-      // The diamond is Ori's own signature, the same glyph as the bar's.
-      Text {
-        width: parent.width
-        visible: !turnItem.user && !turnItem.pending && turnItem.cost !== null
-        // The tool count used to ride here too; the settled batch line above now
-        // states it in words, and saying "3 tools" again two rows later is the
-        // kind of noise this whole change is about.
-        text: "◇ " + fmt.duration(turnItem.cost ? turnItem.cost.ms : 0)
-          + (turnItem.cost && turnItem.cost.tokens > 0
-              ? " · " + fmt.tokens(turnItem.cost.tokens) + " tok" : "")
-        color: Theme.overlay0
-        elide: Text.ElideRight
-        font.family: Style.font.family
-        font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
       }
     }
   }

@@ -71,7 +71,7 @@ Item {
           font.family: Style.font.family
           font.pixelSize: Style.font.panelMeta
           font.weight: Style.font.boldWeight
-          renderType: Text.NativeRendering
+          renderType: Text.QtRendering
         }
 
         Text {
@@ -84,7 +84,7 @@ Item {
           color: Theme.overlay0
           font.family: Style.font.family
           font.pixelSize: Style.font.panelMeta
-          renderType: Text.NativeRendering
+          renderType: Text.QtRendering
 
           // A slow fade in place, not a blink: the same heartbeat the mark and
           // the bar dot keep, so everything alive on this surface breathes
@@ -120,7 +120,7 @@ Item {
         elide: Text.ElideRight
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
     }
   }
