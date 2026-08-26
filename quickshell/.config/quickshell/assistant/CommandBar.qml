@@ -219,7 +219,7 @@ Rectangle {
            : "  ·  ⇥ complete   esc dismiss")
     color: Theme.overlay0
     elide: Text.ElideRight
-    font.family: Style.font.family
+    font.family: Style.font.panelMono
     font.pixelSize: Style.font.panelMeta
     renderType: Text.QtRendering
   }
@@ -267,7 +267,7 @@ Rectangle {
         // wrong one teaches the wrong thing about what Enter will insert.
         text: (root.arging ? "" : "/") + String(modelData.name)
         color: parent.on ? Theme.text : Theme.subtext0
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
@@ -282,7 +282,7 @@ Rectangle {
         text: String(modelData.description || "").split("\n")[0]
         color: Theme.overlay0
         elide: Text.ElideRight
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta - 2
         renderType: Text.QtRendering
       }

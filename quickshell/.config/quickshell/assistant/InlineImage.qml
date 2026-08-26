@@ -97,7 +97,7 @@ Item {
     wrapMode: Text.WrapAnywhere
     maximumLineCount: 2
     elide: Text.ElideRight
-    font.family: Style.font.family
+    font.family: Style.font.panelMono
     font.pixelSize: Style.font.panelMeta
     renderType: Text.QtRendering
   }

@@ -260,7 +260,7 @@ PanelWindow {
         anchors { left: mark.right; leftMargin: 10; verticalCenter: parent.verticalCenter }
         text: "Ori"
         color: Theme.text
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelBody
         font.weight: Style.font.boldWeight
         renderType: Text.QtRendering
@@ -273,7 +273,7 @@ PanelWindow {
         anchors { right: newBtn.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
         text: PiSession.workdir
         color: Theme.overlay0
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
@@ -292,7 +292,7 @@ PanelWindow {
           anchors.centerIn: parent
           text: "＋"
           color: newArea.containsMouse ? Theme.text : Theme.overlay0
-          font.family: Style.font.family
+          font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelBody
           renderType: Text.QtRendering
         }
@@ -477,7 +477,7 @@ PanelWindow {
         anchors.centerIn: parent
         text: "copied"
         color: Theme.subtext0
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
@@ -559,7 +559,7 @@ PanelWindow {
         text: "It runs in this repo, on this machine,\nwith a shell."
         color: Theme.subtext0
         wrapMode: Text.Wrap
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
@@ -571,7 +571,7 @@ PanelWindow {
         horizontalAlignment: Text.AlignHCenter
         text: "enter send · shift+enter newline\nctrl+n new · ctrl+c stop · esc close"
         color: Theme.alpha(Theme.overlay0, 0.75)
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
@@ -652,7 +652,7 @@ PanelWindow {
         text: panel.stateLabel
         color: panel.accent
         elide: Text.ElideRight
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         font.weight: Style.font.boldWeight
         renderType: Text.QtRendering
@@ -670,7 +670,7 @@ PanelWindow {
         text: fmt.duration(panel.elapsedMs)
           + (PiSession.liveTokens > 0 ? "  ↓ " + fmt.tokens(PiSession.liveTokens) : "")
         color: Theme.overlay0
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
@@ -695,7 +695,7 @@ PanelWindow {
         text: PiSession.error
         color: Theme.red
         wrapMode: Text.Wrap
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
@@ -724,7 +724,7 @@ PanelWindow {
         anchors { left: parent.left; leftMargin: 12; top: parent.top; topMargin: 10 }
         text: "⟩"
         color: entry.activeFocus ? panel.accent : Theme.overlay0
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelBody
         renderType: Text.QtRendering
 
@@ -908,7 +908,7 @@ PanelWindow {
         // than being left stranded on the end of an elided model id.
         text: PiSession.effortLabel !== "" ? "·  " + PiSession.effortLabel : ""
         color: Theme.overlay0
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
@@ -934,7 +934,7 @@ PanelWindow {
         text: PiSession.model
         color: Theme.overlay0
         elide: Text.ElideRight
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
@@ -949,7 +949,7 @@ PanelWindow {
         text: panel.contextLabel + " ctx · "
           + (PiSession.busy ? "live" : PiSession.warm ? "warm" : "cold")
         color: Theme.overlay0
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
@@ -965,7 +965,7 @@ PanelWindow {
                   verticalCenter: parent.verticalCenter; verticalCenterOffset: 1 }
         text: Usage.label
         color: Usage.tint
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
 

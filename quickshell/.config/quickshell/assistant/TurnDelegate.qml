@@ -49,6 +49,48 @@ Item {
   readonly property bool folded: !user && !pending && !workOpen && cut > 0
   readonly property var shown: folded ? pieces.slice(cut) : pieces
 
+  // ------------------------------------------------------------ piece model
+  // `shown` is a NEW ARRAY every time anything changes -- per token while the
+  // answer streams, and again the moment a tool call is logged. A Repeater
+  // handed a fresh JS array does not update its rows: it resets, destroying and
+  // recreating EVERY delegate. So one call arriving rebuilt the whole turn, each
+  // TextEdit re-laying out its entire answer, and that is the flicker you see
+  // when a batch line ticks from "Ran 2 commands" to "Ran 3".
+  //
+  // The array is diffed into this model instead. A row whose content is
+  // unchanged is left alone; a row whose text grew is a setProperty, which
+  // updates that delegate's bindings without recreating it. Only appends and
+  // truncations touch delegate lifetimes, so a streaming turn costs one row
+  // update per token instead of N destructions.
+  //
+  // dynamicRoles, because a piece is a plain JS object with a different shape
+  // per kind (text / tool / image / code) and a static role set cannot hold it.
+  ListModel {
+    id: pieceModel
+    dynamicRoles: true
+  }
+
+  // Stringify to compare: split() rebuilds the objects wholesale, so identity is
+  // never preserved and a field-by-field diff would have to know every shape.
+  // The strings are the ones split() just built anyway.
+  function syncPieces() {
+    var list = turnItem.shown
+    var n = list.length
+    for (var i = 0; i < n; i++) {
+      var next = JSON.stringify(list[i])
+      if (i < pieceModel.count) {
+        if (pieceModel.get(i).key !== next)
+          pieceModel.set(i, { m: list[i], key: next })
+      } else {
+        pieceModel.append({ m: list[i], key: next })
+      }
+    }
+    while (pieceModel.count > n) pieceModel.remove(pieceModel.count - 1)
+  }
+
+  onShownChanged: turnItem.syncPieces()
+  Component.onCompleted: turnItem.syncPieces()
+
   // The ledger of a settled turn on one line -- what it did, how long it took,
   // what it cost -- in the words the batch lines already print, with ONE label
   // over every call in the fold ("Ran 1 command · Ran 2 steps" is the inventory
@@ -226,7 +268,7 @@ Item {
 
           delegate: Item {
             id: sent
-            required property var modelData
+            required property var m
 
             implicitWidth: sent.modelData.image ? thumb.implicitWidth : gone.width
             implicitHeight: sent.modelData.image ? thumb.implicitHeight : gone.implicitHeight
@@ -257,7 +299,7 @@ Item {
               font.italic: true
               elide: Text.ElideRight
               maximumLineCount: 1
-              font.family: Style.font.family
+              font.family: Style.font.panelMono
               font.pixelSize: Style.font.panelMeta
               renderType: Text.QtRendering
             }
@@ -322,7 +364,7 @@ Item {
           text: turnItem.receipt()
           color: Theme.overlay0
           elide: Text.ElideRight
-          font.family: Style.font.family
+          font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelMeta
           renderType: Text.QtRendering
         }
@@ -343,7 +385,7 @@ Item {
           color: Theme.overlay0
           rotation: turnItem.workOpen ? 90 : 0
           transformOrigin: Item.Center
-          font.family: Style.font.family
+          font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelMeta
           renderType: Text.QtRendering
 
@@ -374,20 +416,20 @@ Item {
           // The fold is a MODEL, not a layout: a folded turn has fewer pieces,
           // and nothing moves when it settles -- the list is BottomToTop, so the
           // answer keeps its place and the work above it stops being drawn.
-          model: turnItem.shown
+          model: pieceModel
 
           delegate: Item {
             id: piece
             required property var modelData
 
-            readonly property bool isTool: piece.modelData.tool === true
-            readonly property bool code: piece.modelData.code === true
-            readonly property bool head: piece.modelData.head === true
-            readonly property bool bullet: piece.modelData.bullet === true
+            readonly property bool isTool: piece.m.tool === true
+            readonly property bool code: piece.m.code === true
+            readonly property bool head: piece.m.head === true
+            readonly property bool bullet: piece.m.bullet === true
             // Work, not the answer: on screen only while a turn is live or
             // unrolled, and quieter than the answer in both cases.
-            readonly property bool aside: piece.modelData.aside === true
-            readonly property var cs: piece.isTool ? piece.modelData.calls : []
+            readonly property bool aside: piece.m.aside === true
+            readonly property var cs: piece.isTool ? piece.m.calls : []
             readonly property bool live: piece.isTool && turnItem.batchLive(piece.cs)
             // The commands themselves. Never while the batch is live: the line
             // above already names the command it is running this second, and
@@ -398,11 +440,11 @@ Item {
             // not the 55 Qt indents a markdown list by, which at 426px of measure
             // cost a bullet its last word. Two levels of nesting, then it stops.
             readonly property int gutter: piece.bullet ? 14 : 0
-            readonly property int lead: (piece.modelData.depth || 0) * 14
+            readonly property int lead: (piece.m.depth || 0) * 14
 
             width: body.width
             implicitHeight: piece.isTool ? batch.height
-              : piece.modelData.image ? shot.implicitHeight
+              : piece.m.image ? shot.implicitHeight
               : chunk.y + chunk.implicitHeight + (piece.code ? 6 : 0)
             height: implicitHeight
 
@@ -422,7 +464,7 @@ Item {
               x: piece.lead
               y: chunk.y
               width: piece.gutter
-              text: piece.bullet ? piece.modelData.mark : ""
+              text: piece.bullet ? piece.m.mark : ""
               color: Theme.overlay0
               font.family: Style.font.panelFamily
               font.pixelSize: Style.font.panelBody
@@ -439,8 +481,8 @@ Item {
               // it, and a column with one spacing cannot say so on its own.
               y: piece.head ? 12 : piece.code ? 6 : 0
               width: parent.width - x - (piece.code ? 10 : 0)
-              visible: !piece.modelData.image
-              text: piece.modelData.image ? "" : piece.modelData.text
+              visible: !piece.m.image
+              text: piece.m.image ? "" : piece.m.text
               color: piece.aside ? Theme.overlay0 : Theme.text
               readOnly: true
               activeFocusOnPress: false
@@ -470,9 +512,9 @@ Item {
             InlineImage {
               id: shot
               width: parent.width
-              visible: piece.modelData.image
-              source: piece.modelData.image ? piece.modelData.source : ""
-              alt: piece.modelData.image ? piece.modelData.alt : ""
+              visible: piece.m.image
+              source: piece.m.image ? piece.m.source : ""
+              alt: piece.m.image ? piece.m.alt : ""
             }
 
             // ------------------------------------------------------- tools
@@ -515,7 +557,7 @@ Item {
                   // The same breath the spine and the bar dot keep, so the line
                   // still being rewritten is visibly the live one.
                   opacity: piece.live ? turnItem.breath : 1
-                  font.family: Style.font.family
+                  font.family: Style.font.panelMono
                   font.pixelSize: Style.font.panelMeta
                   font.weight: Style.font.boldWeight
                   renderType: Text.QtRendering
@@ -540,7 +582,7 @@ Item {
                   color: Theme.overlay0
                   elide: Text.ElideRight
                   maximumLineCount: 1
-                  font.family: Style.font.family
+                  font.family: Style.font.panelMono
                   font.pixelSize: Style.font.panelMeta
                   renderType: Text.QtRendering
                 }

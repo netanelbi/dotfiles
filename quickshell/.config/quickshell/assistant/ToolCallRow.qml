@@ -68,7 +68,7 @@ Item {
           text: "⟩ " + (row.call ? row.call.name : "")
           color: row.accent
           elide: Text.ElideRight
-          font.family: Style.font.family
+          font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelMeta
           font.weight: Style.font.boldWeight
           renderType: Text.QtRendering
@@ -82,7 +82,7 @@ Item {
           // running total for the whole turn is on the rail above the composer.
           text: row.live ? "running" : (row.call ? fmt.duration(row.call.ms) : "")
           color: Theme.overlay0
-          font.family: Style.font.family
+          font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelMeta
           renderType: Text.QtRendering
 
@@ -118,7 +118,7 @@ Item {
         // is one whose tail no longer identifies it anyway.
         maximumLineCount: 2
         elide: Text.ElideRight
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
