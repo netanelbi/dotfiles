@@ -327,10 +327,18 @@ PanelWindow {
   // output this clamp is doing real work rather than guarding a corner case.
   readonly property real markX: veil.originX >= 0 ? veil.originX : veil.width / 2
   readonly property real blockX: {
-    // Offset left of the mark rather than centred on it: the block reads left
-    // to right and its FIRST character is what the eye goes to, so the tether
-    // should land near the start of the text, not in the middle of it.
-    var x = veil.markX - 44
+    // Hung LEFT of the mark, not extending right from it. The original offset
+    // of 44 put the block's first character just left of the tether and let it
+    // run rightward -- which is fine for a mark in the middle of a bar and
+    // wrong for this one, because the cell sits beside the RIGHT island and
+    // there is barely any screen left in that direction. Reported as "aligned
+    // to the right too much".
+    //
+    // So the block's far edge sits near the mark and the text grows back
+    // towards the middle of the screen, where there is room. The 44 is kept as
+    // an overhang past the tether, so the tether still lands INSIDE the block
+    // rather than off its corner.
+    var x = veil.markX + 44 - Style.ori.veilBlockWidth
     return Math.max(10, Math.min(veil.width - Style.ori.veilBlockWidth - 10, x))
   }
 
@@ -373,59 +381,52 @@ PanelWindow {
 
   // ------------------------------------------------------------------ paint
   // ---------------------------------------------------------------- the pool
-  // A squashed radial disc of @crust. See the header for why it is a Shape
-  // holding a square rather than an ellipse.
-  Shape {
-    id: pool
-    width: 2 * Style.ori.veilPoolRx
-    height: width
-    x: veil.blockX + Style.ori.veilBlockWidth / 2 - width / 2
-    y: veil.poolCy - height / 2
+  // ------------------------------------------------------------------- card
+  // A DROPPED ISLAND, not a shadow. This was an edgeless scrim -- a squashed
+  // radial disc of @crust, sized to the text, with all the falloff spent
+  // between r=0.55 and r=1.0 so the dim rows stayed above their own
+  // background. It was carefully built and it was the wrong idea.
+  //
+  // Over a dark wallpaper it read as light coming through. Over Gmail it read
+  // as a grey smudge left on the screen: "its beed big... doesnt feel
+  // embeded". An edgeless surface needs something to bleed INTO, and an
+  // arbitrary bright document is not it.
+  //
+  // What makes a surface feel embedded is looking like part of the thing it
+  // hangs off. So it borrows the bar's own language exactly -- island radius,
+  // surface colour, one hairline edge -- and reads as the bar extending
+  // downward rather than as something floating over an unrelated app.
+  //
+  // Sized to the block plus padding rather than to a fixed rectangle, so three
+  // short lines do not lay a card the height of a paragraph over someone's
+  // inbox.
+  Rectangle {
+    id: card
+    readonly property int pad: 12
+    // FLUSH to the bar, not floating under it. As a free-standing rounded box
+    // it read as a panel from another application that happened to be near the
+    // top of the screen -- "its beed big... doesnt feel embeded", and then
+    // "disgusting" once it was seen over a real window. Nothing about it said
+    // where it came from.
+    //
+    // Hung from y=0 with only the BOTTOM corners rounded, in the bar's own
+    // colour, it reads as the bar growing downward, which is the one thing it
+    // actually is.
+    x: Math.round(veil.blockX - pad)
+    y: 0
+    width: Style.ori.veilBlockWidth + 2 * pad
+    height: Style.ori.veilBlockY + Math.round(block.height) + pad
+    topLeftRadius: 0
+    topRightRadius: 0
+    bottomLeftRadius: Style.bar.islandRadius
+    bottomRightRadius: Style.bar.islandRadius
+    color: Theme.base
+    border.width: 1
+    border.color: Theme.alpha(Theme.surface1, 0.9)
     opacity: veil.poolT
-    preferredRendererType: Shape.CurveRenderer
 
-    transform: Scale {
-      origin.x: pool.width / 2
-      origin.y: pool.height / 2
-      yScale: veil.poolRy / (pool.height / 2)
-    }
-
-    ShapePath {
-      strokeWidth: -1
-      fillGradient: RadialGradient {
-        centerX: pool.width / 2
-        centerY: pool.height / 2
-        centerRadius: pool.width / 2
-        focalX: centerX
-        focalY: centerY
-        // THE STOPS THAT DECIDE WHETHER THIS SURFACE WORKS, and they were
-        // moved once already after a capture over a bright document proved
-        // OriArrival's originals wrong at this size. Its 0.35 stop put ~0.6
-        // alpha of @crust behind two lines of text; over white that lands at
-        // roughly the luminance of @overlay0, which is the colour half the
-        // rows here are written in, and the dim rows disappeared into their own
-        // background. (The contact sheet predicted exactly this and the fix is
-        // measured, not guessed: see out/veil_*_doc.png.)
-        //
-        // The block's last line sits at r=0.42 of this radius by construction
-        // (see poolRy), so the PLATEAU has to reach past it -- 0.55 -- and all
-        // the falloff is then spent between 0.55 and 1.0. That is still a
-        // shadow with no edge anywhere; it is just a shadow with a middle.
-        //
-        // 0.95 and not 0.90 for one measured reason: at 0.90 a black heading
-        // on a white page still came through the plateau at 16 levels of 255,
-        // which on 40px type is perfectly legible and read as two documents
-        // fighting. At 0.95 it is 4 levels, which is a texture.
-        GradientStop { position: 0.00; color: Theme.alpha(Theme.crust, 0.98) }
-        GradientStop { position: 0.55; color: Theme.alpha(Theme.crust, 0.95) }
-        GradientStop { position: 0.85; color: Theme.alpha(Theme.crust, 0.30) }
-        GradientStop { position: 1.00; color: Theme.alpha(Theme.crust, 0) }
-      }
-      startX: 0; startY: 0
-      PathLine { x: pool.width; y: 0 }
-      PathLine { x: pool.width; y: pool.height }
-      PathLine { x: 0; y: pool.height }
-      PathLine { x: 0; y: 0 }
+    Behavior on height {
+      NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
     }
   }
 
@@ -599,7 +600,7 @@ PanelWindow {
       renderType: Text.NativeRendering
     }
 
-    Item { width: 1; height: 12 }
+    Item { width: 1; height: 6 }
 
     // ------------------------------------------------------------ the hints
     // The ONLY place the right-click toggle is written down, and it costs

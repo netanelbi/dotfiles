@@ -250,8 +250,8 @@ Singleton {
     // The block's column, and where the pool's centre sits inside the surface.
     // 512 fits a 58-character question at panelMeta without eliding, which is
     // most of them.
-    readonly property int veilBlockWidth: 512
-    readonly property int veilBlockY: 22
+    readonly property int veilBlockWidth: 380
+    readonly property int veilBlockY: 12
     // The pool's horizontal radius. Wide and soft: the words have to be legible
     // over an arbitrary window and the only way to buy that without drawing a
     // card is a shadow with no edge anywhere. Its VERTICAL radius and its
