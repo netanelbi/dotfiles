@@ -79,7 +79,16 @@ PanelWindow {
     return panel.screen
   }
 
-  readonly property int panelWidth: 460
+  // 560, not the 460 it was pinned at for three rounds. The user's verdict was
+  // "i feel like its too small or not clear", and then, having seen it, "the
+  // size of the panel was better in A". At 460 the answer's measure was 426px --
+  // about 58 characters, under a comfortable reading measure and narrow enough
+  // that one inline path could take a whole line. 560 gives it 526px, ~66
+  // characters of Adwaita Sans at 19: the measure a paragraph wants. On this
+  // machine's 1280 logical points that is 44% of the screen, which is what a
+  // working sidebar costs. Rendered against THIS frame at that width -- the card
+  // still reads as a floating card and needs no adjustment.
+  readonly property int panelWidth: 560
 
   WlrLayershell.namespace: "quickshell-assistant"
   WlrLayershell.layer: WlrLayer.Top

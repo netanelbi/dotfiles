@@ -57,39 +57,50 @@ Item {
   // TextEdit re-laying out its entire answer, and that is the flicker you see
   // when a batch line ticks from "Ran 2 commands" to "Ran 3".
   //
-  // The array is diffed into this model instead. A row whose content is
-  // unchanged is left alone; a row whose text grew is a setProperty, which
-  // updates that delegate's bindings without recreating it. Only appends and
-  // truncations touch delegate lifetimes, so a streaming turn costs one row
-  // update per token instead of N destructions.
+  // ---------------------------------------------------------------- churn
+  // The Repeater below is driven by a COUNT, not by `shown` itself, and the
+  // delegate looks its own piece up by index. That is the whole fix for the
+  // flicker the user reported -- "the moment a new bash is running it says 2
+  // commands run then switch to 3, there is a flicker like something is
+  // rendering and then switching and settling".
   //
-  // dynamicRoles, because a piece is a plain JS object with a different shape
-  // per kind (text / tool / image / code) and a static role set cannot hold it.
-  ListModel {
-    id: pieceModel
-    dynamicRoles: true
-  }
-
-  // Stringify to compare: split() rebuilds the objects wholesale, so identity is
-  // never preserved and a field-by-field diff would have to know every shape.
-  // The strings are the ones split() just built anyway.
-  function syncPieces() {
-    var list = turnItem.shown
-    var n = list.length
-    for (var i = 0; i < n; i++) {
-      var next = JSON.stringify(list[i])
-      if (i < pieceModel.count) {
-        if (pieceModel.get(i).key !== next)
-          pieceModel.set(i, { m: list[i], key: next })
-      } else {
-        pieceModel.append({ m: list[i], key: next })
-      }
-    }
-    while (pieceModel.count > n) pieceModel.remove(pieceModel.count - 1)
-  }
-
-  onShownChanged: turnItem.syncPieces()
-  Component.onCompleted: turnItem.syncPieces()
+  // `pieces` is `fmt.split(...)`, which builds a BRAND NEW JS array on every
+  // token and every tool-call update. A Repeater handed a fresh array does not
+  // update its rows -- it resets: every delegate destroyed and rebuilt, every
+  // TextEdit re-laying out the whole answer from scratch. That teardown and
+  // rebuild IS the render-then-settle flash.
+  //
+  // A count is an int. When a token arrives and the piece list is the same
+  // LENGTH, the binding produces the same int, no change is signalled, and not
+  // one delegate is touched. The delegates' own `m` bindings do re-evaluate
+  // against the new array, but assigning a TextEdit the string it already holds
+  // is a no-op inside Qt -- so an unchanged piece costs one property read and an
+  // equality test. Only a real structural change (a piece appended, or the fold
+  // slicing some away) creates or destroys anything, and then only the
+  // difference.
+  //
+  // Measured, not assumed. ../fixtureE.py drives a twelve-step turn with three
+  // tool calls landing one at a time -- the exact moment the user described --
+  // and the piece delegate logs its own creation. Two builds differing ONLY in
+  // this model line:
+  //   model: turnItem.shown          50 piece delegates built
+  //   model: turnItem.shown.length   22
+  // The outer TurnDelegate is built twice in both runs, so that residue is
+  // genuine structural growth inside one turn (the answer really does gain
+  // pieces as each batch lands), not the list recycling rows underneath.
+  //
+  // A ListModel was tried first and is the wrong tool twice over: with
+  // `dynamicRoles: true` the roles are never injected into the delegate, so
+  // `required property var m` cannot resolve and NOTHING is built (the panel
+  // renders every turn as a bare receipt line with no answer); and without
+  // dynamicRoles a ListModel flattens nested objects, so a piece -- which is a
+  // different shape per kind, and carries a `calls` array -- cannot live in a
+  // role at all.
+  //
+  // The empty piece is a stable object, not a fresh `{}` per evaluation: the
+  // index can briefly sit past the end of a shrinking array, and a literal there
+  // would hand every delegate a new identity on every pass.
+  readonly property var noPiece: ({})
 
   // The ledger of a settled turn on one line -- what it did, how long it took,
   // what it cost -- in the words the batch lines already print, with ONE label
@@ -249,6 +260,19 @@ Item {
         wrapMode: Text.Wrap
         font.family: Style.font.panelFamily
         font.pixelSize: Style.font.panelBody
+        // MEDIUM, and only here. "my input messages render a little blurry" is
+        // this one Text and no other, and the geometry was measured clean before
+        // anything was changed: pill x=66 w=374 h=60, the text at scene 104,214,
+        // listW=440 -- every one an integer, so nothing was landing off the
+        // device grid at 1.5x. What makes THIS text softer than the answer is
+        // that it is the only prose on the card sitting on a LIGHT ground
+        // (surface1), where the distance-field renderer's edge falloff eats a
+        // larger share of an already thin stem. Measured over the bubble's own
+        // glyph pixels, the share that are solid rather than partial coverage
+        // goes 54.2% -> 64.8% with the new face at this weight
+        // (../frames2/bubble-2x.png). renderType is NOT touched: NativeRendering
+        // is what made this panel look thin at 1.5x in the first place.
+        font.weight: Font.Medium
         renderType: Text.QtRendering
       }
 
@@ -416,11 +440,18 @@ Item {
           // The fold is a MODEL, not a layout: a folded turn has fewer pieces,
           // and nothing moves when it settles -- the list is BottomToTop, so the
           // answer keeps its place and the work above it stops being drawn.
-          model: pieceModel
+          // The COUNT. See the `noPiece` block at the top of this file for why
+          // this is not `turnItem.shown`.
+          model: turnItem.shown.length
 
           delegate: Item {
             id: piece
-            required property var modelData
+            // ONLY index is required. An integer model provides nothing else,
+            // and a delegate that requires a property the model cannot supply
+            // fails to build -- silently, with a clean config log and a panel
+            // missing every answer.
+            required property int index
+            readonly property var m: turnItem.shown[piece.index] || turnItem.noPiece
 
             readonly property bool isTool: piece.m.tool === true
             readonly property bool code: piece.m.code === true
@@ -429,7 +460,7 @@ Item {
             // Work, not the answer: on screen only while a turn is live or
             // unrolled, and quieter than the answer in both cases.
             readonly property bool aside: piece.m.aside === true
-            readonly property var cs: piece.isTool ? piece.m.calls : []
+            readonly property var cs: piece.isTool ? (piece.m.calls || []) : []
             readonly property bool live: piece.isTool && turnItem.batchLive(piece.cs)
             // The commands themselves. Never while the batch is live: the line
             // above already names the command it is running this second, and
@@ -482,16 +513,22 @@ Item {
               y: piece.head ? 12 : piece.code ? 6 : 0
               width: parent.width - x - (piece.code ? 10 : 0)
               visible: !piece.m.image
-              text: piece.m.image ? "" : piece.m.text
+              // `|| ""`: a tool piece carries no text at all, and binding
+              // undefined here logged "Unable to assign [undefined] to QString"
+              // on every batch line drawn.
+              text: piece.m.image ? "" : (piece.m.text || "")
               color: piece.aside ? Theme.overlay0 : Theme.text
               readOnly: true
               activeFocusOnPress: false
               wrapMode: TextEdit.Wrap
-              // Markdown, or every emphasis arrives as literal **asterisks**; an
-              // unclosed marker mid-stream renders plain and settles on its
-              // partner. PlainText for a fence, where markdown would eat a
-              // shell line's punctuation.
-              textFormat: piece.code ? TextEdit.PlainText : TextEdit.MarkdownText
+              // RICH text, not markdown. Fmt.rich() has already turned this
+              // paragraph's `code`, **bold** and *emphasis* into spans, and the
+              // whole point of doing it there is the one thing Qt's markdown
+              // renderer will not allow: an inline code span at a size and in a
+              // face of our choosing. An unclosed marker mid-stream renders
+              // plain and settles on its partner exactly as before. PlainText
+              // for a fence, where markup would eat a shell line's punctuation.
+              textFormat: piece.code ? TextEdit.PlainText : TextEdit.RichText
               // Selecting copies, on its own (Copy.qml). Per BLOCK: the answer is
               // a column of pieces, and a drag cannot cross from one to the next.
               selectByMouse: true
@@ -501,11 +538,11 @@ Item {
               // also RUNS: real hyphens, real spaces, no zero-width anything.
               onSelectedTextChanged: Copy.take(selectedText
                 .replace(/\u200b/g, "").replace(/\u2011/g, "-").replace(/\u00a0/g, " "))
-              font.family: piece.code ? Style.font.family : Style.font.panelFamily
+              font.family: piece.code ? Style.font.panelMono : Style.font.panelFamily
               font.pixelSize: piece.code ? Style.font.panelMeta
                 : piece.head ? Style.font.panelHead
                 : piece.aside ? Style.font.panelAside : Style.font.panelBody
-              font.weight: piece.head ? Style.font.boldWeight : Style.font.normalWeight
+              font.weight: piece.head ? Font.DemiBold : Style.font.normalWeight
               renderType: Text.QtRendering
             }
 
@@ -602,10 +639,13 @@ Item {
                 height: piece.open ? implicitHeight : 0
 
                 Repeater {
-                  model: piece.cs
+                  // A count here too: `cs` is a slice of the same rebuilt
+                  // array, so it is a new identity on every update as well.
+                  model: piece.cs.length
 
                   delegate: ToolCallRow {
-                    required property var modelData
+                    required property int index
+                    readonly property var modelData: piece.cs[index] || turnItem.noPiece
                     width: drawer.width
                     call: modelData
                     // Only the last call of the turn being written can still be
