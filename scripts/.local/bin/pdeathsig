@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""pdeathsig — run a command that dies when its parent dies, even on SIGKILL.
+
+Sets PR_SET_PDEATHSIG(SIGTERM) on itself, then execs the given command. The
+kernel delivers SIGTERM to the process the moment its parent thread dies, so a
+long-lived child (a Quickshell ScriptWidget watcher, say) is reaped even when
+the parent is SIGKILLed and never gets a chance to signal it. Without this, a
+SIGKILLed parent orphans the child, which keeps running and leaks whatever it
+holds (inotify watches, sockets, ...).
+
+Usage: pdeathsig <command> [args...]
+"""
+import ctypes
+import os
+import sys
+
+if len(sys.argv) < 2:
+    sys.stderr.write("usage: pdeathsig <command> [args...]\n")
+    sys.exit(2)
+
+# PR_SET_PDEATHSIG = 1, SIGTERM = 15
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.prctl(1, 15, 0, 0, 0) != 0:
+    sys.stderr.write("pdeathsig: prctl failed: %s\n" % os.strerror(ctypes.get_errno()))
+    sys.exit(1)
+
+os.execvp(sys.argv[1], sys.argv[1:])

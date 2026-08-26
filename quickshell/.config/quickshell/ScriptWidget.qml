@@ -146,10 +146,13 @@ BarWidget {
   //      kept its inotify watch / socket forever. That is what exhausted the
   //      inotify slots.
   //   2. `~` is expanded here (expandHome) instead of by sh.
+  //   pdeathsig is addressed by absolute path: quickshell's Process PATH does
+  //   not include ~/.local/bin (the old `sh -lc` sourced the login profile for
+  //   it), so a bare name would fail to resolve.
   Process {
     id: proc
     running: root.script !== ""
-    command: ["pdeathsig", root.expandHome(root.script)]
+    command: [Quickshell.env("HOME") + "/.local/bin/pdeathsig", root.expandHome(root.script)]
     environment: root.scriptEnvironment
     stdout: SplitParser { onRead: function (line) { root.ingest(line) } }
     onExited: function (exitCode, exitStatus) {
