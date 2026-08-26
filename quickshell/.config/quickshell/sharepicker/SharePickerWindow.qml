@@ -86,7 +86,25 @@ PanelWindow {
 
   // Filtered, for the same reason focusedScreen() is: offering a headless
   // output as a share target hands the far end a black rectangle.
-  readonly property var screens: Quickshell.screens.filter(win.realScreen)
+  //
+  // ...and ORDERED THE WAY THEY SIT ON THE DESK, left to right, by the
+  // compositor's own layout coordinates. Quickshell hands them over in
+  // whatever order the compositor enumerated them, which has nothing to do
+  // with where they physically are -- on this machine the Dell is at x=0 and
+  // the laptop at x=1920, so "the left one" and "the first one" were free to
+  // disagree. Picking the wrong screen to share is a mistake you make in front
+  // of other people, and it is worth a sort to avoid.
+  //
+  // y is the tiebreak, so a stacked pair reads top to bottom.
+  readonly property var screens: {
+    var out = Quickshell.screens.filter(win.realScreen).slice()
+    out.sort(function (a, b) {
+      var ma = Hyprland.monitorFor(a), mb = Hyprland.monitorFor(b)
+      if (!ma || !mb) return 0
+      return ma.x !== mb.x ? ma.x - mb.x : ma.y - mb.y
+    })
+    return out
+  }
   readonly property var windows: controller ? controller.windowEntries : []
 
   // 0 = Screens, 1 = Windows. Held per tab so switching back returns you to
