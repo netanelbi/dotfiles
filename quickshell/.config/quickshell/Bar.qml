@@ -151,6 +151,23 @@ PanelWindow {
       // custom/gamepads -- one span per connected pad, in its own lightbar colour.
       Gamepads { }
 
+      // NOT a waybar module -- the first thing in this island that is not.
+      // swaync's tray icon is what it replaces, and this shell dropped that in
+      // the port: the control centre came across whole and nothing was left
+      // that opens it (no module, and no keybind either -- hyprland.lua binds
+      // eleven other ipc targets and not that one). So this is both the held
+      // count and the door.
+      //
+      // Here rather than in the right island for a measured reason. The right
+      // island is anchored right, so a module appearing in it grows the island
+      // LEFTWARD -- and oriZone.x is bound to that island's leading edge, so
+      // the assistant's mark would slide ~30px sideways every time a batch
+      // opened. The comment on `zoneWidth` in Style.qml calls the battery's own
+      // 8px of drift out as a problem; four times that, triggered by a Slack
+      // message, is not a trade worth making. This island is where every
+      // collapse-when-idle indicator already lives.
+      Inbox { }
+
       // Ori is NOT here any more. It used to be the last module in this island
       // and it read as the ninth status chip in a row of eight. It now lives
       // unhoused in the gap to the right -- see `oriZone` below.

@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Notifications
+import "root:/"
 
 // The notification daemon: org.freedesktop.Notifications, in place of swaync.
 //
@@ -187,8 +188,27 @@ Scope {
     // A notification carried over a config reload is already old news: it goes
     // back in the panel, it does not pop up again.
     var carried = fresh && notification.lastGeneration
-    var suppressed = root.centerOpen || carried
-      || (root.dnd && notification.urgency !== NotificationUrgency.Critical)
+
+    // TRIAGE. Do Not Disturb used to be the only reason a normal notification
+    // was held back, and holding it back was all that happened -- the card
+    // never drew and nothing anywhere said one had arrived. Triage.qml widens
+    // the test to three signals the desktop already maintains (dnd, a
+    // fullscreen window, an idle session) and, more to the point, COUNTS what
+    // it holds so the bar can say so.
+    //
+    // Behaviour for the dnd case is unchanged, including the exemption:
+    // `Triage.shouldHold()` covers `root.dnd`, and Critical is excluded here
+    // exactly as it was in the expression this replaces. What is new is the
+    // other two signals, and `note()`.
+    //
+    // Not while the centre is open: the user is looking at the list, so there
+    // is nothing to catch them up on.
+    var held = !carried && !root.centerOpen
+      && notification.urgency !== NotificationUrgency.Critical
+      && Triage.shouldHold()
+    if (held) Triage.note(entry.key)
+
+    var suppressed = root.centerOpen || carried || held
 
     if (!suppressed) {
       var ms = root.timeoutFor(notification)
@@ -490,6 +510,10 @@ Scope {
     if (root.centerOpen) return
     root.centerOpen = true
     root.clockTick = Date.now()
+    // The batch has been seen. This is the ONLY thing that clears it -- not a
+    // timeout, and not heads-down ending, because a digest that expired before
+    // it was read would be the black hole it exists to close.
+    Triage.release()
     // swaync shows no popups while its panel is up; the panel is the list now.
     root.hideAllPopups()
   }
@@ -536,6 +560,13 @@ Scope {
   // --------------------------------------------------------------- views
   NotificationPopups { store: root }
   NotificationCenter { store: root }
+
+  // --------------------------------------------------------------- triage
+  // Pushed rather than pulled: Triage is a singleton and this store is a
+  // component, so the singleton cannot reach in here -- and it deliberately
+  // keeps no notifications of its own, deriving its whole digest from the
+  // `history` handed over on this line. One direction, one copy of the truth.
+  Component.onCompleted: Triage.store = root
 
   // ----------------------------------------------------------------- ipc
   // The swaync-client surface, so muscle memory and existing scripts port
@@ -618,6 +649,34 @@ Scope {
     function hideAll(): string {
       root.hideAllPopups()
       return "hidden"
+    }
+
+    // ------------------------------------------------------------- triage
+    // swaync had no equivalent, so these are not parity -- they are here
+    // because Triage is a singleton and a singleton's own IpcHandler is never
+    // registered (it has to hang off the object tree; that is why OriIpc.qml
+    // exists for PiSession). This handler is already mounted, and triage is
+    // notification state, so it belongs on this target rather than in a second
+    // mount line in shell.qml.
+    //
+    //   qs ipc call notifications triage        one line, or "nothing held"
+    //   qs ipc call notifications triageDetail  a row per app
+    //   qs ipc call notifications triageState   why the batch is open
+    function triage(): string {
+      return Triage.held === 0 ? "nothing held" : Triage.oneLine
+    }
+
+    function triageDetail(): string {
+      return Triage.held === 0 ? "nothing held" : Triage.detail
+    }
+
+    function triageState(): string {
+      return "headsDown=" + (Triage.headsDown ? "true" : "false")
+        + " reason=" + (Triage.reason === "" ? "-" : Triage.reason)
+        + " immersed=" + (Triage.immersed ? "true" : "false")
+        + " away=" + (Triage.away ? "true" : "false")
+        + " quiet=" + (Triage.quiet ? "true" : "false")
+        + " held=" + Triage.held
     }
   }
 }
