@@ -151,10 +151,9 @@ PanelWindow {
       // custom/gamepads -- one span per connected pad, in its own lightbar colour.
       Gamepads { }
 
-      // Ori's readout. Gone when there is nothing to say, a dim glyph while
-      // warm, and a live strip -- verb, elapsed, characters streamed, scan
-      // line -- while it works or while an answer waits unread.
-      OriDot { id: oriDot }
+      // Ori is NOT here any more. It used to be the last module in this island
+      // and it read as the ninth status chip in a row of eight. It now lives
+      // unhoused in the gap to the right -- see `oriZone` below.
     }
 
     Island {
@@ -169,6 +168,62 @@ PanelWindow {
       Network { }
       Audio { }
       Battery { }
+    }
+
+    // ------------------------------------------------------------- ori's cell
+    // The assistant's ONLY permanent presence, and it is entirely inside this
+    // bar's own 30px strip. Twelve earlier designs put light on the desktop and
+    // every one was rejected for the same reason, in the user's words: "they all
+    // share the same issue. its on the main windows and it will bother me on
+    // other windows." OriAura (a wash across the whole screen edge) and
+    // OriArrival (the answer's first line, hung under the bar) are deleted --
+    // they were exactly that fault, 750 lines of it.
+    //
+    // ------------------------------------------------------------- the zone
+    // A fixed-width Item positioned by `x`, deliberately NOT a member of any
+    // island's Row. Its width is a constant -- the cell's EXPANDED footprint --
+    // and the cell animates inside it. So compact and expanded are the same
+    // reservation, and nothing the assistant does can push the clock island or
+    // the tray island by a pixel.
+    //
+    // Its x follows the RIGHT island's leading edge, so what is held constant is
+    // the GAP rather than an absolute position: the right island grows by ~8px
+    // when the battery drops from 100% to 9%, and anchoring to the bar instead
+    // would hold the mark still and let the gap close on it.
+    //
+    // The right gap and not the left: the left one holds the window-title list,
+    // which is replaced wholesale on every workspace switch and can be several
+    // hundred px wide.
+    Item {
+      id: oriZone
+      width: Style.ori.zoneWidth
+      height: Style.bar.islandHeight
+      anchors.verticalCenter: parent.verticalCenter
+      // Clamped off the CENTRE island's trailing edge as well, and only ever
+      // as a floor. On both of this repo's machines the right gap is far wider
+      // than the reservation -- 355px against 172 on eDP-1's 1280 logical --
+      // so the clamp never engages and the mark is welded to the right island,
+      // which is the whole design: the gap is what is held constant. On a
+      // screen narrow enough that the two islands nearly meet, it slides the
+      // mark right rather than letting the clock bury it. A mark that moves is
+      // a worse mark; a mark that is hidden is not a mark.
+      x: Math.max(centerIsland.x + centerIsland.width + Style.bar.islandPaddingH,
+                  rightIsland.x - Style.ori.zoneGap - width)
+      // Belt and braces on the promise this whole design makes: whatever the
+      // cell does, it cannot paint outside the zone, and the zone is inside the
+      // bar. Nothing reaches a window.
+      clip: true
+
+      OriCell {
+        id: oriCell
+        // ...and when even the clamp cannot find room, the cell stays shut.
+        // Measured on a 960-logical output: the two islands leave 88px, the
+        // open cell wants 144, and the tail of "1m 11s" was drawn across the
+        // tray icons. Refusing to open is the right failure -- the mark, the
+        // rule and the state are all still there, and the hover panel carries
+        // every word the readout would have. Nothing is lost but the glance.
+        cramped: bar.oriRoom < Style.ori.zoneWidth + 2 * Style.ori.zoneGap
+      }
     }
   }
 
@@ -190,78 +245,53 @@ PanelWindow {
     cardTop: Style.bar.marginTop + Style.bar.height + 4
   }
 
-  // ------------------------------------------------------------- ori's light
-  // The ambient half of the assistant: a fixed-size, input-transparent layer
-  // surface hanging off the bar's underside, which lights up while Ori works
-  // and floods once when an answer lands. Mounted here rather than in
-  // shell.qml for the same reason CalendarPopup is -- it is one surface PER
-  // MONITOR, and the bar is the thing that already exists per monitor.
+  // ------------------------------------------------------------- ori's veil
+  // The hover panel -- the one surface allowed to lie over the user's windows,
+  // because they asked for it: "when hovering with the mouse it expands under
+  // in a good design on top of other windows so i can see the more details."
+  //
+  // Mounted here for the reason CalendarPopup is: it is one surface PER
+  // MONITOR, and the bar is the thing that already exists per monitor. Built
+  // already-visible and destroyed on leave, so a desktop nobody is pointing at
+  // carries no extra layer surface at all.
   //
   // It is above the widgets in this file, which would normally kill every
   // widget's click (see the INPUT note at the top). It does not, because it is
-  // a separate surface with an empty input mask. Nothing inside `content` may
-  // take that liberty.
-  //
-  // Built and destroyed with the work, so an idle desktop carries no extra
-  // layer surface at all. It must be built ALREADY VISIBLE -- see OriAura's
-  // header for what a hidden-then-shown layer surface does.
-  property bool auraRetain: false
+  // a separate surface whose input mask is the text block alone. Nothing
+  // inside `content` may take that liberty.
+
+  // The pointer's own answer, and the ONLY thing that raises the surface.
+  readonly property bool veilWanted: oriCell.hovered
+  // ...and a second term, because the surface has to OUTLIVE the hover by the
+  // length of its exit animation: a loader that dropped the object on the frame
+  // the pointer left would cut the retraction off at its first frame. The veil
+  // clears this itself when it has finished leaving.
+  property bool veilRetaining: false
+  onVeilWantedChanged: if (veilWanted) bar.veilRetaining = true
 
   LazyLoader {
-    // The flare outlives `unread`, which a click clears the instant the panel
-    // opens; the retain flag is what lets the light finish decaying instead of
-    // being cut off mid-fade.
-    // `error` is its own term: a crashed child never fires settled(), so
-    // `unread` stays false and the failure would light nothing.
-    active: PiSession.busy || PiSession.unread || PiSession.error !== "" || bar.auraRetain
+    id: veilLoader
+    // An OR and not a latch: `veilWanted` alone decides existence on the way
+    // in, so there is no initial-value case where the surface waits for a
+    // change signal that a constant true will never send.
+    active: bar.veilWanted || bar.veilRetaining
 
-    component: OriAura {
+    component: OriVeil {
       barScreen: bar.screen
-      onFadingChanged: bar.auraRetain = fading
-    }
-  }
-
-  // ----------------------------------------------------------- ori's answer
-  // The third and last surface the assistant owns on this monitor: the WORDS,
-  // hung under the bar on a thread of light that leaves the seam at the ◆'s own
-  // x. It replaces the `notify-send` OriDot used to spawn -- see the block in
-  // OriDot.qml for why the notification centre is not missed.
-  //
-  // Mounted beside the aura and for the same reasons: one per monitor, exactly
-  // like the mark and the light, built already-visible, and gone entirely when
-  // Ori has nothing to say. Also above the widgets in this file, and also
-  // harmless there -- a separate surface whose input mask is the text block
-  // alone (the INPUT note at the top of this file is about `content`).
-  property bool arrivalLive: false
-
-  Connections {
-    target: PiSession
-    // The same gate the mark and the aura use: with the panel open the answer
-    // is already arriving in front of you, and repeating its first line under
-    // the bar is noise.
-    function onSettled() {
-      if (PiSession.panelOpen) return
-      bar.arrivalLive = true
-      // Already speaking -- a second answer must replace the sentence rather
-      // than be dropped, and the surface it needs is the one already up.
-      if (arrivalLoader.item) arrivalLoader.item.announce()
-    }
-  }
-
-  LazyLoader {
-    id: arrivalLoader
-    active: bar.arrivalLive
-
-    component: OriArrival {
-      barScreen: bar.screen
-      // A live binding, not a measurement: the readout opens the moment an
-      // answer lands and slides the whole centre island for 240ms afterwards,
-      // so a value latched at the settle points 25px away from the mark it
-      // claims to come out of. See OriDot.markX.
-      originX: Style.bar.marginSide + oriDot.markX
-      // PUSHED, like the aura's `fading` -- a loader whose `active` reads a
-      // property of the object it decides the existence of is a binding loop.
-      onDone: bar.arrivalLive = false
+      // The mark's x on the SCREEN. A live binding, not a measurement -- the
+      // zone's x follows the right island, which moves when the battery or the
+      // tray changes. It is computed HERE rather than inside the cell because
+      // the thing that moves the glyph is the ZONE: `mapToItem` inside the
+      // widget is not a reactive expression and had no dependency it could be
+      // given (it returned a stale -161 in a capture, which is how this was
+      // found). `content` sits at x=0 inside the bar window, so the bar's own
+      // side margin is the only other term.
+      originX: Style.bar.marginSide + oriZone.x + Style.ori.haloBox / 2
+      // PUSHED into the surface, not read out of it -- a loader whose `active`
+      // reads a property of the object it decides the existence of is a
+      // binding loop (the same shape Assistant.qml solves the same way).
+      anchored: bar.veilWanted
+      onDone: bar.veilRetaining = false
     }
   }
 
@@ -273,6 +303,10 @@ PanelWindow {
   // The touch is an ASSIGNMENT, not a `readonly property x: Singleton.y`
   // binding: an unread binding is evaluated lazily, so the singleton came up
   // on some reloads and not others, and reminders silently did not run.
+  // How much bar there is between the centre and right islands. Read by the
+  // cell, which will not open into a gap that cannot hold it.
+  readonly property real oriRoom: rightIsland.x - (centerIsland.x + centerIsland.width)
+
   property bool remindersLive: false
   Component.onCompleted: bar.remindersLive = CalendarReminders.stateLoaded
 

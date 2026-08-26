@@ -128,11 +128,20 @@ Singleton {
 
 
   // ------------------------------------------------------------------- ori
-  // The assistant's AMBIENT presence: the readout in the bar and the light
-  // that bleeds out from under it. These are tokens rather than literals for a
-  // reason the rest of this file does not have -- the readout and the light are
-  // two SEPARATE layer surfaces, and a shared period is the only way two
-  // surfaces can breathe on the same beat.
+  // The assistant's presence, and its whole budget: ONE cell in the bar, and
+  // one panel that only exists while the pointer is on that cell.
+  //
+  // This block used to size a wash of light across the top of the screen. It
+  // does not any more, and the reason is the governing rule of this design --
+  // twelve variants were rejected for the same fault, in the user's own words:
+  // "they all share the same issue. its on the main windows and it will bother
+  // me on other windows." Ambient light on a working screen is a COST. So the
+  // cell is entirely inside the bar's 30px, nothing bleeds onto a window, and
+  // the ONE surface that covers a window is the hover panel, which is there
+  // because it was asked for and gone the moment the pointer leaves.
+  //
+  // These are tokens rather than literals because the cell and the panel are
+  // two separate surfaces that must agree on a period, a tint and a rate.
   //
   // Everything here is slower than the `anim` block above, deliberately. Every
   // other transition in this bar is a REACTION to something you did and has to
@@ -153,69 +162,114 @@ Singleton {
     // working and something blinking.
     readonly property int scanMs: 1900
 
-    // The light travelling the screen edge, one full round trip (there AND
-    // back -- it ping-pongs on a cosine so there is no jump at the ends). This
-    // is the sweep's duration AT FULL FLOW only: the pool's phase is integrated
-    // per frame against how recently text arrived, so the actual period varies
-    // with the work and there is no fixed cycle. (There used to be, and it was
-    // exactly 3 x breathMs -- the whole aura repeated every 7.8s under a
-    // comment claiming it never repeated.)
-    readonly property int auraSweepMs: 7800
-    // How long a silence is tolerated before the pool starts slowing. Under
-    // this, ordinary gaps between tokens and the pause on either side of a
-    // tool result do not register as a stall.
-    readonly property int auraFlowGraceMs: 2000
+    // ------------------------------------------------------- the flow gauge
+    // Harvested from OriAura, which is deleted. The aura was a wash across the
+    // whole screen edge and that is exactly what the user rejected -- but the
+    // FACT it carried is the one nothing else on this desktop has: whether Ori
+    // is MOVING. A tool call streams no deltas, so the character counter
+    // freezes for the whole of a `bash sleep 15` while the process is perfectly
+    // healthy; the gap BETWEEN deltas is the missing number. These three turn
+    // that gap into a rate, and the rate now drives the scan travelling the
+    // keel instead of a pool travelling the screen. Same measurement, contained
+    // in 148px.
+    //
+    // How long a silence is tolerated before the scan starts slowing. Under
+    // this, ordinary gaps between tokens and the pause on either side of a tool
+    // result do not register as a stall.
+    readonly property int flowGraceMs: 2000
     // e-folding time of the slowdown past that grace. ~4s of silence puts the
-    // pool at a third rate, ~6s puts it on the floor -- which is roughly the
+    // scan at a third rate, ~6s puts it on the floor -- which is roughly the
     // point a person starts wondering whether it is still alive.
-    readonly property int auraFlowDecayMs: 1800
+    readonly property int flowDecayMs: 1800
     // The floor. A tool call that streams nothing still drifts: stopping dead
     // is what a CRASHED shell should look like, and this is a flow gauge, not a
-    // hang detector. Slow enough that the difference from full rate is obvious
-    // in peripheral vision, which is the only place this is ever seen.
-    readonly property real auraDriftRate: 0.10
-    // The flare when an answer lands. Longer than any bar transition because
-    // it is the one moment the desktop is allowed to announce something.
-    readonly property int auraFlareMs: 1100
-    // Height of the light surface. FIXED, and never animated -- a layer
-    // surface that resizes costs a compositor round trip per frame (CLAUDE.md).
-    readonly property int auraHeight: 132
-    // Alpha at the seam (the bar's underside), and how far the whole thing is
-    // turned down to the steady wash left behind while an answer waits unread.
-    // Turned down from 0.30/0.46 after living with it: at full strength the
-    // travelling pool read as an ALERT rather than as something working, and
-    // the point of an ambient gauge is that it can be ignored. The ratio
-    // between the two is what carries the effect, not their absolute size, so
-    // both came down together and the pool is still the brighter of the pair.
-    readonly property real auraCore: 0.22
-    readonly property real auraRest: 0.62
-    // The travelling pool is BRIGHTER than the seam it rides on, and the seam
-    // is turned down while it travels. If the two are the same strength the
-    // result reads as one flat translucent sheet with a bit of unevenness in
-    // it -- measured, and it was the first version's whole problem.
-    readonly property real auraPoolPeak: 0.30
-    readonly property real auraSeamWhileTravelling: 0.5
-    // Width of the pool. Wide enough that its falloff is gentler than the
-    // screen it crosses; a small blob reads as a bug rather than as light.
-    readonly property int auraBlobW: 720
-    // ...and its vertical radius, as a fraction of the surface height. Just
-    // over 1, so the pool is all but gone by the bottom edge and the surface
-    // never shows where it ends.
-    readonly property real auraBlobFall: 1.05
+    // hang detector.
+    readonly property real driftRate: 0.10
+
+    // The arrival emphasis. Harvested from OriAura's auraFlareMs, unchanged in
+    // value and changed completely in scope: it used to flood the whole screen
+    // edge, and it now thickens and overshoots one hairline inside the bar. It
+    // is still longer than any bar transition, because it is still the one
+    // moment the desktop is allowed to announce something.
+    readonly property int arrivalMs: 1100
 
     // The readout's cells, in px. FIXED widths, so the strip is one width for
     // the whole turn: a tool name changing from "bash" to "read" must not make
-    // the entire centre island breathe sideways. Sized for
-    // JetBrainsMono at `font.tiny` (~7.2px/char).
+    // the cell breathe sideways. Sized for JetBrainsMono at `font.tiny`
+    // (~7.2px/char).
+    //
+    // The count and the context cells are GONE from the bar. They were the two
+    // that the hover panel now carries better -- and the panel footer already
+    // carried the context percentage all along, so the bar was printing it
+    // twice. What is left is the one word and how long it has been doing it.
     readonly property int toolWidth: 58     // 8 chars, elided past that
     readonly property int timeWidth: 44     // "9m 38s"
-    readonly property int countWidth: 44    // "↓ 9.9k"
-    readonly property int ctxWidth: 40      // "12.4%"
     readonly property int cellGap: 6
-    // The context cell is absent until pi reports a window size, so the strip
-    // has TWO settled widths, not one -- but never changes width mid-turn,
-    // which is the property that matters.
-    readonly property int readoutWidth: toolWidth + timeWidth + countWidth + 2 * cellGap
-    readonly property int readoutWidthCtx: readoutWidth + ctxWidth + cellGap
+    readonly property int cellReadout: toolWidth + timeWidth + cellGap
+
+    // ---------------------------------------------------------- the unhoused
+    // The assistant does not live in an island. It floats in the GAP between
+    // the centre and right islands, on the bar's own background -- and nothing
+    // else in this bar is unhoused, which is precisely what stops it reading as
+    // one more status chip beside the battery.
+    //
+    // zoneWidth is the EXPANDED footprint, reserved PERMANENTLY. The cell
+    // animates inside it, so compact and expanded are the same reservation and
+    // neither island is ever pushed by anything the assistant does. Measured
+    // off the running bar on eDP-1 (1280 logical): the left island ends at 163,
+    // the centre spans 520-773, the right spans 1127-1273, so both gaps are
+    // ~355px and 148 + 2x24 leaves ~155 clear.
+    //
+    // The RIGHT gap, not the left: the left one holds the window-title list,
+    // which is replaced wholesale on every workspace switch and can be several
+    // hundred px wide. The right island is tray/bluetooth/network/audio/battery
+    // and changes by a character at a time.
+    readonly property int zoneWidth: 148
+    readonly property int zoneGap: 24
+    // The halo wants the island's full height around a 14px glyph, not the 18px
+    // content slot every other widget uses.
+    readonly property int haloBox: 22
+    // Where the keel runs, measured down from the top of the islandHeight box:
+    // 3px under the glyph's foot. Unhoused there is no island floor to align
+    // to, so the only honest datum is the mark itself.
+    readonly property int keelY: 18
+    // The open cell's full extent. The +8 is real padding, not slack: without
+    // it the rule's right end landed exactly on the last digit of "1m 04s".
+    readonly property int cellFull: haloBox + cellGap + cellReadout + 8
+
+    // ------------------------------------------------------------- the veil
+    // The hover panel: the ONE surface allowed to cover the user's windows,
+    // because they asked for it by name. No card and no edge -- OriArrival's
+    // scrim, which IS harvested from the deleted file, scaled up to carry a
+    // block of text.
+    //
+    // FIXED height, forever, like every layer surface in this shell. The
+    // content inside it grows and shrinks between working/unread/idle and that
+    // costs no configure/ack; the SURFACE is one size (CLAUDE.md).
+    readonly property int veilHeight: 320
+    // The block's column, and where the pool's centre sits inside the surface.
+    // 512 fits a 58-character question at panelMeta without eliding, which is
+    // most of them.
+    readonly property int veilBlockWidth: 512
+    readonly property int veilBlockY: 22
+    // The pool's horizontal radius. Wide and soft: the words have to be legible
+    // over an arbitrary window and the only way to buy that without drawing a
+    // card is a shadow with no edge anywhere. Its VERTICAL radius and its
+    // centre are not tokens -- they follow the block's height, so the shadow is
+    // only ever as big as what it shades (see OriVeil's poolRy). The surface
+    // itself never moves; only the Shape inside it does.
+    readonly property int veilPoolRx: 760
+    // Opening is slower than any bar transition: this is not a reaction to a
+    // click, it is a surface unfolding over someone's work, and it should look
+    // deliberate. Closing is quicker -- a thing you have stopped asking for may
+    // not take its time (the screensaver argues the same asymmetry).
+    readonly property int veilOpenMs: 260
+    readonly property int veilCloseMs: 160
+    // The pointer crossing from the cell to the veil passes over no gap at all
+    // (the veil's y=0 IS the bar's underside), but a boundary pixel still
+    // flickers hover on and off. This is how long the surface survives losing
+    // the pointer before it is dropped -- short enough that it never feels
+    // sticky, long enough that the seam is not a trap.
+    readonly property int veilGraceMs: 140
   }
 }

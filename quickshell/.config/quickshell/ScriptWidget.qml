@@ -18,7 +18,10 @@ import Quickshell.Io
 //     }
 //
 // Contract
-//   script          command to run; goes through `sh -lc` so `~` expands.
+//   script          command to run; a leading `~` is expanded to $HOME and the
+//                   script is spawned directly (no `sh -lc` wrapper) through the
+//                   `pdeathsig` helper, so it dies when quickshell dies even on
+//                   SIGKILL. See the Process block below.
 //   text            the JSON's "text" field, raw (may contain pango markup).
 //   html            `text` converted to Qt rich text -- use this for the two
 //                   scripts that emit pango (hypr-windows-watch, hypr-network-watch)
@@ -62,6 +65,15 @@ BarWidget {
 
   function hasClass(name) {
     return classes.indexOf(name) !== -1
+  }
+
+  // Expand a leading `~` to $HOME. The scripts are spawned directly (not via
+  // `sh -lc`), so the tilde must be resolved here.
+  function expandHome(s) {
+    if (!s) return s
+    if (s === "~") return Quickshell.env("HOME")
+    if (s.startsWith("~/")) return Quickshell.env("HOME") + s.slice(1)
+    return s
   }
 
   // ---------------------------------------------------------------- pango
@@ -125,10 +137,19 @@ BarWidget {
     root.updated(data)
   }
 
+  // Spawn the script directly through `pdeathsig` (NOT `sh -lc`). Two reasons:
+  //   1. A direct child means the script's parent is quickshell, so pdeathsig's
+  //      PR_SET_PDEATHSIG fires when quickshell dies -- even on SIGKILL, which
+  //      never signals the child. Under `sh -lc` the script's parent was the sh
+  //      wrapper, which stayed alive orphaned when quickshell died, so the
+  //      script (and its own child: inotifywait/socat/evtest/gdbus) leaked and
+  //      kept its inotify watch / socket forever. That is what exhausted the
+  //      inotify slots.
+  //   2. `~` is expanded here (expandHome) instead of by sh.
   Process {
     id: proc
     running: root.script !== ""
-    command: ["sh", "-lc", root.script]
+    command: ["pdeathsig", root.expandHome(root.script)]
     environment: root.scriptEnvironment
     stdout: SplitParser { onRead: function (line) { root.ingest(line) } }
     onExited: function (exitCode, exitStatus) {

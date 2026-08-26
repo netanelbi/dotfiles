@@ -317,6 +317,16 @@ Singleton {
   // hold two booleans.
   property bool panelOpen: false
   property bool unread: false
+  // Whether the bar cell is pinned COMPACT -- glyph only, never opening into
+  // the verb-and-elapsed readout however busy Ori gets. Right-click on the cell
+  // toggles it.
+  //
+  // Here for the same reason the two above are: the cell is instantiated once
+  // PER MONITOR, and a preference the user set on one screen that did not apply
+  // on the other would be a bug nobody could describe. Deliberately NOT
+  // persisted to disk -- it is a "leave me alone for now" gesture, not a
+  // setting, and a shell reload is a reasonable place for it to lapse.
+  property bool cellCompact: false
 
   signal settled()
   // Emitted whenever the newest turn grows, so the view can keep itself pinned
@@ -509,12 +519,12 @@ Singleton {
   // `grow()`, which is the one choke point every text/thinking delta goes
   // through, and reset by `ask()` so a turn opens at full flow.
   //
-  // It exists because the character counter in the bar CANNOT tell working from
-  // hung: a tool call streams no deltas, so the count sits frozen for the whole
-  // of a `bash sleep 15` while the process is perfectly healthy. The gap
-  // BETWEEN deltas is the fact that number is missing, and OriAura drives the
-  // travelling pool off it -- full rate while text arrives, decaying to a drift
-  // while it does not. A stamp, not a timer: nothing here polls it.
+  // It exists because a character counter CANNOT tell working from hung: a tool
+  // call streams no deltas, so the count sits frozen for the whole of a
+  // `bash sleep 15` while the process is perfectly healthy. The gap BETWEEN
+  // deltas is the fact that number is missing, and OriCell drives the scan
+  // travelling its keel off it -- full rate while text arrives, decaying to a
+  // drift while it does not. A stamp, not a timer: nothing here polls it.
   property double lastAppendAt: 0
   readonly property real contextFraction:
     contextKnown ? Math.min(1, usageTotal / contextWindow) : 0
@@ -539,6 +549,17 @@ Singleton {
   function lastAssistant() {
     for (var i = turnModel.count - 1; i >= 0; i--) {
       if (turnModel.get(i).role === "assistant") return i
+    }
+    return -1
+  }
+
+  // The mirror of the above, and it exists because the hover panel opens with
+  // the QUESTION. After four minutes away, "bash rg -n implicitHeight" means
+  // nothing on its own; with the line you typed above it, it means everything.
+  // Nothing else in this shell had a reason to look backwards for a user turn.
+  function lastUser() {
+    for (var i = turnModel.count - 1; i >= 0; i--) {
+      if (turnModel.get(i).role === "user") return i
     }
     return -1
   }
