@@ -242,9 +242,19 @@ QtObject {
   // mono in 426) it always fits a fresh line, so it is HARDENED and word wrap
   // moves the whole span down. Longer, and it has to break somewhere, so it is
   // offered zero-width spaces at its separators.
+  //
+  // Inline code is a HIGHLIGHT, not a font swap: Qt markdown gives a backtick
+  // span an empty font family, which falls back to the system mono at body size
+  // -- a word that reads bigger than the prose it sits in. So the backticks
+  // become an HTML span that keeps the prose font and paints the word in bold
+  // yellow, the same quiet distinction a code block gets from its surface. The
+  // content is escaped so a `<` or `&` inside the span is text, not markup, and
+  // selectedText() strips the tags, so copy still yields the bare word.
   function breakable(t) {
     return t.replace(/`([^`\n]+)`/g, function (m, s) {
-      return "`" + (s.length < 24 ? hard(s) : zwsp(nobr(s))) + "`"
+      var esc = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      var inner = esc.length < 24 ? hard(esc) : zwsp(nobr(esc))
+      return '<span style="color:' + cssColor(Theme.yellow) + ';font-weight:bold;">' + inner + '</span>'
     })
   }
   // A hyphen is a break Qt takes wherever it finds one: `exec-once` came back as
@@ -259,6 +269,14 @@ QtObject {
   // Qt takes the LAST offer that fits, so offering every dot returned
   // `widgets/OriVeil.` / `qml`. The selection handler strips these back out.
   function zwsp(s) { return s.replace(/([^\s-])([./_:@-])(?=\S{4,})/g, "$1$2\u200b") }
+
+  // A QML color as a CSS color string. QML stringifies an alpha color as
+  // `#aarrggbb`, which CSS does not read, so the chip's background is built as
+  // rgba() from the components instead.
+  function cssColor(c) {
+    return "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + ","
+      + Math.round(c.b * 255) + "," + c.a + ")"
+  }
 
   // A rejected image left as literal markdown is NOT harmless, measured the hard
   // way: Text renders markdown images itself, so a leftover `![cat](https://…)`

@@ -37,9 +37,16 @@ Item {
 
   // A turn in flight shows everything -- watching it work IS the point while it
   // works, and there is no answer yet to find. The fold is what settling looks
-  // like, and it never folds a turn into nothing: an answer that ended ON a tool
-  // call has no other half, so it stays as it is.
-  readonly property bool folded: !user && !pending && !workOpen && cut > 0 && cut < pieces.length
+  // like.
+  //
+  // A turn that ended ON a tool call has no answer half. This used to refuse to
+  // fold it, on the grounds that folding a turn into nothing is worse than not
+  // folding -- but the receipt renders either way, so the result was the receipt
+  // AND the work it summarises, on screen together. Steering mid-turn produces
+  // exactly that shape, and it read as the panel rendering the turn twice.
+  // A turn with no answer folds to its receipt, which is not nothing: it is the
+  // one line that says what happened, and the caret unrolls it.
+  readonly property bool folded: !user && !pending && !workOpen && cut > 0
   readonly property var shown: folded ? pieces.slice(cut) : pieces
 
   // The ledger of a settled turn on one line -- what it did, how long it took,

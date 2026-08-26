@@ -609,7 +609,7 @@ Singleton {
   // goes, because losing the question to a bad screenshot is the worse failure.
   function ask(text, images) {
     var msg = String(text || "").trim()
-    if (msg === "" || root.busy) return false
+    if (msg === "") return false
 
     // The panel's own commands, taken before anything else touches the draft.
     // They are not conversation: nothing is appended, no child is spawned for
@@ -654,6 +654,53 @@ Singleton {
     }
 
     root.error = root.imageError
+
+    // Steer: pi's native mid-stream redirect. The turn in flight is not killed
+    // -- the message is queued and delivered after the current tool call,
+    // before the next LLM call -- so the assistant turn keeps streaming,
+    // redirected. The question is appended to the transcript so it is visible
+    // on screen.
+    if (root.busy) {
+      var imgs = []
+      for (var j = 0; j < blocks.length; j++) {
+        var bb = blocks[j]
+        imgs.push({ type: "image", mimeType: bb.mimeType, data: bb.data })
+      }
+      var steer = { type: "steer", message: msg }
+      if (imgs.length > 0) steer.images = imgs
+      send(steer)
+
+      // The stream always writes to lastAssistant(), so the ROW ORDER is the
+      // whole problem here. Appending only the question put it BELOW the row
+      // the redirected answer then streamed into -- the reply appeared above
+      // the message it was replying to, and the message it answered sat at the
+      // bottom of the panel with nothing under it.
+      //
+      // So the turn in flight is closed where it stands, the question goes
+      // after it, and a fresh assistant row opens for what comes back. Three
+      // appends, no insert: toolLog is keyed by row index, and inserting would
+      // shift every call already logged onto the wrong turn. A pre-steer row
+      // with no text is not wasted -- its tool calls are still logged against
+      // it, so it settles into the receipt for the work you interrupted.
+      var cur = lastAssistant()
+      if (cur >= 0) {
+        turnModel.setProperty(cur, "pending", false)
+        turnModel.setProperty(cur, "tool", "")
+      }
+      appendTurn("user", msg, "", "", false, labels.join("\n"))
+      appendTurn("assistant", "", "", "", true, "")
+      root.appended()
+      return true
+    }
+
+    root.startTurn(msg, blocks, labels)
+    return true
+  }
+
+  // Open a turn: the user's question, an empty assistant row to stream into,
+  // and the question queued for the agent. Shared by ask() and the steer path,
+  // which defers here until the aborted turn settles.
+  function startTurn(msg, blocks, labels) {
     root.busy = true
     root.settledAtMs = 0
     // A turn opens at full flow, so the first seconds -- before a single token
@@ -682,7 +729,6 @@ Singleton {
     root.sendConfig()
     if (root.warm) flush()
     else control({ type: "__spawn" })
-    return true
   }
 
   // -------------------------------------------------------------- clipboard
