@@ -460,7 +460,6 @@ Item {
   // untouched by any of this. Hover and right-click are here because the user
   // asked for them by name, and nothing else in this shell became mouse-only.
   readonly property bool hovered: mouse.containsMouse
-
   MouseArea {
     id: mouse
     // Tracks the keel, with a floor. Compact, the keel is 22px wide and a
@@ -468,8 +467,22 @@ Item {
     // the gesture the whole panel hangs off. 44 is the glyph plus one gap of
     // slack on each side: comfortable, and still nowhere near the 148px zone,
     // which would put a right-click 100px from anything visible.
+    // Anchored to the KEEL, not left to fall at the root's origin. Measured:
+    // the root item sits 28px ABOVE the top of the screen -- mapToGlobal
+    // reported `y=-28 h=26`, so the target spanned y -28..-2 and the pointer
+    // could never be inside it. The glyph and the rule render correctly because
+    // they are anchored to things that are; this was the one child trusting the
+    // root's own origin.
+    // Anchored to the KEEL rather than left at the root's origin. The root is
+    // not where its visuals are -- with the target at the root origin,
+    // containsMouse never went true anywhere along the cell, and filling the
+    // parent fixed it, which is what proved the geometry rather than the input
+    // was wrong. The keel is the one thing whose position is demonstrably
+    // right, so the target hangs off it.
+    anchors.horizontalCenter: keel.horizontalCenter
+    anchors.verticalCenter: keel.verticalCenter
     width: Math.max(keel.width, 2 * Style.ori.haloBox)
-    height: parent.height
+    height: Style.bar.height
     hoverEnabled: true
     acceptedButtons: Qt.LeftButton | Qt.RightButton
     cursorShape: Qt.PointingHandCursor
