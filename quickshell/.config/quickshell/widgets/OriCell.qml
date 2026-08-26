@@ -479,10 +479,7 @@ Item {
     // parent fixed it, which is what proved the geometry rather than the input
     // was wrong. The keel is the one thing whose position is demonstrably
     // right, so the target hangs off it.
-    anchors.horizontalCenter: keel.horizontalCenter
-    anchors.verticalCenter: keel.verticalCenter
-    width: Math.max(keel.width, 2 * Style.ori.haloBox)
-    height: Style.bar.height
+    anchors.fill: parent
     hoverEnabled: true
     acceptedButtons: Qt.LeftButton | Qt.RightButton
     cursorShape: Qt.PointingHandCursor
