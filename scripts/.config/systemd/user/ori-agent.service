@@ -1,0 +1,31 @@
+[Unit]
+Description=Ori's agent broker (pi --mode rpc, off the shell's process tree)
+Documentation=file:%h/.local/bin/ori-agent
+# No graphical-session dependency, and none is wanted. Upstream-style user
+# units carry Requisite=graphical-session.target, which Hyprland never
+# raises -- that is why this repo ships full-file units rather than
+# drop-ins. This one has nothing to do with the session at all: it holds a
+# socket and a node process, and it is meant to outlive every reload of the
+# shell that talks to it. That is the entire point of the unit existing.
+Requires=ori-agent.socket
+After=ori-agent.socket
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# fish, not sh. A systemd user unit starts from an almost empty environment,
+# and measured from one: `sh -lc` gives neither ~/.bun/bin on PATH (so `pi`
+# is not found) nor OLLAMA_API_KEY (so nothing answers). Both are set in
+# ~/.config/fish/conf.d/secrets.fish, which fish sources for every shell, so
+# `fish -lc` from an empty environment produces both.
+#
+# This is why there is no EnvironmentFile= and no Environment=OLLAMA_API_KEY=
+# here: the key stays in the one file it was already in, and never reaches a
+# unit file, a command line or the journal.
+ExecStart=/usr/bin/fish -lc 'exec %h/.local/bin/ori-agent'
+Restart=on-failure
+RestartSec=2
+
+# No [Install]. This is started by ori-agent.socket, not at login --
+# `systemctl --user enable --now ori-agent.socket` is the whole install.

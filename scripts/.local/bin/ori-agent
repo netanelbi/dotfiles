@@ -1,0 +1,680 @@
+#!/usr/bin/env python3
+"""ori-agent -- the assistant's engine, moved off the shell's process tree.
+
+WHY THIS EXISTS
+---------------
+`pi --mode rpc` used to be a Process child of quickshell, owned by
+PiSession.qml. That works and it is one fewer moving part, but it has a
+failure mode that cannot be designed around from inside the shell: editing
+any QML file hot-reloads the shell, and a hot reload takes every child with
+it. Measured on the live shell, one line changed in Style.qml:
+
+    before:  warm=true   turns=4   tokens=15007
+    after:   warm=false  turns=4   tokens=0
+
+Nothing crashes and the transcript survives (it is restored off pi's own
+session file). What does not survive is the warm process and the turn in
+flight. So an assistant whose whole job is maintaining this laptop killed
+itself mid-sentence every time it edited the shell it lives in.
+
+This process owns pi instead, and the panel talks to it over a unix socket.
+A reload now rebuilds Ori's face while it keeps thinking.
+
+WHAT IT IS NOT
+--------------
+Not a protocol. Everything the panel sends that is not a `__`-prefixed
+control frame is forwarded to pi's stdin verbatim, and everything pi writes
+to stdout is forwarded to the panel verbatim. The RPC contract documented at
+the top of PiSession.qml is untouched -- this is a pipe with a memory.
+
+pi itself cannot do this: `--mode rpc` is stdin/stdout only, there is no
+listen option (checked against `pi --help` on the installed build). socat
+cannot do it either -- `UNIX-LISTEN,fork EXEC:` spawns a fresh pi per
+connection, which is the opposite of the point, and without `fork` the
+listener dies with the first client. What is actually needed is a process
+that outlives both ends and remembers what happened while one of them was
+away, which is neither of those things.
+
+CONTROL FRAMES
+--------------
+panel -> here (anything else is forwarded to pi):
+
+  __hello    {}                     ask for the state of the world
+  __config   {provider, model,      what the NEXT spawn should be. Held, not
+              effort, session}      acted on; see "spawning" below
+  __spawn    {}                     bring pi up if it is down
+  __replay   {}                     dump the current turn and go live
+  __kill     {}                     drop pi now (reclaim the ~200MB)
+
+here -> panel (anything else is pi's stdout):
+
+  __welcome     {warm, busy,        answer to __hello. `workdir` is reported
+                 workdir}           rather than written down twice -- the
+                                    panel's footer shows it and must not be
+                                    able to name a directory pi is not in.
+  __pi_started  {}                  a child is up and its stdin is open
+  __pi_exited   {code}              it is gone, whoever asked
+  __prompt      {message, images}   REPLAY ONLY: the question that opened the
+                                    turn being replayed. Image payloads are
+                                    dropped -- only the count survives, which
+                                    is all the transcript renders anyway.
+
+RECONNECT
+---------
+The whole reason for the rewrite, so it is the part that had to be proved
+rather than reasoned about. Three facts, all measured against a real child:
+
+  1. pi writes the session file at SETTLE, not during the turn. A first turn
+     creates the file 50ms after agent_settled. So a panel restoring from
+     disk mid-turn sees the conversation as it stood before the question.
+  2. ...except the user's own message, which IS appended early. Measured on
+     a second turn: the file went 5 -> 6 entries while the answer was still
+     streaming, and 6 -> 7 at settle. So a disk restore mid-turn shows the
+     question with no answer under it.
+  3. `get_entries` answers mid-turn, in 4.5s-into-a-turn, without disturbing
+     it -- the turn settled normally afterwards -- and returns exactly the
+     same thing: history, ending at the unanswered question.
+
+(2) is what rules out the obvious design. Buffering the turn here and
+replaying the whole thing INCLUDING the question would double the question,
+because the panel's disk restore already found it. And (3) is what replaces
+it: the panel re-reads its transcript from pi with get_entries, which ends
+at the open question, and only the ANSWER is replayed from the buffer here.
+The two halves meet exactly, with nothing counted twice.
+
+So the handshake is:
+
+  __hello -> __welcome{busy:true}
+  panel sends get_entries          (forwarded; see the hold, below)
+  panel rehydrates, opens an assistant row
+  panel sends __replay             -> every event buffered since the prompt
+  live events resume
+
+THE HOLD
+--------
+Between __hello and __replay the panel is mid-rebuild: it has a transcript
+on the way and no row to stream into. Events delivered in that window would
+be applied to the wrong row, or to no row. So they are held -- appended to
+the turn buffer and not forwarded -- and __replay releases them in order
+with the rest.
+
+One exception, and it is the reason the hold is not simply "forward
+nothing": `get_entries` is sent DURING the hold and its answer has to come
+back or the handshake deadlocks. The line is drawn at the frame type --
+`response` frames pass through the hold, events do not. That is a rule with
+a reason and not a special case: a `response` is an answer to something the
+panel asked for just now, and an event is the turn's stream, which is what
+the buffer is for.
+
+A client that says hello and never replays would hold forever, so the hold
+also expires (HOLD_TIMEOUT). It has not been seen to fire.
+
+WHO OWNS THE IDLE KILL
+----------------------
+This process does, and the panel's idleTimer is gone.
+
+The warm/idle tradeoff itself is unchanged and still worth what it was: a
+warm node is ~200MB, which is more than the entire shell, so pi is not
+started at login -- the first question spawns it and IDLE_KILL of silence
+kills it again. What moved is only WHO holds the clock, and it had to move
+for the same reason the process did. A timer living in the panel means the
+panel's lifetime decides the agent's: reload the shell twice while thinking
+about lunch and the 200MB either leaks (nobody is left holding a timer) or
+dies early (a fresh panel starts a fresh clock). Neither is a decision
+anyone made.
+
+The rule that survives the move is the one that mattered -- nothing exists
+until it is asked for. This process is what is always on now, and it is
+~11MB of python holding a socket. pi is still lazy.
+
+ENVIRONMENT
+-----------
+The child used to inherit a fish login environment by accident: fish ->
+Hyprland -> quickshell -> sh -lc -> pi. A systemd user unit inherits none of
+it. Measured from a clean env, `sh -lc` gives neither ~/.bun/bin on PATH
+(so `pi` is not even found) nor OLLAMA_API_KEY (so nothing answers).
+
+Both live in ~/.config/fish/conf.d/secrets.fish, and fish sources conf.d for
+every shell, so `fish -lc` from an empty environment produces both. That is
+what the unit's ExecStart does. The key is therefore never written into a
+unit file, an EnvironmentFile, or a command line -- it stays in the one file
+it was already in, and the chain is just shortened from four links to two.
+
+pi is still spawned through `sh -lc` from here, unchanged, so every `~` and
+every quoting decision in the command below behaves exactly as it did.
+"""
+
+import asyncio
+import json
+import os
+import shlex
+import socket
+import sys
+import time
+
+# ---------------------------------------------------------------- settings
+# The half of PiSession.qml's settings block that describes a PROCESS rather
+# than a conversation. It moved with the process: the panel no longer builds
+# a command line, it names four runtime values (see __config) and this fills
+# in the rest.
+BINARY = "pi"
+
+# Where it runs: the repo that configures this whole machine, including the
+# shell Ori's face is drawn by. Three things follow, none of them incidental:
+#
+#   * pi discovers CLAUDE.md from its working directory, so the repo's own
+#     documentation is already in context. It knows what stow is doing here
+#     without being told.
+#   * it can read and change its own source. PiSession.qml is how it runs;
+#     quickshell/assistant/ is how it looks.
+#   * ~/.config/assistant/*.md are its own files -- who it is, what this
+#     machine does, and what it has learned. memory.md is meant to be written
+#     BY it.
+#
+# Measured cost of running here rather than in a neutral directory:
+# 3157 -> 5964 input tokens. That 2.8K is the repo knowledge, out of a 131K
+# window. Reported to the panel in __welcome so the footer's reading of it
+# cannot drift from the truth.
+WORKDIR = "~/.dotfiles"
+
+# Where shim-web sends its searches. The local systemd instance rather than
+# the VPS: it is the same code, it is already running for `ccr`, and it saves
+# a round trip to a datacentre for something the laptop can ask for directly.
+SHIM_URL = "http://127.0.0.1:11435"
+
+# Prepended to the system prompt, in order. pi takes a PATH here as well as
+# text -- and it does NOT expand CLAUDE.md's `@file` imports, so every file
+# has to be named. (Point it at a workspace whose CLAUDE.md is nothing but
+# `@` lines and it answers "I'm Claude, an AI coding assistant running inside
+# pi"; that is exactly how this was found.)
+PROMPT_FILES = [
+    "~/.config/assistant/soul.md",
+    "~/.config/assistant/laptop.md",
+    "~/.config/assistant/memory.md",
+]
+
+# Extensions, opted into by path. Empty would mean none: `-ne` disables
+# discovery and each entry here is loaded back explicitly, which leaves the
+# global set in ~/.pi/agent/extensions/ alone so `pi` in a terminal is
+# unchanged. Unlinking that directory would have worked too, but it is
+# global: it would change `pi` everywhere, not here.
+EXTENSIONS = [
+    # web_search / web_fetch. The search runs on the shim (that is where the
+    # Brave and Ollama keys live); the fetch runs on this laptop, so Ori can
+    # read 127.0.0.1 and the LAN, which a VPS cannot. Loading this also makes
+    # the shim's own OpenAI search loop stand down -- it skips any client that
+    # declares web tools itself -- so there is exactly one searcher.
+    #
+    # The point of doing it this way round: pi makes the call, so pi emits
+    # tool_execution_start, so the panel can SHOW the search. A shim-side loop
+    # is invisible to the client by construction.
+    "~/Development/Personal/my-pi/extensions/shim-web.ts",
+]
+
+# Kill the child after this much silence. Long enough to cover a
+# back-and-forth, short enough that a stray question does not leave 200MB
+# resident for the rest of the day. See WHO OWNS THE IDLE KILL above.
+IDLE_KILL = 10 * 60.0
+HOLD_TIMEOUT = 5.0
+
+SOCKET_PATH = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid(),
+    "ori-agent.sock",
+)
+
+# A `get_entries` on a long conversation is megabytes on one line, and an
+# attached screenshot is up to 16MB of base64 on one line going the other
+# way. asyncio's StreamReader defaults to a 64KB line limit and raises
+# rather than truncating, so both directions get a limit that cannot be
+# reached before pi's own caps are.
+LINE_LIMIT = 64 * 1024 * 1024
+
+
+def log(*a):
+    """Journal. Everything here and pi's own stderr land in the same place:
+    `journalctl --user -u ori-agent`. pi's stderr used to go to /dev/null,
+    which is how the fabricated-custom-model warning in PiSession.qml's notes
+    stayed invisible for as long as it did."""
+    print("[ori-agent]", *a, file=sys.stderr, flush=True)
+
+
+def build_command(cfg):
+    """The old PiSession.buildCommand(), unchanged in every part that was a
+    decision. Only the four values the panel switches at runtime come from
+    `cfg`: provider, model, thinking level, session path.
+
+    `sh -lc` and `exec` are kept for the reasons they were chosen for: a
+    login shell expands the `~`s in the settings above, and exec makes sh
+    replace itself so that stdin belongs to pi rather than to the shell.
+
+    ------------------------------------------------------- why -ne stays
+    The reason recorded for years was that pi's bundled
+    openai-codex-usage.ts calls assertActive() on a UI that does not exist
+    outside a TTY, throws, and takes the whole run with it. That is NO
+    LONGER TRUE of the installed pi. Loading it deliberately on a headless
+    rpc child -- `-ne -e ~/.pi/agent/extensions/openai-codex-usage.ts` --
+    registered its three commands and answered a question normally,
+    agent_settled and all.
+
+    -ne stays anyway, because a second reason is live and was never written
+    down. Discovery loads ~/.pi/agent/extensions/pi-web-access, which
+    registers a `web_search` tool, and that collides with the shim-web.ts
+    loaded by hand above. pi does not warn and carry on -- it refuses to
+    start:
+
+      Error: Failed to load extension ".../pi-web-access/index.ts":
+      Tool "web_search" conflicts with .../my-pi/extensions/shim-web.ts
+
+    Isolated both ways: no -ne and no -e shim-web starts fine and reports 10
+    commands; no -ne WITH -e shim-web dies before the first frame. So the
+    flag is protecting the deliberate choice of shim-web over pi-web-access
+    that EXTENSIONS argues for -- drop one and you must drop both.
+
+    Nothing among those 10 is worth adding back by hand. Every one is a TUI
+    affordance: /usage, /usage-status, /codex-usage, /codex-usage-status,
+    /permissions, /bg, /websearch, /search, /tasks, /llama -- overlays,
+    status bars and browser openers, for a 460px panel that has none of
+    those.
+
+    --------------------------------------------------- and why no --skill
+    Skills are NOT discovered from the working directory; they need an
+    explicit `--skill <path>`. Measured, same child, same question:
+
+      as it stands                      1 command   8138 input tokens
+      + --skill ~/.claude/skills       30 commands 12736 input tokens
+
+    So +4,598 input tokens on EVERY turn, stable across three runs, for 29
+    extra commands. (First-token latency is NOT a cost: one run came in at
+    22s against a 2.5s baseline, but two repeats landed at 2.81s and 4.15s,
+    so that was the model, not the flag.)
+
+    Not added, and the token count is the smaller half of why. That
+    directory is Claude Code's, not Ori's: those 29 are things like
+    project-backend-dev and beckmann-obgyn, written for an agent with a
+    different toolset, and pointing pi at it would make the panel's command
+    list change whenever a skill is installed for an unrelated tool. If Ori
+    is to have skills, they want a directory of Ori's own --
+    ~/.config/assistant/skills, next to the prompt files -- and that
+    `--skill` would be small, deliberate and cheap.
+
+    One honest loose end: an earlier run of this same probe, with these
+    exact flags from this exact cwd, reported 17 commands of which 16 were
+    skills, and the count is not reproducible now -- the identical script
+    re-run gives 1. Something outside this repo changed underneath it.
+    Whatever it was, it is not something to rely on, which is the whole
+    argument for naming a directory explicitly rather than hoping discovery
+    finds one."""
+    parts = [
+        "SHIM_URL=" + SHIM_URL,
+        "exec " + BINARY,
+        "--mode rpc",
+        "-ne",
+        "--provider " + cfg.get("provider", "ollama"),
+        "--model " + cfg.get("model", "deepseek-v4-flash:0731"),
+    ]
+    if cfg.get("effort"):
+        parts.append("--thinking " + cfg["effort"])
+    if cfg.get("session"):
+        # Quoted: session filenames carry an ISO timestamp with colons in it,
+        # which a login shell would otherwise be free to interpret.
+        parts.append("--session " + shlex.quote(cfg["session"]))
+    for f in PROMPT_FILES:
+        parts.append("--append-system-prompt " + f)
+    for e in EXTENSIONS:
+        parts.append("-e " + e)
+    return "cd " + WORKDIR + " && " + " ".join(parts)
+
+
+class Broker:
+    def __init__(self):
+        self.pi = None
+        self.pi_task = None
+        self.client = None          # StreamWriter, or None
+        self.cfg = {}
+        # The current turn: every event pi has emitted since the prompt that
+        # opened it, in order, as raw lines. Reset by the next prompt and not
+        # by settling -- see the note on the sub-100ms window in `replay`.
+        self.buf = []
+        self.busy = False
+        self.held = False
+        self.hold_timer = None
+        self.idle_timer = None
+        self.starting = None        # asyncio.Event while a spawn is in flight
+        self.queue = []             # frames that arrived during a spawn
+
+    # ------------------------------------------------------------- plumbing
+    def to_client(self, line):
+        if self.client is None:
+            return
+        try:
+            self.client.write((line if line.endswith("\n") else line + "\n").encode())
+        except Exception as e:
+            # Logged rather than swallowed. It was swallowed for one round of
+            # this, and a StreamWriter refusing a str instead of bytes then
+            # looked exactly like a broker that had hung -- the panel said
+            # hello and waited two minutes for a reply that had been thrown
+            # away inside an `except: pass`.
+            log("write to client failed:", e)
+
+    def control(self, obj):
+        self.to_client(json.dumps(obj))
+
+    # ----------------------------------------------------------------- idle
+    def touch_idle(self):
+        """Restart the kill clock. Called on traffic in either direction --
+        not on a schedule; an asyncio sleep that is cancelled and recreated on
+        every frame is a timer, and there is nothing being polled."""
+        if self.idle_timer:
+            self.idle_timer.cancel()
+        self.idle_timer = asyncio.ensure_future(self._idle())
+
+    async def _idle(self):
+        try:
+            await asyncio.sleep(IDLE_KILL)
+        except asyncio.CancelledError:
+            return
+        # A turn cannot be interrupted by the clock. In practice a running
+        # turn resets it constantly anyway; this is the guard for a turn that
+        # has gone quiet without settling.
+        if self.busy or self.pi is None:
+            return
+        log("idle %.0fs -- dropping pi" % IDLE_KILL)
+        self.kill_pi()
+
+    # ------------------------------------------------------------------- pi
+    def kill_pi(self):
+        if self.pi is None:
+            return
+        try:
+            self.pi.kill()
+        except Exception:
+            pass
+
+    async def spawn(self):
+        """Bring a child up, or wait for the one already coming up."""
+        if self.pi is not None:
+            return
+        if self.starting is not None:
+            await self.starting.wait()
+            return
+        self.starting = asyncio.Event()
+        cmd = build_command(self.cfg)
+        log("spawn:", cmd)
+        try:
+            self.pi = await asyncio.create_subprocess_exec(
+                "sh", "-lc", cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                limit=LINE_LIMIT,
+            )
+        except Exception as e:
+            log("spawn failed:", e)
+            self.pi = None
+            ev, self.starting = self.starting, None
+            ev.set()
+            return
+        self.pi_task = asyncio.ensure_future(self.pump_pi(self.pi))
+        ev, self.starting = self.starting, None
+        ev.set()
+        self.control({"type": "__pi_started"})
+        self.touch_idle()
+        # Anything the panel sent while the child was coming up goes first,
+        # in the order it was sent. Normally empty: the panel sends __spawn
+        # and then waits for __pi_started before its probes, which is what
+        # keeps the five startup probes ahead of the question exactly as they
+        # were when PiSession owned the child.
+        pending, self.queue = self.queue, []
+        for frame in pending:
+            self.to_pi(frame)
+
+    def to_pi(self, line):
+        if self.pi is None or self.pi.stdin is None:
+            return
+        try:
+            self.pi.stdin.write((line if line.endswith("\n") else line + "\n").encode())
+        except Exception as e:
+            log("write to pi failed:", e)
+
+    async def pump_pi(self, proc):
+        """pi's stdout -> the buffer and the client."""
+        while True:
+            try:
+                raw = await proc.stdout.readline()
+            except Exception as e:
+                log("read from pi failed:", e)
+                break
+            if not raw:
+                break
+            line = raw.decode("utf-8", "replace").rstrip("\n")
+            if not line.strip():
+                continue
+            self.touch_idle()
+
+            kind = None
+            try:
+                kind = json.loads(line).get("type")
+            except Exception:
+                # Not JSON. pi writes its human-readable startup noise to
+                # stderr, so this means the protocol broke -- pass it through
+                # and let the panel put it on the error strip, which is what
+                # PiSession.ingest() already does with it.
+                pass
+
+            # Read BEFORE agent_settled clears it, so that the frame which
+            # ends the turn is the last thing in the turn's buffer. Clearing
+            # first drops it, and a replay that stops one frame short leaves
+            # the panel spinning on an answer it has already been given in
+            # full -- which is a worse failure than not replaying at all.
+            in_turn = self.busy
+            if kind == "agent_settled":
+                self.busy = False
+
+            if kind == "response":
+                # Answers pass the hold; see THE HOLD above.
+                #
+                # And are never buffered. A response belongs to whoever asked
+                # for it, which a replay cannot know: the client it is
+                # replaying to may not be the client that asked, and the
+                # command it answers may already have been re-issued. Left in
+                # the buffer, the get_entries the reattach handshake itself
+                # sends ends up INSIDE the replay it triggers -- so the panel
+                # rehydrates a second time, and rehydrate() clears the turn
+                # model, deleting the row the replay was about to fill. That
+                # is not a theoretical ordering worry; it is what happened,
+                # and the symptom was an answer that arrived and vanished:
+                #
+                #   openReplayTurn turns=1
+                #   get_entries ok entries=3 replayPending=false turns=1
+                #
+                # The buffer holds the turn's EVENT STREAM. Nothing else.
+                self.to_client(line)
+                continue
+
+            if in_turn:
+                self.buf.append(line)
+            if not self.held:
+                self.to_client(line)
+
+        code = proc.returncode if proc.returncode is not None else -1
+        log("pi exited", code)
+        if self.pi is proc:
+            self.pi = None
+            self.busy = False
+            self.buf = []
+            self.control({"type": "__pi_exited", "code": code})
+
+    # ------------------------------------------------------------- the hold
+    def release(self):
+        if self.hold_timer:
+            self.hold_timer.cancel()
+            self.hold_timer = None
+        self.held = False
+
+    async def _hold_expiry(self):
+        try:
+            await asyncio.sleep(HOLD_TIMEOUT)
+        except asyncio.CancelledError:
+            return
+        if not self.held:
+            return
+        log("hold expired without __replay -- going live, the turn is lost to the panel")
+        self.release()
+
+    def replay(self):
+        """Dump the current turn and go live.
+
+        Only offered while busy. After settle, pi's session file has the
+        answer in it and the panel restores from there instead -- the two
+        paths would otherwise both produce the same answer and the transcript
+        would show it twice. There is a window of roughly 50ms between
+        agent_settled and the file being written where a reconnect gets
+        neither; it is real, it is smaller than the reconnect itself, and
+        closing it would mean this process second-guessing where pi keeps its
+        transcripts."""
+        log("replay: %d buffered frames" % len(self.buf))
+        for line in self.buf:
+            self.to_client(line)
+        self.release()
+
+    # --------------------------------------------------------------- client
+    async def serve(self, reader, writer):
+        if self.client is not None:
+            # A reload leaves the old socket to be reaped whenever the kernel
+            # gets round to it. The new panel is the real one; the old one
+            # goes now rather than racing it for the stream.
+            log("displacing previous client")
+            try:
+                self.client.close()
+            except Exception:
+                pass
+        self.client = writer
+        log("client connected")
+        try:
+            while True:
+                raw = await reader.readline()
+                if not raw:
+                    break
+                line = raw.decode("utf-8", "replace").rstrip("\n")
+                if not line.strip():
+                    continue
+                await self.on_frame(line)
+        except Exception as e:
+            log("client read failed:", e)
+        finally:
+            log("client gone")
+            if self.client is writer:
+                self.client = None
+                # A disconnect mid-turn is the case this whole thing is for.
+                # Keep buffering: the buffer is what the next panel replays.
+                self.release()
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    async def on_frame(self, line):
+        try:
+            frame = json.loads(line)
+        except Exception:
+            log("unparseable frame from client, dropped")
+            return
+        kind = frame.get("type", "")
+
+        if kind == "__hello":
+            self.control({"type": "__welcome",
+                          "warm": self.pi is not None,
+                          "busy": self.busy,
+                          "workdir": WORKDIR})
+            if self.busy:
+                self.held = True
+                if self.hold_timer:
+                    self.hold_timer.cancel()
+                self.hold_timer = asyncio.ensure_future(self._hold_expiry())
+            return
+
+        if kind == "__config":
+            for k in ("provider", "model", "effort", "session"):
+                if k in frame:
+                    self.cfg[k] = frame[k] or ""
+            return
+
+        if kind == "__spawn":
+            await self.spawn()
+            return
+
+        if kind == "__replay":
+            self.replay()
+            return
+
+        if kind == "__kill":
+            self.kill_pi()
+            return
+
+        # Anything else is pi's own protocol.
+        #
+        # `abort` deliberately has no case here, and that is a measurement
+        # rather than an oversight: pi answers an abort by ending the turn
+        # properly, emitting message_end / turn_end / agent_end / agent_settled
+        # within 10ms and only then the response. So `busy` clears through the
+        # ordinary path, the buffer is closed out, and the idle clock is free
+        # to run again. An abort handler here would be a second way to do
+        # something already done, and the two could disagree.
+        self.touch_idle()
+        if kind == "prompt":
+            self.busy = True
+            self.release()
+            # The turn buffer starts here, with the question in it. The panel
+            # only ever reads this back when it lost the question -- see
+            # RECONNECT -- but it costs one line to keep and there is no other
+            # record of it until pi settles.
+            imgs = frame.get("images") or []
+            self.buf = [json.dumps({"type": "__prompt",
+                                    "message": frame.get("message", ""),
+                                    "images": len(imgs)})]
+        if self.pi is None:
+            # No child and no explicit __spawn: bring one up and let the
+            # queue preserve the order. The panel does send __spawn first, so
+            # this is the path nothing normally takes.
+            self.queue.append(line)
+            await self.spawn()
+            return
+        if self.starting is not None:
+            self.queue.append(line)
+            return
+        self.to_pi(line)
+
+
+async def main():
+    broker = Broker()
+
+    # Socket activation, when systemd handed us a listening fd. The unit is
+    # .socket-activated so that the socket exists from login while nothing is
+    # running behind it -- the panel connects at shell start (it has to; that
+    # connection is how it learns a turn is in flight) and that connect is
+    # what starts this process.
+    listen_fds = int(os.environ.get("LISTEN_FDS", "0") or "0")
+    if listen_fds > 0 and os.environ.get("LISTEN_PID") == str(os.getpid()):
+        sock = socket.socket(fileno=3)
+        server = await asyncio.start_unix_server(broker.serve, sock=sock,
+                                                 limit=LINE_LIMIT)
+        log("listening on the socket systemd passed us")
+    else:
+        # Standalone, for running this by hand while debugging it.
+        try:
+            os.unlink(SOCKET_PATH)
+        except FileNotFoundError:
+            pass
+        server = await asyncio.start_unix_server(broker.serve, path=SOCKET_PATH,
+                                                 limit=LINE_LIMIT)
+        os.chmod(SOCKET_PATH, 0o600)
+        log("listening on", SOCKET_PATH)
+
+    async with server:
+        await server.serve_forever()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

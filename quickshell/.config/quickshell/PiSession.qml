@@ -4,8 +4,40 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// The assistant's engine: one long-lived `pi --mode rpc` child, shared by the
-// whole shell.
+// The assistant's face. The engine is `pi --mode rpc`, and it is NOT a child
+// of this shell -- it lives behind a unix socket, under a systemd user
+// service. This file is the client.
+//
+// ------------------------------------------------------- why it is not a child
+// It used to be one, and the reason it stopped is the one failure this design
+// cannot survive. Editing any QML file hot-reloads the shell, and a hot reload
+// takes every Process child with it. Measured on the live shell, one line
+// changed in Style.qml:
+//
+//   before:  warm=true   turns=4   tokens=15007
+//   after:   warm=false  turns=4   tokens=0
+//
+// Nothing crashed and the transcript came back, because it is restored off
+// pi's own session file. What did not come back was the warm process and the
+// turn in flight -- so an assistant whose whole job is maintaining this laptop
+// killed itself mid-sentence every time it edited the shell it lives in.
+//
+// So the process moved out. `~/.local/bin/ori-agent` owns it now, started by
+// `ori-agent.socket` on the first connect, and everything about SPAWNING it
+// went with it: the working directory, the -ne argument, the extension list,
+// the system prompt files, the warm/idle tradeoff and the idle kill. Read that
+// file for any of those; this one no longer decides them.
+//
+// What stayed here is the conversation. The frames below are pi's own, the
+// broker forwards them verbatim in both directions, and the protocol notes in
+// this header describe the same wire they always did. Only the pipe changed.
+//
+// -------------------------------------------------------------- and the cost
+// A reload now costs the panel and nothing else. The socket reconnects, the
+// transcript is re-read from the live agent with get_entries, and the answer
+// still being written is replayed out of the broker's buffer -- see reattach()
+// and the RECONNECT section of ori-agent, where the three measurements that
+// design rests on are recorded.
 //
 // ------------------------------------------------------------------ why rpc
 // `pi -p "question"` works and costs 2.0s. The same question through a process
@@ -75,23 +107,23 @@ import Quickshell.Io
 // find it unless models.json is repointed.
 //
 // ------------------------------------------------------------- warm vs idle
-// A warm node process is ~200MB, which is more than this entire shell. So it is
-// NOT started with the shell: the first question spawns it, and IDLE_KILL_MS of
-// silence kills it again. You pay the 2.0s cold start once per burst of use and
-// nothing at all the rest of the day -- the same "nothing exists until asked
-// for" rule the launchers and the share picker follow.
+// Unchanged as a tradeoff, and no longer this file's to enforce. A warm node
+// process is ~200MB, which is more than this entire shell, so it is NOT
+// started at login: the first question spawns it and ten minutes of silence
+// kills it again. The clock moved to the broker along with the process -- see
+// WHO OWNS THE IDLE KILL in ori-agent for why a timer living in the panel
+// meant the panel's lifetime decided the agent's.
 //
 // ------------------------------------------------------------------- flags
-//   -ne  extension DISCOVERY off. Still required, but NOT for the reason this
-//        note used to give -- see the measurement in buildCommand(), which is
-//        there so the next reader does not keep or delete this flag on a guess
-//        the way two of us nearly did.
+// The command line is built in ori-agent's build_command(), which is where the
+// arguments for `-ne`, the extension list and the absence of `--skill` are now
+// recorded. The four values this panel switches at RUNTIME are the only ones
+// it still sends -- provider, model, thinking level and session path -- as a
+// `__config` frame the broker applies to the next spawn. See sendConfig().
+//
 //   --session PATH  attach to an existing session file, when resuming. Omitted
 //        for a fresh conversation; see "sessions" below for why `--no-session`
 //        is gone.
-//   -e   extensions are opted INTO one path at a time (see `extensions` below).
-//        Unlinking ~/.pi/agent/extensions/* would have worked too, but that
-//        directory is global: it would change `pi` in every terminal, not here.
 //
 // ---------------------------------------------------------------- sessions
 // This file used to pass `--no-session`, and the comment above it said
@@ -173,10 +205,15 @@ Singleton {
   id: root
 
   // ------------------------------------------------------------- settings
-  // Everything tunable lives in this block. Changing any of it hot-reloads the
-  // shell, which drops the running child; the next question starts a new one, so
-  // it costs a cold start and nothing else.
-  readonly property string binary: "pi"
+  // What is left after the process moved out: the things that describe a
+  // CONVERSATION. Everything that described a process -- the binary, the
+  // extensions, the system prompt files, the shim URL, the idle timeout -- is
+  // in ori-agent now, because that is what spawns it.
+  //
+  // Changing any of this hot-reloads the shell, and that is now free: the
+  // reload rebuilds this client, reconnects, and picks up whatever the agent
+  // was doing.
+  //
   // Provider and model are the DEFAULTS and also the live values -- `/model`
   // writes them (see "panel commands" below) and buildCommand() reads them, so a
   // switch survives the idle kill instead of dying with the child that heard it.
@@ -189,49 +226,12 @@ Singleton {
   property string provider: "ollama"
   property string model: "deepseek-v4-flash:0731"
 
-  // Where it runs. This is the whole "it manages this machine" decision.
-  readonly property string workdir: "~/.dotfiles"
-
-  // Prepended to the system prompt, in order. pi takes a PATH here as well as
-  // text -- and it does NOT expand CLAUDE.md's `@file` imports, so every file
-  // has to be named. (Point it at a workspace whose CLAUDE.md is nothing but
-  // `@` lines and it answers "I'm Claude, an AI coding assistant running inside
-  // pi"; that is exactly how this was found.)
-  readonly property var promptFiles: [
-    "~/.config/assistant/soul.md",
-    "~/.config/assistant/laptop.md",
-    "~/.config/assistant/memory.md"
-  ]
-
-  // Extensions, opted into by path. Empty means none: `-ne` disables discovery
-  // and each entry here is loaded back explicitly, which leaves the global set
-  // in ~/.pi/agent/extensions/ alone so `pi` in a terminal is unchanged.
-  //
-  // Two worth knowing before adding any:
-  //   openai-codex-usage.ts  CRASHES here -- see the -ne note above. Never add it.
-  //   pi-web-access          web search/fetch; the obvious first one to add.
-  readonly property var extensions: [
-    // web_search / web_fetch. The search runs on the shim (that is where the
-    // Brave and Ollama keys live); the fetch runs here, so Ori can read
-    // 127.0.0.1 and the LAN, which a VPS cannot. Loading this also makes the
-    // shim's own OpenAI search loop stand down -- it skips any client that
-    // declares web tools itself -- so there is exactly one searcher.
-    //
-    // The point of doing it this way round: pi makes the call, so pi emits
-    // tool_execution_start, so the panel can SHOW the search. A shim-side loop
-    // is invisible to the client by construction.
-    "~/Development/Personal/my-pi/extensions/shim-web.ts"
-  ]
-
-  // Where shim-web sends its searches. The local systemd instance rather than
-  // the VPS: it is the same code, it is already running for `ccr`, and it saves
-  // a round trip to a datacentre for something the laptop can ask for directly.
-  readonly property string shimUrl: "http://127.0.0.1:11435"
-
-  // Kill the child after this much silence. Long enough to cover a
-  // back-and-forth, short enough that a stray question does not leave 200MB
-  // resident for the rest of the session.
-  readonly property int idleKillMs: 10 * 60 * 1000
+  // Where it runs -- the whole "it manages this machine" decision, and the
+  // broker's to make now. REPORTED by it in `__welcome` rather than written
+  // twice: the panel shows this string in its footer, and a panel naming a
+  // directory the agent is not in is worse than a panel that is briefly blank.
+  // The literal is what is shown before the first welcome lands.
+  property string workdir: "~/.dotfiles"
 
   // The session index (see "sessions" above). Same XDG rule the reminder state
   // file follows, so both land in the same place on any machine.
@@ -280,7 +280,14 @@ Singleton {
   // Set when pi refuses a command or the child dies; cleared on the next ask.
   property string error: ""
 
-  readonly property bool warm: proc.running
+  // Whether a pi child exists behind the socket. Reported by the broker --
+  // `__welcome` on connect, then `__pi_started` / `__pi_exited` -- rather than
+  // derived from anything here, because nothing here can see it any more.
+  property bool warm: false
+  // Whether the socket is up. Separate from `warm`: the broker can be running
+  // with no child (the ordinary idle state), and the child can be running with
+  // this panel disconnected (the whole point).
+  readonly property bool connected: sock.connected
 
   // ---------------------------------------------------------------- session
   // The file pi is writing right now, and its id -- both reported by
@@ -574,6 +581,18 @@ Singleton {
     // command rather than a message that failed to send.
     if (root.runPanelCommand(msg)) return true
 
+    // Nothing to send it to. Refused rather than queued: a question queued
+    // here would be sent on reconnect, minutes later and out of the context
+    // it was asked in, and there is no honest way to show that on screen.
+    // Returning false keeps the draft, so nothing typed is lost -- and the
+    // socket is systemd-activated, so this window is a broker restart wide.
+    // (Panel commands are deliberately above this: /model and /effort are
+    // local state and work with no agent at all.)
+    if (!sock.connected) {
+      root.error = "the agent socket is down -- systemctl --user status ori-agent"
+      return false
+    }
+
     // Past the refusal, so a staging area the composer handed over is now
     // spent -- the ones whose marker survived are already in `images`, and the
     // ones whose marker was deleted are meant to be dropped, because the draft
@@ -609,22 +628,22 @@ Singleton {
     appendTurn("assistant", "", "", "", true, "")
     root.appended()
 
-    idleTimer.stop()
     // Queued rather than sent, because the child may not exist yet. `flush()`
-    // runs either immediately (warm) or from onStarted (cold), so the caller
+    // runs either immediately (warm) or from onPiStarted (cold), so the caller
     // never has to know which case it is.
     pending = msg
     pendingImages = blocks
-    if (proc.running) flush()
-    else {
-      // Cold, with a conversation already on screen: re-attach to the session
-      // that conversation came from, so the model is not answering a follow-up
-      // to something it has no record of. This is the whole reason --no-session
-      // had to go.
-      if (root.resumePath === "" && root.sessionFile !== "" && turnModel.count > 2)
-        root.resumePath = root.sessionFile
-      proc.running = true
-    }
+    // Cold, with a conversation already on screen: re-attach to the session
+    // that conversation came from, so the model is not answering a follow-up
+    // to something it has no record of. This is the whole reason --no-session
+    // had to go. Decided BEFORE sendConfig, because it is one of the four
+    // values that config carries.
+    if (!root.warm && root.resumePath === "" && root.sessionFile !== ""
+        && turnModel.count > 2)
+      root.resumePath = root.sessionFile
+    root.sendConfig()
+    if (root.warm) flush()
+    else control({ type: "__spawn" })
     return true
   }
 
@@ -806,10 +825,9 @@ Singleton {
   }
 
   function abort() {
-    if (!proc.running) return
+    if (!root.warm) return
     send({ type: "abort" })
     root.busy = false
-    idleTimer.restart()
   }
 
   // Drop the conversation without dropping the process -- the cheap "start
@@ -825,7 +843,7 @@ Singleton {
     root.resumePath = ""
     root.sessionFile = ""
     root.sessionId = ""
-    if (proc.running) send({ type: "new_session" })
+    if (root.warm) send({ type: "new_session" })
   }
 
   // ---------------------------------------------------------------- resume
@@ -845,12 +863,15 @@ Singleton {
         root.sessions = []
       }
       root.sessionsLoaded = true
-      root.restoreLastSession()
+      // Not restoreLastSession() directly: the broker may be mid-answer, and
+      // only bootStep() knows -- see the boot block at the bottom.
+      root.bootStep()
     }
     // No file yet is an empty history, not an error.
     onLoadFailed: {
       root.sessions = []
       root.sessionsLoaded = true
+      root.bootStep()
     }
   }
 
@@ -881,7 +902,16 @@ Singleton {
     if (root.sessions.length === 0) return
     // Reading the index is asynchronous, so a fast question can beat it. What
     // is already on screen wins.
-    if (root.busy || turnModel.count > 0 || proc.running) return
+    //
+    // `warm` used to be a third condition here, back when it read
+    // proc.running, because then it could only mean "ask() spawned a child
+    // before the index landed". It cannot mean that any more: the agent
+    // outlives the panel now, so a shell that has JUST started routinely finds
+    // one already warm, and keeping the guard skipped the restore in exactly
+    // the case it exists for -- measured, turns=0 against a live agent holding
+    // the conversation. The two remaining conditions are about THIS panel, and
+    // they are the ones that were ever meant.
+    if (root.busy || turnModel.count > 0) return
 
     var s = root.sessions[0]
     if (!s || !s.file || s.file === "") return
@@ -973,8 +1003,8 @@ Singleton {
     root.error = ""
     root.resumePath = s.file
     root.awaitingEntries = true
-    if (proc.running) send({ type: "switch_session", sessionPath: s.file })
-    else proc.running = true   // buildCommand picks up resumePath
+    if (root.warm) send({ type: "switch_session", sessionPath: s.file })
+    else { root.sendConfig(); control({ type: "__spawn" }) }   // the spawn picks up resumePath
     return true
   }
 
@@ -1614,7 +1644,7 @@ Singleton {
     // corrects this at that spawn if pi disagrees.
     root.thinkingLevel = level
     root.saveModelState()
-    if (proc.running) send({ type: "set_thinking_level", level: level })
+    if (root.warm) send({ type: "set_thinking_level", level: level })
   }
 
   // Accepts "provider/id" -- what the completion writes and what set_model
@@ -1652,7 +1682,7 @@ Singleton {
     // anything, which on an OAuth provider is a network round trip -- and the
     // response ordering measurement above came out of exactly this call
     // overtaking nothing while a get_state queued behind it answered first.
-    if (proc.running) {
+    if (root.warm) {
       send({ type: "set_model", provider: hit.provider, modelId: hit.id })
       return
     }
@@ -1694,7 +1724,12 @@ Singleton {
     obj.id = root.nextId++
     // The protocol is line-delimited, so the trailing newline is the frame
     // terminator, not cosmetic.
-    proc.write(JSON.stringify(obj) + "\n")
+    //
+    // Dropped rather than queued when there is nothing to write to. Every
+    // caller of this is either a probe the next spawn will re-issue or a
+    // setter whose state is already persisted, so a lost frame corrects
+    // itself; ask() is the one exception and it refuses up front instead.
+    if (sock.connected) sock.write(JSON.stringify(obj) + "\n")
     // Handed back so flush() can remember which response belongs to the
     // question, rather than treating every `prompt` response as the current
     // one.
@@ -1739,6 +1774,44 @@ Singleton {
     }
 
     switch (d.type) {
+    // ---------------------------------------------------- the broker's own
+    // Four frames that are not pi's. They are prefixed so that a reader of
+    // either end can tell at a glance which frames crossed a process boundary
+    // that pi knows nothing about, and so that a future pi event can never
+    // collide with one.
+    case "__welcome":
+      root.onWelcome(d)
+      break
+    case "__pi_started":
+      root.onPiStarted()
+      break
+    case "__pi_exited":
+      root.onPiExited(Number(d.code))
+      break
+    case "__prompt": {
+      // The first line of a replayed turn: the question that opened it.
+      // Normally redundant, because reattach() has already put that question
+      // on screen out of get_entries -- see the note there on pi appending the
+      // user message to the session early. Kept only as the fallback for the
+      // case where it is the sole copy: a get_entries that failed, or an agent
+      // with no session file at all.
+      //
+      // The guard has to be "is a turn already open", not "is the last row a
+      // user row". Getting that wrong is not subtle and it is not theoretical:
+      // by the time the replay lands, openReplayTurn() has appended the
+      // ASSISTANT row, so a role check on the last row sees "assistant", adds
+      // the pair again, and the reload turns one exchange into two. Measured,
+      // turns=4 for a single question.
+      var last = turnModel.count > 0 ? turnModel.get(turnModel.count - 1) : null
+      if (last && (last.pending || last.role === "user")) break
+      appendTurn("user", String(d.message || ""), "", "", false,
+                 Number(d.images) > 0 ? "(" + d.images + " attached)" : "")
+      appendTurn("assistant", "", "", "", true, "")
+      root.busy = true
+      root.appended()
+      break
+    }
+
     // Not in rpc-types.d.ts, but emitted by the real binary on every level that
     // actually moves -- including the one set_model changes on its own, which is
     // the only warning the footer gets that a model switch took the level with
@@ -1813,7 +1886,16 @@ Singleton {
           // The usage readouts describe a context that has just been replaced
           // wholesale, so re-read them. Driven by the resume, not by a clock.
           send({ type: "get_session_stats" })
-        } else root.error = String(d.error || "get_entries failed")
+          // Reattaching, not resuming: the last entry is the question being
+          // answered right now, so open the row its answer belongs in and let
+          // the broker deliver what it has. Strictly after rehydrate, which
+          // clears the model -- an assistant row opened before it would be the
+          // first casualty.
+          if (root.replayPending) root.openReplayTurn()
+        } else {
+          root.error = String(d.error || "get_entries failed")
+          root.replayPending = false
+        }
         break
       }
       // A question an extension command answered inline, which the agent loop
@@ -1852,7 +1934,6 @@ Singleton {
         root.extensionNotice = ""
         root.busy = false
         settleTurn()
-        idleTimer.restart()
         break
       }
       // Only a FAILED response matters: success is just an ack that the prompt
@@ -1861,7 +1942,6 @@ Singleton {
         var msg = String(d.error || "rejected")
         root.busy = false
         settleTurn()
-        idleTimer.restart()
         // A pinned thinking level the endpoint refuses would otherwise fail
         // EVERY turn from here on, because it is baked into buildCommand(). The
         // upstream names the offender in the message, so take it at its word,
@@ -1941,7 +2021,6 @@ Singleton {
       // The one moment the context can have changed, so the one moment worth
       // asking. Event-driven, once per turn -- never on a timer.
       send({ type: "get_session_stats" })
-      idleTimer.restart()
       break
     }
   }
@@ -1972,180 +2051,190 @@ Singleton {
     return v.length > 70 ? v.substring(0, 70) + "…" : v
   }
 
-  // Assembled rather than written inline so the settings block above stays the
-  // one place anything is configured. The `cd` comes first because pi reads
-  // CLAUDE.md from its working directory.
-  // ------------------------------------------------------------ why -ne stays
-  // The reason recorded here for years was that pi's bundled
-  // openai-codex-usage.ts calls assertActive() on a UI that does not exist
-  // outside a TTY, throws, and takes the whole run with it. That is NO LONGER
-  // TRUE of the installed pi. Loading it deliberately on a headless rpc child --
-  // `-ne -e ~/.pi/agent/extensions/openai-codex-usage.ts` -- registered its
-  // three commands and answered a question normally, agent_settled and all.
+  // --------------------------------------------------------------- transport
+  // The four values the panel switches at runtime, handed to the broker so the
+  // NEXT spawn is born on them. This is what makes `/model` and `/effort`
+  // outlive the child that heard them -- the same job buildCommand() used to do
+  // by reading these properties directly, done over a wire instead.
   //
-  // -ne stays anyway, because a second reason is live and was never written
-  // down. Discovery loads ~/.pi/agent/extensions/pi-web-access, which registers
-  // a `web_search` tool, and that collides with the shim-web.ts we load by
-  // hand. pi does not warn and carry on -- it refuses to start:
+  // Sent on every ask rather than only on change: it is one small line against
+  // a question that costs seconds, and a broker that restarted since the last
+  // change would otherwise spawn on stale defaults. The broker holds it and
+  // acts on it only at spawn time, so sending it mid-turn is harmless.
   //
-  //   Error: Failed to load extension ".../pi-web-access/index.ts":
-  //   Tool "web_search" conflicts with .../my-pi/extensions/shim-web.ts
-  //
-  // Isolated both ways: no -ne and no -e shim-web starts fine and reports 10
-  // commands; no -ne WITH -e shim-web dies before the first frame. So the flag
-  // is protecting the deliberate choice of shim-web over pi-web-access that the
-  // `extensions` block above argues for -- drop one and you must drop both.
-  //
-  // Nothing among those 10 is worth adding back by hand. Every one is a TUI
-  // affordance: /usage, /usage-status, /codex-usage, /codex-usage-status,
-  // /permissions, /bg, /websearch, /search, /tasks, /llama -- overlays, status
-  // bars and browser openers, in a 460px panel that has none of those.
-  //
-  // ------------------------------------------------------- and why no --skill
-  // Skills are NOT discovered from this working directory; they need an
-  // explicit `--skill <path>`. Measured, same child, same question:
-  //
-  //   as it stands                      1 command   8138 input tokens
-  //   + --skill ~/.claude/skills       30 commands 12736 input tokens
-  //
-  // So +4,598 input tokens on EVERY turn, stable across three runs, for 29
-  // extra commands. (First-token latency is NOT a cost: one run came in at 22s
-  // against a 2.5s baseline, but two repeats landed at 2.81s and 4.15s, so that
-  // was the model, not the flag.)
-  //
-  // Not added, and the token count is the smaller half of why. That directory
-  // is Claude Code's, not Ori's: those 29 are things like project-backend-dev and
-  // beckmann-obgyn, written for an agent with a different toolset, and pointing
-  // pi at it would make this panel's command list change whenever a skill is
-  // installed for an unrelated tool. If Ori is to have skills, they want a
-  // directory of Ori's own -- ~/.config/assistant/skills, next to the prompt
-  // files -- and that `--skill` would be small, deliberate and cheap.
-  //
-  // One honest loose end: an earlier run of this same probe, with these exact
-  // flags from this exact cwd, reported 17 commands of which 16 were skills,
-  // and the count is not reproducible now -- the identical script re-run gives
-  // 1. Something outside this repo changed underneath it. Whatever it was, it
-  // is not something this file can rely on, which is the whole argument for
-  // naming a directory explicitly rather than hoping discovery finds one.
-  function buildCommand() {
-    var parts = ["SHIM_URL=" + root.shimUrl, "exec " + root.binary,
-                 "--mode rpc", "-ne",
-                 "--provider " + root.provider, "--model " + root.model]
-    // This is what makes /effort outlive the child that heard it. Omitted while
-    // nothing has been pinned, so the panel keeps deferring to pi's own default
-    // until someone actually asks for a level.
-    //
-    // `--thinking <level>` rather than the `--model <id>:<level>` shorthand the
-    // help text also offers. The shorthand parses by splitting on the LAST
-    // colon, and this machine's model id is `deepseek-v4-flash:0731` -- it does
-    // survive that (exact match is tried before any split), but naming the flag
-    // outright costs nothing and cannot be broken by the next model id that
-    // happens to end in a word.
-    if (root.effort !== "") parts.push("--thinking " + root.effort)
-    // Quoted: session filenames carry an ISO timestamp with colons in it, which
-    // a login shell would otherwise be free to interpret.
-    if (root.resumePath !== "") parts.push("--session '" + root.resumePath + "'")
-    for (var i = 0; i < root.promptFiles.length; i++)
-      parts.push("--append-system-prompt " + root.promptFiles[i])
-    for (var j = 0; j < root.extensions.length; j++)
-      parts.push("-e " + root.extensions[j])
-    return "cd " + root.workdir + " && " + parts.join(" ")
+  // The argument that the CLI flags beat a resumed session file's own recorded
+  // model still holds and is unchanged by the move -- see "and persistence"
+  // above. The flags are simply assembled one process further out.
+  function sendConfig() {
+    control({ type: "__config",
+              provider: root.provider, model: root.model,
+              effort: root.effort, session: root.resumePath })
   }
 
-  // --------------------------------------------------------------- process
-  Process {
-    id: proc
+  // A control frame. No `id`: the broker answers these itself and never
+  // forwards them, so an id would be a number nothing ever echoes back.
+  function control(obj) {
+    if (!sock.connected) return
+    sock.write(JSON.stringify(obj) + "\n")
+  }
 
-    // `sh -lc` for the same reason ScriptWidget uses it: pi lives in ~/.bun/bin,
-    // which a login shell puts on PATH and a bare exec does not, and every `~`
-    // below needs expanding. `exec` so that sh replaces itself with pi --
-    // otherwise stdin belongs to sh and `write()` goes nowhere.
-    command: ["sh", "-lc", root.buildCommand()]
+  Socket {
+    id: sock
+    // $XDG_RUNTIME_DIR, not /tmp -- a lock file this desktop put in /tmp once
+    // locked root out of it under fs.protected_regular, and the runtime dir is
+    // where the rest of the shell's state already lives.
+    //
+    // Nothing is started from here. The path is a systemd .socket, listening
+    // from login, and connecting to it is what starts ori-agent.service. So
+    // this connect cannot lose a race with a daemon coming up: the socket
+    // exists before anything is behind it, and systemd holds the connection
+    // until there is.
+    path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/ori-agent.sock"
+    connected: true
 
-    stdinEnabled: true
-    stdout: SplitParser { onRead: function (line) { root.ingest(line) } }
+    // Line-delimited JSON, exactly as it was on the child's stdout -- Socket
+    // inherits DataStream, so this is the same SplitParser that used to read
+    // the pipe, reading the socket instead. That is the whole of the change at
+    // this layer.
+    parser: SplitParser { onRead: function (line) { root.ingest(line) } }
 
-    // The child is spawned by ask(), so there is usually exactly one question
-    // waiting when it comes up -- or, when resume() spawned it, a transcript to
-    // read back out of the session it was started on.
-    onStarted: {
-      // The context gauge needs a window to divide by, and the window is
-      // knowable the moment the child is up -- get_session_stats answers on a
-      // child that has never been prompted. Measured against a hand-driven
-      // rpc child: the reply landed 0.61s after spawn carrying
-      // contextWindow 1048576 with tokens 0, a full 6.8s before the first
-      // text_delta of the first answer.
-      //
-      // Asking only from agent_settled, which is what this used to do, meant
-      // the gauge read nothing for the whole of the first answer, and kept
-      // reading nothing afterwards if that first turn never settled. Both
-      // observed: `window=0 known=false` for the seven seconds an essay
-      // streamed, and still `window=0` five minutes after the child was
-      // killed mid-turn. Fixing it at the spawn covers every one of those
-      // failure paths at once, because the denominator is in hand before any
-      // of them can happen.
-      //
-      // The other candidate was the first message_update carrying `usage`.
-      // Rejected on the evidence: those arrive AFTER text has begun
-      // streaming, the early ones carry all-zero usage, and none of them
-      // carries a window at all -- only the numerator.
-      //
-      // Not a timer, and not a poll: this is the spawn event, and a spawn is
-      // the only moment the window can become knowable without a turn having
-      // settled.
-      //
-      // The resume path is deliberately left out. get_entries already sends
-      // its own stats once the transcript has landed, and a stats reply that
-      // beat rehydrate() to it would hand recordSession() the resumed
-      // session's id alongside the label of the conversation being switched
-      // away from.
-      if (root.awaitingEntries) root.send({ type: "get_entries" })
-      else root.send({ type: "get_session_stats" })
-      // The command list, on the same spawn event and for the same reason: it
-      // is knowable as soon as the child is up and cannot change without one.
-      // Queueing both ahead of the question costs nothing the first token can
-      // tell -- see the timing measurement on `commands`.
-      root.send({ type: "get_commands" })
-      // And the three /model and /effort need, for the same reason again: all
-      // three are knowable the moment the child is up and none of them can
-      // change without a spawn or an explicit command. get_state is the one
-      // that matters most -- it is where a level silently clamped by the
-      // --thinking flag becomes visible.
-      //
-      // Measured, three runs, spawn to each reply landing: get_session_stats at
-      // 0.62-0.79s and the whole set within 32-53ms behind it, the 45KB model
-      // list costing the last 15ms of that. Against a 2.5s cold start and a
-      // first token 6.8s out, all five are free.
-      root.send({ type: "get_state" })
-      root.send({ type: "get_available_thinking_levels" })
-      root.send({ type: "get_available_models" })
-      root.flush()
-    }
-
-    onExited: function (exitCode) {
-      root.pending = ""
-      root.pendingImages = []
-      root.awaitingEntries = false
-      idleTimer.stop()
-      // An exit while busy is a crash, not the idle timer: say so rather than
-      // leaving the panel spinning forever on an answer that will never come.
-      if (root.busy) {
-        root.busy = false
-        if (root.error === "") root.error = "pi exited (" + exitCode + ")"
-        settleTurn()
+    onConnectionStateChanged: {
+      if (sock.connected) {
+        retry.stop()
+        // Ask what the world looks like BEFORE assuming anything about it.
+        // Everything the boot path does hangs off the answer -- see onWelcome.
+        root.control({ type: "__hello" })
+        return
       }
+      // The broker is a systemd unit with Restart=on-failure, so a drop is a
+      // restart in progress far more often than it is a machine without one.
+      // Reconnecting is what makes the panel pick the agent back up by itself.
+      root.warm = false
+      retry.start()
     }
   }
 
   Timer {
-    id: idleTimer
-    interval: root.idleKillMs
-    repeat: false
-    onTriggered: proc.running = false
+    id: retry
+    interval: 1000
+    repeat: true
+    onTriggered: if (!sock.connected) sock.connected = true
   }
 
+  // --------------------------------------------------------------- boot
+  // Two things have to land before the panel knows what to put on screen: the
+  // session index (what conversations exist) and the broker's welcome (whether
+  // one of them is being answered RIGHT NOW). They arrive in either order --
+  // one is a file read, the other a socket round trip -- so whichever is second
+  // makes the decision, and `booted` makes it once.
+  //
+  // The order matters because the two answers are mutually exclusive. A disk
+  // restore mid-turn would put the transcript back MINUS the answer being
+  // written, and then the replay would stream that answer into a row nothing
+  // had opened. So a busy broker takes the screen and the disk restore is
+  // skipped entirely; reattach() rebuilds the same transcript from the live
+  // agent, which is strictly better because it is the agent's own copy.
+  property bool welcomed: false
+  property bool booted: false
+
+  function onWelcome(d) {
+    root.warm = !!d.warm
+    if (d.workdir) root.workdir = String(d.workdir)
+    root.welcomed = true
+    // A reconnect while a turn is in flight is the case this whole rewrite is
+    // for, and it is not only a boot case: the broker restarting mid-answer
+    // lands here too, and wants the same treatment.
+    if (d.busy) {
+      root.booted = true
+      root.reattach()
+      return
+    }
+    root.bootStep()
+  }
+
+  function bootStep() {
+    if (root.booted || !root.welcomed || !root.sessionsLoaded) return
+    root.booted = true
+    root.restoreLastSession()
+  }
+
+  // ------------------------------------------------------------- reattach
+  // Pick up a turn already in flight. The transcript comes from the AGENT, not
+  // from disk, because pi has not written the answer yet -- and the reason
+  // this works at all is that get_entries is answerable mid-turn. Measured
+  // against a real child 4.5s into an answer: it replied in band, returned
+  // history ending at the unanswered question, and the turn settled normally
+  // afterwards.
+  //
+  // That is also why the broker's own record of the question is ignored on
+  // this path. pi appends the USER message to the session early -- observed
+  // going 5 -> 6 entries while the answer streamed -- so get_entries already
+  // has it, and replaying it too would show it twice. The buffer supplies only
+  // the half that does not exist anywhere else yet: the answer so far.
+  property bool replayPending: false
+
+  function reattach() {
+    root.awaitingEntries = true
+    root.replayPending = true
+    send({ type: "get_entries" })
+  }
+
+  // Called from the get_entries response, once rehydrate() has put the
+  // transcript back. rehydrate() ends every row settled, which is right for a
+  // conversation read off disk and wrong here by exactly one row.
+  function openReplayTurn() {
+    root.replayPending = false
+    appendTurn("assistant", "", "", "", true, "")
+    root.error = ""
+    // Restarts the turn clock, so the duration readout measures from the
+    // reattach rather than from the question. Nothing in the protocol
+    // timestamps a turn and the broker does not stamp its buffer, so the
+    // honest options were a wrong number or none; a number that undercounts a
+    // turn you reloaded through is the smaller lie.
+    root.busy = true
+    root.lastAppendAt = Date.now()
+    root.appended()
+    // Released here and not a moment earlier. Everything the broker held while
+    // this handshake ran now arrives in order, into the row just opened.
+    control({ type: "__replay" })
+  }
+
+  // ------------------------------------------------------- spawn / lifecycle
+  // What Process.onStarted used to do, driven by the broker's event instead.
+  // The body is unchanged, and so is its argument: all five of these are
+  // knowable the moment a child is up, none can change without a spawn, and
+  // they were measured landing 0.62-0.79s after spawn against a first token
+  // 6.8s out.
+  function onPiStarted() {
+    root.warm = true
+    if (root.awaitingEntries) root.send({ type: "get_entries" })
+    else root.send({ type: "get_session_stats" })
+    root.send({ type: "get_commands" })
+    root.send({ type: "get_state" })
+    root.send({ type: "get_available_thinking_levels" })
+    root.send({ type: "get_available_models" })
+    root.flush()
+  }
+
+  function onPiExited(code) {
+    root.warm = false
+    root.pending = ""
+    root.pendingImages = []
+    root.awaitingEntries = false
+    root.replayPending = false
+    // An exit while busy is a crash or the idle kill misfiring, not a normal
+    // end: say so rather than leaving the panel spinning forever on an answer
+    // that will never come.
+    if (root.busy) {
+      root.busy = false
+      if (root.error === "") root.error = "pi exited (" + code + ")"
+      settleTurn()
+    }
+  }
+
+  // Drop the child and reclaim the ~200MB now, rather than waiting out the
+  // broker's idle clock. The broker stays up -- it is the socket.
   function dropChild() {
-    idleTimer.stop()
-    proc.running = false
+    control({ type: "__kill" })
   }
 }
