@@ -470,8 +470,13 @@ Item {
             // A list marker sits in the gutter and the item hangs off it: 14px,
             // not the 55 Qt indents a markdown list by, which at 426px of measure
             // cost a bullet its last word. Two levels of nesting, then it stops.
-            readonly property int gutter: piece.bullet ? 14 : 0
-            readonly property int lead: (piece.m.depth || 0) * 14
+            // 22, not 14. A bullet is one narrow glyph, but an ORDERED list
+            // marker is "1." -- two characters of Adwaita Sans at 19 -- and at
+            // 14 the number sat straight against its own item: `1.Wed 26 Aug`
+            // in ../frames2/real-answers.png, on the user's own transcript.
+            // Wide enough for "10." before it needs thinking about again.
+            readonly property int gutter: piece.bullet ? 22 : 0
+            readonly property int lead: (piece.m.depth || 0) * 22
 
             width: body.width
             implicitHeight: piece.isTool ? batch.height
