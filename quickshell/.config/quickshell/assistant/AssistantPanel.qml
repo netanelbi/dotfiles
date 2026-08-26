@@ -263,7 +263,7 @@ PanelWindow {
         font.family: Style.font.family
         font.pixelSize: Style.font.panelBody
         font.weight: Style.font.boldWeight
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
 
       // Where it runs. This is the whole "it manages this machine" claim, and
@@ -275,7 +275,7 @@ PanelWindow {
         color: Theme.overlay0
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
 
       Rectangle {
@@ -294,7 +294,7 @@ PanelWindow {
           color: newArea.containsMouse ? Theme.text : Theme.overlay0
           font.family: Style.font.family
           font.pixelSize: Style.font.panelBody
-          renderType: Text.NativeRendering
+          renderType: Text.QtRendering
         }
 
         MouseArea {
@@ -479,7 +479,7 @@ PanelWindow {
         color: Theme.subtext0
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
 
       Connections {
@@ -561,7 +561,7 @@ PanelWindow {
         wrapMode: Text.Wrap
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
 
       Item { width: 1; height: 10 }
@@ -573,7 +573,7 @@ PanelWindow {
         color: Theme.alpha(Theme.overlay0, 0.75)
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
     }
 
@@ -655,7 +655,7 @@ PanelWindow {
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
         font.weight: Style.font.boldWeight
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
 
         Behavior on color {
           ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
@@ -672,7 +672,7 @@ PanelWindow {
         color: Theme.overlay0
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
     }
 
@@ -697,7 +697,7 @@ PanelWindow {
         wrapMode: Text.Wrap
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
     }
 
@@ -726,7 +726,7 @@ PanelWindow {
         color: entry.activeFocus ? panel.accent : Theme.overlay0
         font.family: Style.font.family
         font.pixelSize: Style.font.panelBody
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
 
         Behavior on color {
           ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
@@ -742,9 +742,9 @@ PanelWindow {
         selectedTextColor: Theme.base
         selectByMouse: true
         wrapMode: TextEdit.Wrap
-        font.family: Style.font.family
+        font.family: Style.font.panelFamily
         font.pixelSize: Style.font.panelBody
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
         clip: true
 
         Text {
@@ -755,9 +755,9 @@ PanelWindow {
           // would be dropped.
           text: PiSession.busy ? "ctrl+c to stop" : "Message"
           color: Theme.overlay0
-          font.family: Style.font.family
+          font.family: Style.font.panelFamily
           font.pixelSize: Style.font.panelBody
-          renderType: Text.NativeRendering
+          renderType: Text.QtRendering
         }
 
         Keys.onPressed: function (event) {
@@ -910,7 +910,7 @@ PanelWindow {
         color: Theme.overlay0
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
 
       // The model. Both this and the level are what `/model` and `/effort`
@@ -936,7 +936,7 @@ PanelWindow {
         elide: Text.ElideRight
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
 
       // Real numbers, in the order they become knowable: nothing before a
@@ -951,7 +951,7 @@ PanelWindow {
         color: Theme.overlay0
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
 
       // How much of the Ollama Cloud plan is left. The third "how much is left"
@@ -967,7 +967,7 @@ PanelWindow {
         color: Usage.tint
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
 
         Behavior on color {
           ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }

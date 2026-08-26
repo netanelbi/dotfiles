@@ -50,16 +50,11 @@ Singleton {
   }
 
   // ----------------------------------------------------------------- font
-  // style.css's numbers are correct as literals: text-scaling-factor is 1.0
-  // on this machine, so GTK paints waybar's `font-size: 14px` at 14px and Qt
-  // matches it directly.
-  //
-  // (A previous version of this comment claimed GTK scaled fonts by 1.1667 and
-  // sized everything up accordingly. That factor was not the user's setting --
-  // an Omarchy trial had written it into gsettings. It has been reset to 1.0.)
-  //
-  // The one deliberate deviation: the window-title list reads too small at
-  // style.css's literal 12px, so it sits at the base size.
+  // style.css's numbers are correct as literals: text-scaling-factor is 1.0 on
+  // this machine, so GTK paints waybar's `font-size: 14px` at 14px and Qt
+  // matches it directly. (An earlier comment claimed a 1.1667 GTK factor; that
+  // was an Omarchy trial's gsettings write, since reset.) One deliberate
+  // deviation: the window-title list reads too small at 12px.
   readonly property QtObject font: QtObject {
     readonly property string family: "JetBrainsMono Nerd Font"
     readonly property int size: 14
@@ -72,15 +67,32 @@ Singleton {
     readonly property int boldWeight: Font.Bold
 
     // ------------------------------------------------------------- panel
-    // The sizes above are BAR sizes, transcribed from waybar's style.css for a
-    // 30px strip you glance at. The assistant panel is a surface you READ --
-    // paragraphs, commands, whole answers -- and 14px in a 460px card is too
-    // tight for that. It gets its own pair so tuning the reading size can never
-    // shove the bar's geometry around.
-    readonly property int panelBody: 16
-    // Rails, footers, tool lines: subordinate to the body but still legible,
-    // rather than the bar's 12px which reads as a footnote at this distance.
-    readonly property int panelMeta: 13
+    // The sizes above are BAR sizes, for a 30px strip you glance at. The panel
+    // is a surface you READ, so it gets its own set, and the reading size can
+    // never shove the bar's geometry around.
+    //
+    // panelFamily is PROPORTIONAL, unlike `family` (a monospace Nerd Font):
+    // prose in a 460px card is far more legible in a sans than in a mono that
+    // reads like a terminal, and the mono is kept for commands, tool lines and
+    // meta readouts, which is where fixed widths belong. Carlito (Calibri
+    // metrics) is the compact, well-hinted sans on this machine.
+    readonly property string panelFamily: "Carlito"
+    // Ori's ANSWER, and the largest thing on this surface. Question, narration
+    // and answer were all 17 and the verdict was "too small or not clear".
+    readonly property int panelBody: 18
+    // A `## ` heading inside an answer: the SAME size as the body, and bold. Qt
+    // renders a markdown h2 at roughly twice the body size, which makes a
+    // sub-heading shout louder than the answer it is a part of. Weight says
+    // "this labels what follows"; size would say "this matters most", and a
+    // heading does not.
+    readonly property int panelHead: 18
+    // Narration, on the screens that show it: what Ori said about a tool call
+    // that has its own line already.
+    readonly property int panelAside: 15
+    // Rails, receipts, tool lines and code: subordinate to the body but still
+    // legible, rather than the bar's 12px -- and a monospace looks a size larger
+    // than a proportional face at the same pixel size.
+    readonly property int panelMeta: 14
   }
 
   // ----------------------------------------------------------------- motion
@@ -113,14 +125,12 @@ Singleton {
     readonly property int tooltipDelay: 400
 
     // ------------------------------------------------------------- ambient
-    // The two below are the only durations in this file that are allowed past
-    // the 320ms ceiling, because they are not state changes: they are motion
-    // that runs CONTINUOUSLY while the assistant is working, and at bar speeds
-    // a continuous loop reads as an alarm rather than as something alive.
+    // The only durations in this file allowed past the 320ms ceiling, because
+    // they are not state changes: they run CONTINUOUSLY while the assistant
+    // works, and at bar speeds a continuous loop reads as an alarm.
     //
-    // One breath of Ori's heartbeat. OriDot animates it as two 700ms halves;
-    // the panel drives the same period off a frame clock, so it needs the
-    // period as one number rather than as the pair.
+    // One breath of Ori's heartbeat. OriDot animates it as two 700ms halves; the
+    // panel drives the same period off a frame clock, so it needs one number.
     readonly property int breath: 1400
     // One pass of the scan highlight across the panel's activity rail.
     readonly property int scan: 2600
@@ -128,26 +138,23 @@ Singleton {
 
 
   // ------------------------------------------------------------------- ori
-  // The assistant's presence, and its whole budget: ONE cell in the bar, and
-  // one panel that only exists while the pointer is on that cell.
+  // The assistant's presence, and its whole budget: ONE cell in the bar, and one
+  // panel that only exists while the pointer is on that cell.
   //
-  // This block used to size a wash of light across the top of the screen. It
-  // does not any more, and the reason is the governing rule of this design --
-  // twelve variants were rejected for the same fault, in the user's own words:
-  // "they all share the same issue. its on the main windows and it will bother
-  // me on other windows." Ambient light on a working screen is a COST. So the
-  // cell is entirely inside the bar's 30px, nothing bleeds onto a window, and
-  // the ONE surface that covers a window is the hover panel, which is there
-  // because it was asked for and gone the moment the pointer leaves.
+  // This block used to size a wash of light across the top of the screen, and
+  // the reason it does not is the governing rule of this design -- twelve
+  // variants were rejected for one fault, in the user's own words: "they all
+  // share the same issue. its on the main windows and it will bother me on other
+  // windows." Ambient light on a working screen is a COST. So the cell stays
+  // inside the bar's 30px and the ONE surface that covers a window is the hover
+  // panel, there because it was asked for and gone when the pointer leaves.
   //
-  // These are tokens rather than literals because the cell and the panel are
-  // two separate surfaces that must agree on a period, a tint and a rate.
-  //
-  // Everything here is slower than the `anim` block above, deliberately. Every
-  // other transition in this bar is a REACTION to something you did and has to
-  // land inside 320ms; this is the one thing on screen that is simply alive
-  // whether or not you are looking at it, and it should move like breathing,
-  // not like UI.
+  // Tokens rather than literals because the cell and the panel are two surfaces
+  // that must agree on a period, a tint and a rate -- and everything here is
+  // deliberately slower than `anim` above. Every other transition in this bar is
+  // a REACTION and has to land inside 320ms; this is the one thing on screen
+  // that is simply alive whether or not you are looking, and it should move like
+  // breathing, not like UI.
   readonly property QtObject ori: QtObject {
     // One full inhale + exhale of the glyph. Resting human breath is ~4s; this
     // sits just under it, which reads as concentrating rather than asleep.
@@ -163,19 +170,16 @@ Singleton {
     readonly property int scanMs: 1900
 
     // ------------------------------------------------------- the flow gauge
-    // Harvested from OriAura, which is deleted. The aura was a wash across the
-    // whole screen edge and that is exactly what the user rejected -- but the
-    // FACT it carried is the one nothing else on this desktop has: whether Ori
-    // is MOVING. A tool call streams no deltas, so the character counter
-    // freezes for the whole of a `bash sleep 15` while the process is perfectly
-    // healthy; the gap BETWEEN deltas is the missing number. These three turn
-    // that gap into a rate, and the rate now drives the scan travelling the
-    // keel instead of a pool travelling the screen. Same measurement, contained
-    // in 148px.
+    // Harvested from OriAura, which is deleted: the aura was the screen-edge wash
+    // the user rejected, but the FACT it carried is one nothing else here has --
+    // whether Ori is MOVING. A tool call streams no deltas, so the character
+    // counter freezes for the whole of a `bash sleep 15` on a healthy process;
+    // the gap BETWEEN deltas is the missing number. These three turn that gap
+    // into a rate, and the rate drives the scan along the keel instead of a pool
+    // across the screen.
     //
-    // How long a silence is tolerated before the scan starts slowing. Under
-    // this, ordinary gaps between tokens and the pause on either side of a tool
-    // result do not register as a stall.
+    // How long a silence is tolerated before the scan slows: under this, ordinary
+    // token gaps and the pause either side of a tool result are not a stall.
     readonly property int flowGraceMs: 2000
     // e-folding time of the slowdown past that grace. ~4s of silence puts the
     // scan at a third rate, ~6s puts it on the floor -- which is roughly the
@@ -208,22 +212,17 @@ Singleton {
     readonly property int cellReadout: toolWidth + timeWidth + cellGap
 
     // ---------------------------------------------------------- the unhoused
-    // The assistant does not live in an island. It floats in the GAP between
-    // the centre and right islands, on the bar's own background -- and nothing
-    // else in this bar is unhoused, which is precisely what stops it reading as
-    // one more status chip beside the battery.
+    // The assistant does not live in an island. It floats in the GAP between the
+    // centre and right islands, and nothing else in this bar is unhoused, which
+    // is what stops it reading as one more status chip beside the battery.
     //
-    // zoneWidth is the EXPANDED footprint, reserved PERMANENTLY. The cell
-    // animates inside it, so compact and expanded are the same reservation and
-    // neither island is ever pushed by anything the assistant does. Measured
-    // off the running bar on eDP-1 (1280 logical): the left island ends at 163,
-    // the centre spans 520-773, the right spans 1127-1273, so both gaps are
-    // ~355px and 148 + 2x24 leaves ~155 clear.
-    //
-    // The RIGHT gap, not the left: the left one holds the window-title list,
-    // which is replaced wholesale on every workspace switch and can be several
-    // hundred px wide. The right island is tray/bluetooth/network/audio/battery
-    // and changes by a character at a time.
+    // zoneWidth is the EXPANDED footprint, reserved PERMANENTLY: the cell
+    // animates inside it, so neither island is ever pushed. Measured off the
+    // running bar on eDP-1 (1280 logical): the left island ends at 163, the
+    // centre spans 520-773, the right spans 1127-1273, so both gaps are ~355px
+    // and 148 + 2x24 leaves ~155 clear. The RIGHT gap, not the left: the left
+    // holds the window-title list, replaced wholesale on every workspace switch,
+    // while the right changes by a character at a time.
     readonly property int zoneWidth: 148
     readonly property int zoneGap: 24
     // The halo wants the island's full height around a 14px glyph, not the 18px

@@ -99,6 +99,6 @@ Item {
     elide: Text.ElideRight
     font.family: Style.font.family
     font.pixelSize: Style.font.panelMeta
-    renderType: Text.NativeRendering
+    renderType: Text.QtRendering
   }
 }

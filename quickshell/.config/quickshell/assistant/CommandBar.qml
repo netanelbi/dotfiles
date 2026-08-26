@@ -221,7 +221,7 @@ Rectangle {
     elide: Text.ElideRight
     font.family: Style.font.family
     font.pixelSize: Style.font.panelMeta
-    renderType: Text.NativeRendering
+    renderType: Text.QtRendering
   }
 
   ListView {
@@ -269,7 +269,7 @@ Rectangle {
         color: parent.on ? Theme.text : Theme.subtext0
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
 
       // The description is what makes a list of sixteen skill names usable, but
@@ -284,7 +284,7 @@ Rectangle {
         elide: Text.ElideRight
         font.family: Style.font.family
         font.pixelSize: Style.font.panelMeta - 2
-        renderType: Text.NativeRendering
+        renderType: Text.QtRendering
       }
     }
   }
