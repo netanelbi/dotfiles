@@ -881,6 +881,14 @@ Singleton {
     }
 
     if (p.indexOf("file://") === 0) p = p.substring(7)
+    // Cleared FIRST, then set. blockLoading alone is not enough: a FileView
+    // asked for a new path can hand back the bytes it already held, and it does
+    // so silently -- the transcript row carried the RIGHT path
+    // (paste-1787813158822066810.png, 875917 bytes) while the block on the wire
+    // carried the 17KB image from the send before it, so the panel showed one
+    // picture and the model answered about another. Emptying the path first
+    // means there is no previous content to return.
+    imageFile.path = ""
     imageFile.path = p
     var buf = imageFile.data()
     if (!buf || buf.byteLength === undefined || buf.byteLength === 0) {

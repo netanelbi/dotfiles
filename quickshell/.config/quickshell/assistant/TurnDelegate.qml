@@ -292,7 +292,12 @@ Item {
 
           delegate: Item {
             id: sent
-            required property var m
+            // `model` here is still the ARRAY turnItem.sent, so this row is
+            // handed `modelData`, not a role. The piece Repeater below moved to
+            // a count model and its delegate renamed this to `m`; this one was
+            // renamed with it by mistake while its body still read modelData,
+            // so every attachment resolved to undefined and no thumbnail drew.
+            required property var modelData
 
             implicitWidth: sent.modelData.image ? thumb.implicitWidth : gone.width
             implicitHeight: sent.modelData.image ? thumb.implicitHeight : gone.implicitHeight
