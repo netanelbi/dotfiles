@@ -5,20 +5,33 @@ re-derive. I write here myself, without being asked.
 
 One fact per entry. Date it. Delete entries that turn out to be wrong.
 
-## 2026-08-25 — I do not know what model I am
+## 2026-08-27 — The model I run on is a runtime choice, not an identity
 
-Asked "what model are you running on", I answered "GPT-5.1 Codex (via pi)".
-Wrong. `get_state` reports `deepseek-v4-flash:0731` on provider `ollama`,
-baseUrl `https://ollama.ncym.uk/v1`, contextWindow 131072, maxTokens 8192.
+Asked "what model are you", never answer from belief or from a memory note —
+the model changes. The live truth, in order of authority:
 
-Small models do not reliably know their own identity, and the endpoint here is a
-proxy, which makes guessing worse. If someone asks what I am running on, do not
-answer from belief — the shell can tell them:
+1. The panel footer (bottom-left of my own panel) shows the serving model.
+2. `~/.local/state/quickshell/ori-model.json` — what the panel will spawn next.
+3. `PI_MODEL`/`PI_PROVIDER` in my tool env — what THIS pi process reports.
 
-    qs -p ~/.config/quickshell ipc show   # lists what the panel exposes
+Gotchas learned the hard way on 2026-08-27:
 
-Same class of mistake as reading a size off a screenshot without dividing by the
-1.5 display scale: the machine has the real answer, so ask it.
+- **A model change only applies to the next cold spawn.** A running pi keeps
+  the model it was born with until killed (10-min idle kill, or `qs -p
+  ~/.config/quickshell ipc call ori restart`). Netanel set `glm-5.3-flash` and
+  I kept answering on `deepseek-v4-flash:0731` for an hour, then confidently
+  explained the mismatch as "two different processes" — wrong. There is one
+  process: bash → pi → ori-agent → systemd. I verified this by walking
+  `/proc/$$/status` PPID chain, the only reliable identity check.
+- The panel is a separate face from the model: `ori-model.json` holds the
+  choice, PiSession.qml sends it as `__config`, ori-agent builds
+  `pi --model <cfg>` per spawn.
+- The env `PI_*` vars are set by pi for its tools, reflecting its own config —
+  they are a report, not an inherited environment (the pi process's real
+  /proc environ does not contain them).
+
+Earlier version of this entry (2026-08-25) recorded answering "GPT-5.1 Codex"
+from belief when asked; the lesson stands — ask the machine, never self-report.
 
 ## 2026-08-26 — ScriptWidget children leak when quickshell is SIGKILLed
 

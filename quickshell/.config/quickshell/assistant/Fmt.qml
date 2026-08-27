@@ -124,7 +124,7 @@ QtObject {
 
     // An answer with no text at all still needs one piece, or the turn has
     // nothing to give it height and the list jumps on the first token.
-    if (out.length === 0) out.push({ image: false, text: src })
+    if (out.length === 0) out.push({ image: false, text: rich(src) })
 
     // Which of this is work and which is the answer: in an agentic turn the
     // answer is the last thing said, so everything up to and including the final
@@ -231,62 +231,122 @@ QtObject {
     if (t.replace(/\s/g, "") !== "") out.push({ image: false, text: prep(t) })
   }
 
-  function prep(t) { return breakable(defang(t)) }
+  // ------------------------------------------------------------- rich text
+  // Prose leaves this file as RICH TEXT, not markdown.
+  //
+  // The reason is a number Qt will not let anyone set. `TextEdit.MarkdownText`
+  // renders an inline code span in the fixed-pitch face at the SAME pixel size
+  // as the prose around it, and a mono at a proportional face's size optically
+  // outweighs it by about a third -- `waybar.service` and
+  // `xdg-desktop-portal-hyprland.service` came out the loudest things in their
+  // own sentences. The previous fix for that gave up the mono face entirely and
+  // painted the word bold yellow in the PROSE font, which solved the size and
+  // lost the one signal that says "this is a literal you can type".
+  //
+  // Owning the pass gets both, and it does not mean owning a markdown renderer:
+  // by the time text arrives here it is no longer markdown. Fences, images,
+  // headings and list items have ALREADY left (scan / images / push), so what
+  // remains in a piece is one paragraph with at most three inline marks in it --
+  // `code`, **bold**, *emphasis*. Three regexes over an escaped string.
+  //
+  // It is also strictly SAFER than what it replaces, which is why defang() is
+  // gone rather than kept. The old path injected an html span into a MARKDOWN
+  // document, so the prose around it was never escaped and defang() had to name
+  // the one tag it feared (`<img`) by hand; anything else the model wrote went
+  // straight through Qt's html parser. Here everything is escaped FIRST, so no
+  // tag survives to be parsed at all -- and an image the localImage rule
+  // rejected stays visible as the literal text someone wrote, instead of being
+  // quietly rewritten into a link.
+  function prep(t) { return rich(t) }
+
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  }
+
+  function rich(src) {
+    var codes = []
+    // Code spans come out FIRST and go back in LAST, so bold and emphasis
+    // cannot reach inside a command: `git commit -m "a *b* c"` keeps its stars.
+    // The placeholder is a control character, which cannot occur in an answer
+    // and passes through esc() untouched.
+    var t = String(src).replace(/`([^`\n]+)`/g, function (m, s) {
+      codes.push(s)
+      return "\u0001" + (codes.length - 1) + "\u0001"
+    })
+
+    t = esc(t)
+    // Two stars before one, or `**bold**` matches the emphasis rule twice and
+    // comes back as an empty italic wrapped round the word. The emphasis rules
+    // want a boundary in front, so a snake_case identifier that escaped the
+    // backticks is not silently italicised through its middle.
+    t = t.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+         .replace(/__([^_\n]+)__/g, "<b>$1</b>")
+         .replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<i>$2</i>")
+         .replace(/(^|[\s(])_([^_\n]+)_(?=[\s.,;:)]|$)/g, "$1<i>$2</i>")
+    // A markdown `--` is an em dash and every model writes them. Qt's markdown
+    // renderer left them as two hyphens, which at this size reads as a broken
+    // word rather than a dash. Code spans are already out of the string, so no
+    // flag is at risk.
+    t = t.replace(/(\S) -- (?=\S)/g, "$1 — ")
+    // Qt's rich text collapses newlines the way html does, so a hard-wrapped
+    // answer would come back as one run-on paragraph.
+    t = t.replace(/\n{2,}/g, "<br><br>").replace(/\n/g, "<br>")
+
+    t = t.replace(/\u0001(\d+)\u0001/g, function (m, i) {
+      return code(codes[Number(i)])
+    })
+    // Leading. A TextEdit has no lineHeight property the way a Text does, so
+    // the one place it can be asked for is the document itself, and a paragraph
+    // of technical prose in a narrow column needs the extra quarter-line.
+    return "<div style=\"line-height:134%\">" + t + "</div>"
+  }
+
+  // One inline code span, at a size and in a face Qt would never have given it.
+  //
+  // YELLOW, asked for by name after the user saw it: at three pixels down the
+  // mono face alone is quiet enough to disappear into the prose, and the colour
+  // is what makes a path findable when you are scanning for one.
+  //
+  // No background. A tinted chip behind each span was tried and rendered:
+  // QTextDocument paints an inline background over the whole LINE BOX, so with
+  // 134% leading every path becomes a tall block and a bullet list of paths
+  // comes back striped.
+  function code(s) {
+    return "<span style=\"font-family:'" + Style.font.panelMono + "';"
+      + "font-size:" + Style.font.panelCode + "px;"
+      + "color:" + cssColor(Theme.yellow) + "\">"
+      + esc(breakable(s)) + "</span>"
+  }
 
   // ------------------------------------------------------------------ breaks
-  // Code has nowhere to break in a 426px column, so Qt breaks it wherever the
+  // Code has nowhere to break in a narrow column, so Qt breaks it wherever the
   // line ran out -- the user's own screenshot came back with
   // `Text.NativeRendering everywhere, which on a 1.5x-` / `scaled display`, and
   // an identifier cut in half stops being an identifier. Which rule applies is a
-  // question of whether the span could ever fit: under 24 characters (~260px of
-  // mono in 426) it always fits a fresh line, so it is HARDENED and word wrap
-  // moves the whole span down. Longer, and it has to break somewhere, so it is
-  // offered zero-width spaces at its separators.
-  //
-  // Inline code is a HIGHLIGHT, not a font swap: Qt markdown gives a backtick
-  // span an empty font family, which falls back to the system mono at body size
-  // -- a word that reads bigger than the prose it sits in. So the backticks
-  // become an HTML span that keeps the prose font and paints the word in bold
-  // yellow, the same quiet distinction a code block gets from its surface. The
-  // content is escaped so a `<` or `&` inside the span is text, not markup, and
-  // selectedText() strips the tags, so copy still yields the bare word.
-  function breakable(t) {
-    return t.replace(/`([^`\n]+)`/g, function (m, s) {
-      var esc = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      var inner = esc.length < 24 ? hard(esc) : zwsp(nobr(esc))
-      return '<span style="color:' + cssColor(Theme.yellow) + ';font-weight:bold;">' + inner + '</span>'
-    })
+  // question of whether the span could ever fit: under 24 characters it always
+  // fits a fresh line, so it is HARDENED and word wrap moves the whole span
+  // down. Longer, and it has to break somewhere, so it is offered zero-width
+  // spaces at its separators.
+  function breakable(s) {
+    return s.length < 24 ? hard(s) : zwsp(nobr(s))
   }
   // A hyphen is a break Qt takes wherever it finds one: `exec-once` came back as
   // `exec-` / `once`, and a fenced block as `--` / `state=enabled,masked`, a flag
   // cut off its own name. Every hyphen inside code becomes a non-breaking one and
   // the breaks are offered deliberately instead -- by zwsp(), and by the spaces a
   // command already has. hard() goes further and holds a SHORT span whole.
-  function nobr(s) { return s.replace(/-/g, "\u2011") }
-  function hard(s) { return nobr(s).replace(/ /g, "\u00a0") }
+  function nobr(s) { return s.replace(/-/g, "‑") }
+  function hard(s) { return nobr(s).replace(/ /g, " ") }
 
   // A separator with a WORD standing on it, and only when four or more follow:
   // Qt takes the LAST offer that fits, so offering every dot returned
   // `widgets/OriVeil.` / `qml`. The selection handler strips these back out.
-  function zwsp(s) { return s.replace(/([^\s-])([./_:@-])(?=\S{4,})/g, "$1$2\u200b") }
+  function zwsp(s) { return s.replace(/([^\s-])([./_:@-])(?=\S{4,})/g, "$1$2​") }
 
-  // A QML color as a CSS color string. QML stringifies an alpha color as
-  // `#aarrggbb`, which CSS does not read, so the chip's background is built as
-  // rgba() from the components instead.
+  // A QML color as a CSS color string. QML stringifies a color as `#aarrggbb`,
+  // which CSS does not read, so it is built as rgba() from the components.
   function cssColor(c) {
     return "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + ","
       + Math.round(c.b * 255) + "," + c.a + ")"
-  }
-
-  // A rejected image left as literal markdown is NOT harmless, measured the hard
-  // way: Text renders markdown images itself, so a leftover `![cat](https://…)`
-  // sent the panel to example.com during the very test meant to prove it never
-  // would. Demoting the `!` leaves the same words as an ordinary link, and a link
-  // is not resolved until it is clicked -- which nothing here does. Raw
-  // `<img src=…>` is worse: Text takes it for an html block and SWALLOWS the
-  // answer behind it. Only a COMPLETE image is demoted, not every `![`, or a
-  // settled answer that merely contains the characters would be rewritten.
-  function defang(t) {
-    return t.replace(/!\[([^\]\n]*)\]\(/g, "[$1](").replace(/<(\/?img)/gi, "&lt;$1")
   }
 }

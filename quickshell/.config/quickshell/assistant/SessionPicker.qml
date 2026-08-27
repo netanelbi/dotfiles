@@ -94,7 +94,7 @@ Rectangle {
     anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
     text: "resume  ·  ↑↓ move   ⏎ open   esc back"
     color: Theme.overlay0
-    font.family: Style.font.family
+    font.family: Style.font.panelMono
     font.pixelSize: Style.font.panelMeta
     renderType: Text.QtRendering
   }
@@ -150,7 +150,7 @@ Rectangle {
         text: String(modelData.label || "(no title)")
         color: parent.on ? Theme.text : Theme.subtext0
         elide: Text.ElideRight
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
       }
@@ -160,7 +160,7 @@ Rectangle {
         anchors { left: label.left; top: label.bottom; topMargin: 1 }
         text: root.when(modelData.at) + "  ·  " + (modelData.count || 0) + " msg"
         color: Theme.overlay0
-        font.family: Style.font.family
+        font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta - 2
         renderType: Text.QtRendering
       }

@@ -71,27 +71,45 @@ Singleton {
     // is a surface you READ, so it gets its own set, and the reading size can
     // never shove the bar's geometry around.
     //
-    // panelFamily is PROPORTIONAL, unlike `family` (a monospace Nerd Font):
-    // prose in a 460px card is far more legible in a sans than in a mono that
-    // reads like a terminal, and the mono is kept for commands, tool lines and
-    // meta readouts, which is where fixed widths belong. Carlito (Calibri
-    // metrics) is the compact, well-hinted sans on this machine.
-    readonly property string panelFamily: "Carlito"
-    // Ori's ANSWER, and the largest thing on this surface. Question, narration
-    // and answer were all 17 and the verdict was "too small or not clear".
-    readonly property int panelBody: 18
+    // Both faces changed, for one reason each.
+    //
+    // panelFamily is Adwaita Sans, not Carlito. Carlito is Calibri's metrics: a
+    // compact office face with soft, low-contrast stems, and at 18px through
+    // Qt's distance-field renderer on a 1.5x display it reads SOFT -- the user's
+    // words were "my input messages render a little blurry", and the geometry
+    // was measured clean first (pill x=66 w=374, text at scene 104,214, every
+    // one an integer at 1.5x, so nothing was landing off the pixel grid). It is
+    // the face. Adwaita Sans has a much taller x-height at the same pixel size,
+    // so more of each glyph is above the baseline to be resolved, and flat
+    // high-contrast stems that survive the distance field. It is also the face
+    // this machine's own GTK chrome is set in.
+    readonly property string panelFamily: "Adwaita Sans"
+    // panelMono is Adwaita Mono (Iosevka metrics), not the bar's JetBrainsMono
+    // Nerd Font. JetBrainsMono at the body size is so much wider and taller on
+    // the body than a proportional face that every inline path outweighs its own
+    // sentence. Iosevka is narrow: the same path costs ~25% less measure. The
+    // BAR keeps `family` -- it needs the Nerd Font glyphs and this one has none.
+    readonly property string panelMono: "Adwaita Mono"
+
+    // Ori's ANSWER, and the largest thing on this surface.
+    readonly property int panelBody: 19
     // A `## ` heading inside an answer: the SAME size as the body, and bold. Qt
     // renders a markdown h2 at roughly twice the body size, which makes a
     // sub-heading shout louder than the answer it is a part of. Weight says
     // "this labels what follows"; size would say "this matters most", and a
     // heading does not.
-    readonly property int panelHead: 18
+    readonly property int panelHead: 19
+    // Inline `code` INSIDE prose. A mono span optically outweighs a proportional
+    // face at the same pixel size; three down puts Adwaita Mono's cap height on
+    // Adwaita Sans's, so a path sits IN the sentence instead of on top of it.
+    // Qt's markdown renderer offers no per-span control at all, which is why
+    // Fmt builds the prose as rich text itself.
+    readonly property int panelCode: 16
     // Narration, on the screens that show it: what Ori said about a tool call
     // that has its own line already.
-    readonly property int panelAside: 15
-    // Rails, receipts, tool lines and code: subordinate to the body but still
-    // legible, rather than the bar's 12px -- and a monospace looks a size larger
-    // than a proportional face at the same pixel size.
+    readonly property int panelAside: 16
+    // Rails, receipts, tool lines and fenced blocks: subordinate to the body but
+    // still legible, rather than the bar's 12px.
     readonly property int panelMeta: 14
   }
 
