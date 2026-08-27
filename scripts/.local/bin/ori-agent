@@ -177,10 +177,16 @@ BINARY = "pi"
 # cannot drift from the truth.
 WORKDIR = "~/.dotfiles"
 
-# Where shim-web sends its searches. The local systemd instance rather than
-# the VPS: it is the same code, it is already running for `ccr`, and it saves
-# a round trip to a datacentre for something the laptop can ask for directly.
-SHIM_URL = "http://127.0.0.1:11435"
+# Where shim-web sends its searches. The VPS, not a local instance.
+#
+# This used to be http://127.0.0.1:11435 -- the same code, already running for
+# `ccr`, saving a round trip to a datacentre. That reasoning held only while the
+# local unit was running. The moment ollama-shim.service was stopped, every turn
+# hung: shim-web dialled a dead port with no timeout, pi never settled, and the
+# panel sat on "thinking" forever with nothing in any log to say why. A default
+# that fails CLOSED is worse than a slower one that works, and shim-web already
+# defaults to this host on its own.
+SHIM_URL = "https://ollama.ncym.uk"
 
 # Prepended to the system prompt, in order. pi takes a PATH here as well as
 # text -- and it does NOT expand CLAUDE.md's `@file` imports, so every file
@@ -310,7 +316,7 @@ def build_command(cfg):
         "--mode rpc",
         "-ne",
         "--provider " + cfg.get("provider", "ollama"),
-        "--model " + cfg.get("model", "deepseek-v4-flash:0731"),
+        "--model " + cfg.get("model", "glm-5.3-flash"),
     ]
     if cfg.get("effort"):
         parts.append("--thinking " + cfg["effort"])

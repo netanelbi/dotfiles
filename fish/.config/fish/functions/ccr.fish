@@ -1,15 +1,13 @@
-function ccr --description "Launch Claude Code against ollama-shim (systemd, localhost:11435) -> Ollama Cloud, with model mapping + 1M context"
-    # Thin wrapper: the ollama-shim proxy is managed by systemd (ollama-shim.service),
-    # so ccr only wires env vars and forwards to claude. No process management here.
+function ccr --description "Launch Claude Code against Ollama Cloud (ollama.ncym.uk), with model mapping"
+    # Thin wrapper: ccr only wires env vars and forwards to claude. No process management here.
     argparse --ignore-unknown 'haiku=' 'sonnet=' 'opus=' 'subagent=' 'max-tokens=' 'all=' 'base-url=' -- $argv
     or return 1
 
-    # --- Endpoint: ollama-shim on localhost (or --base-url to bypass it) ---
+    # --- Endpoint: Ollama Cloud gateway (or --base-url to override) ---
     if set -q _flag_base_url
         set -x ANTHROPIC_BASE_URL $_flag_base_url
     else
-        set -l proxy_port (set -q CCR_PROXY_PORT; and echo $CCR_PROXY_PORT; or echo 11435)
-        set -x ANTHROPIC_BASE_URL "http://localhost:$proxy_port"
+        set -x ANTHROPIC_BASE_URL (set -q CCR_BASE_URL; and echo $CCR_BASE_URL; or echo "https://ollama.ncym.uk")
     end
 
     # --- Auth: OLLAMA_API_KEY (set in secrets.fish) ---
@@ -23,20 +21,17 @@ function ccr --description "Launch Claude Code against ollama-shim (systemd, loc
     end
 
     # --- Model mapping: Claude Code tiers -> Ollama Cloud models ---
-    # opus (main) -> glm-5.2[1m]  (1M context window by default; drop [1m] for default context)
-    # sonnet      -> deepseek-v4-flash:0731[1m]  (surpassed v4-pro; pinned tag + 1M ctx)
-    # haiku       -> deepseek-v4-flash:0731  (pinned tag; the bare name is the older build)
-    # subagents   -> deepseek-v4-flash:0731
+    # all tiers -> glm-5.3-flash  (fast/cheap, vision support; no [1m] tag on the shim yet)
     if set -q _flag_all
         set -x ANTHROPIC_DEFAULT_HAIKU_MODEL   $_flag_all
         set -x ANTHROPIC_DEFAULT_SONNET_MODEL $_flag_all
         set -x ANTHROPIC_DEFAULT_OPUS_MODEL   $_flag_all
         set -x CLAUDE_CODE_SUBAGENT_MODEL     $_flag_all
     else
-        set -x ANTHROPIC_DEFAULT_HAIKU_MODEL   (set -q _flag_haiku;    and echo $_flag_haiku;    or echo "deepseek-v4-flash:0731")
-        set -x ANTHROPIC_DEFAULT_SONNET_MODEL  (set -q _flag_sonnet;  and echo $_flag_sonnet;  or echo "deepseek-v4-flash:0731[1m]")
-        set -x ANTHROPIC_DEFAULT_OPUS_MODEL    (set -q _flag_opus;    and echo $_flag_opus;    or echo "glm-5.2[1m]")
-        set -x CLAUDE_CODE_SUBAGENT_MODEL      (set -q _flag_subagent; and echo $_flag_subagent; or echo "deepseek-v4-flash:0731")
+        set -x ANTHROPIC_DEFAULT_HAIKU_MODEL   (set -q _flag_haiku;    and echo $_flag_haiku;    or echo "glm-5.3-flash")
+        set -x ANTHROPIC_DEFAULT_SONNET_MODEL  (set -q _flag_sonnet;  and echo $_flag_sonnet;  or echo "glm-5.3-flash")
+        set -x ANTHROPIC_DEFAULT_OPUS_MODEL    (set -q _flag_opus;    and echo $_flag_opus;    or echo "glm-5.3-flash")
+        set -x CLAUDE_CODE_SUBAGENT_MODEL      (set -q _flag_subagent; and echo $_flag_subagent; or echo "glm-5.3-flash")
     end
 
     if set -q _flag_max_tokens

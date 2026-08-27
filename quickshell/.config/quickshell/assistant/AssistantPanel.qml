@@ -195,6 +195,21 @@ PanelWindow {
   readonly property real elapsedMs:
     PiSession.turnStartedAt > 0 ? Math.max(0, panel.nowMs - PiSession.turnStartedAt) : 0
 
+  // Output tokens per second, for the footer. `warm`/`cold` sat there before and
+  // said only whether a process existed -- true of nearly every moment you are
+  // looking at the panel, so it told you nothing. This moves.
+  //
+  // The rate itself is PiSession's, measured over GENERATION time rather than
+  // the wall clock: a turn that sat nine seconds in bash and then wrote fifty
+  // tokens is not a 5 tok/s model, and dividing by the turn made every
+  // tool-using answer read as a slow one. Falls back to warm/cold when there is
+  // no sample yet.
+  readonly property string rateLabel:
+    PiSession.tokensPerSecond > 0
+      ? (PiSession.tokensPerSecond >= 10 ? Math.round(PiSession.tokensPerSecond)
+                                         : PiSession.tokensPerSecond.toFixed(1)) + " tok/s"
+      : (PiSession.warm ? "warm" : "cold")
+
   Connections {
     target: PiSession
     // Stamp the clock at the start of the turn rather than waiting for the
@@ -955,8 +970,7 @@ PanelWindow {
       Text {
         anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter
                   verticalCenterOffset: 1 }
-        text: panel.contextLabel + " ctx · "
-          + (PiSession.busy ? "live" : PiSession.warm ? "warm" : "cold")
+        text: panel.contextLabel + " ctx · " + panel.rateLabel
         color: Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta

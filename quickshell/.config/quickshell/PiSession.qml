@@ -563,6 +563,15 @@ Singleton {
     return busy ? turnOutput() : 0
   }
 
+  // The same number after the turn settles, which liveTokens deliberately zeroes
+  // so nothing on screen claims to still be counting. The footer's tok/s needs
+  // the finished figure to freeze on, and `outputBase` is not moved again until
+  // the next ask(), so turnOutput() still holds it.
+  readonly property int lastTurnTokens: {
+    root.usageOutput
+    return busy ? 0 : turnOutput()
+  }
+
   function lastAssistant() {
     for (var i = turnModel.count - 1; i >= 0; i--) {
       if (turnModel.get(i).role === "assistant") return i
@@ -581,12 +590,40 @@ Singleton {
     return -1
   }
 
+  // Milliseconds this turn spent actually GENERATING, which is not the same as
+  // how long the turn took. A turn that ran `bash sleep 9` and then wrote fifty
+  // tokens took ten seconds and generated for one; dividing by the wall clock
+  // reports 5 tok/s for a model doing 50, and every tool-using turn reads as a
+  // slow model. So the gaps are summed rather than the span: each delta adds the
+  // time since the delta before it, and a gap longer than the cap is a tool call
+  // or a stall, not generation, so it is not counted.
+  //
+  // 2s: the widest gap actually observed between deltas mid-answer here is well
+  // under a second, and the narrowest tool call is comfortably over two.
+  readonly property int genGapCapMs: 2000
+  property double genMs: 0
+
   function grow(field, delta) {
     var i = lastAssistant()
     if (i < 0) return
     turnModel.setProperty(i, field, turnModel.get(i)[field] + delta)
-    root.lastAppendAt = Date.now()
+    var now = Date.now()
+    if (root.lastAppendAt > 0) {
+      var gap = now - root.lastAppendAt
+      if (gap > 0 && gap < root.genGapCapMs) root.genMs += gap
+    }
+    root.lastAppendAt = now
     root.appended()
+  }
+
+  // Output tokens per second over generation time only. Zero until there is
+  // enough of a sample to mean anything -- the first delta of a turn has no
+  // predecessor to measure against, so an early reading is noise.
+  readonly property real tokensPerSecond: {
+    root.usageOutput
+    root.genMs
+    var toks = root.busy ? turnOutput() : root.lastTurnTokens
+    return (root.genMs > 400 && toks > 0) ? toks / (root.genMs / 1000) : 0
   }
 
   // ------------------------------------------------------------------- api
@@ -706,6 +743,7 @@ Singleton {
     // A turn opens at full flow, so the first seconds -- before a single token
     // has landed -- read as movement rather than as a stall left over from the
     // previous answer.
+    root.genMs = 0
     root.lastAppendAt = Date.now()
     appendTurn("user", msg, "", "", false, labels.join("\n"))
     // The assistant's turn exists before a single token arrives, so the view has
