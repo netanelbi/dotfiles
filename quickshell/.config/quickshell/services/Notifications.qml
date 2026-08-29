@@ -77,6 +77,14 @@ Scope {
   readonly property bool inlineReplies: false  // notification-inline-replies
   readonly property string textEmpty: "No Notifications"
 
+  // ------------------------------------------------------------- noise gate
+  // Apps matched by case-insensitive PREFIX of their app-name. Blocked ones
+  // are dropped at the door -- no popup, no history, the sender is told it
+  // expired. history-only ones still pop up, but never sit in the control
+  // center: a screenshot confirmation is worth the 2s popup and nothing more.
+  readonly property var blockedApps: ["Claude Code", "power-profile", "Scratchpad", "stay-awake", "Screenshot", "Command"]
+  readonly property var historyOnlyApps: ["Cachy-Updater"]
+
   // ------------------------------------------------------------- state
   // Both lists are newest-first. The same entry object is shared between them
   // and `byKey`, so a card's identity survives every rebuild of the arrays.
@@ -156,7 +164,29 @@ Scope {
   }
 
   // ------------------------------------------------------------- ingest
+  function appMatches(notification, pattern) {
+    // Match app-name AND summary: several senders (the screenshot binds,
+    // hypr-scratchpad-toggle) set no -a, so the summary is the only handle.
+    var p = pattern.toLowerCase()
+    return (notification.appName !== "" && notification.appName.toLowerCase().indexOf(p) === 0)
+      || notification.summary.toLowerCase().indexOf(p) === 0
+  }
+
   function ingest(notification) {
+    var appName = notification.appName !== "" ? notification.appName : "Notification"
+    for (var b = 0; b < root.blockedApps.length; b++) {
+      if (root.appMatches(notification, root.blockedApps[b])) {
+        notification.expire()
+        return
+      }
+    }
+    var historyOnly = false
+    for (var h = 0; h < root.historyOnlyApps.length; h++) {
+      if (root.appMatches(notification, root.historyOnlyApps[h])) {
+        historyOnly = true
+        break
+      }
+    }
     var entry = root.entryFor(notification)
     var fresh = !entry
 
@@ -183,7 +213,7 @@ Scope {
 
     // "image-visibility" and the rest are the card's business; the store only
     // decides where the notification goes.
-    if (!notification.transient) root.pushHistory(entry)
+    if (!notification.transient && !historyOnly) root.pushHistory(entry)
 
     // A notification carried over a config reload is already old news: it goes
     // back in the panel, it does not pop up again.
