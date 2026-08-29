@@ -94,6 +94,11 @@ Scope {
       root.result = ""
       root.computing = false
       if (root.group) root.group.claim(panel)
+      // Lazy exchange-rate refresh: fire-and-forget; the script exits
+      // immediately unless the cached rates are 24h+ old, so this is at
+      // most one fetch per day and nothing at all on days the calculator
+      // stays closed. No timer/daemon needed.
+      Quickshell.execDetached(["/home/netanel/.local/bin/update-qalculate-rates"])
     }
     onDismissed: {
       if (root.group) root.group.release(panel)
