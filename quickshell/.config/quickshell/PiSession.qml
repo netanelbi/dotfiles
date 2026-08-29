@@ -2349,7 +2349,12 @@ Singleton {
         ? { pid: Number(det.pid) || 0, log: String(det.logFile || "") } : null
       if (root.closingBg)
         root.addBgJob(root.closingBg.pid,
-                      det.watching ? "monitor" : "job",
+                      // The tool says what kind of thing it handed back when
+                      // it knows -- a subagent reports "agent". Only bash has
+                      // to be inferred, and there the tell is whether it was
+                      // given an alarm to watch for.
+                      det.kind ? String(det.kind)
+                               : det.watching ? "monitor" : "job",
                       // The intent first, the command only if there was none.
                       // A tray row answers "what is running and why", and a
                       // shell one-liner elided at 40 characters answers
