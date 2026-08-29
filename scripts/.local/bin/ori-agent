@@ -197,6 +197,9 @@ PROMPT_FILES = [
     "~/.config/assistant/soul.md",
     "~/.config/assistant/laptop.md",
     "~/.config/assistant/memory.md",
+    # Who he is, as opposed to what this machine is. Written by the `memory`
+    # tool, same as memory.md -- see the extension for why the two are split.
+    "~/.config/assistant/user.md",
 ]
 
 # Extensions, opted into by path. Empty would mean none: `-ne` disables
@@ -219,6 +222,17 @@ EXTENSIONS = [
     # tool_execution_start, so the panel can SHOW the search. A shim-side loop
     # is invisible to the client by construction.
     "~/Development/Personal/my-pi/extensions/shim-web.ts",
+
+    # Bounded, agent-owned memory: memory.md and user.md, with a cap that
+    # REFUSES an overflowing write and hands back the current entries, so
+    # consolidation happens in the same turn instead of never.
+    "~/Development/Personal/my-pi/extensions/memory.ts",
+
+    # Delegation. Each subagent is a separate pi process, so its context is
+    # genuinely isolated -- the parent gets the report and none of the reading
+    # that produced it. Agents are markdown in ~/.pi/agent/agents; only
+    # `general` is installed, deliberately.
+    "~/Development/Personal/my-pi/extensions/subagent",
 ]
 
 # Kill the child after this much silence. Long enough to cover a
