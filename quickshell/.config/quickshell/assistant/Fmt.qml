@@ -85,9 +85,6 @@ QtObject {
   //   { image: true, source, alt }        one picture
   //   { tool: true, calls, n }            one batch of tool calls, where it ran
   //
-  // Every piece up to and including the last tool call also carries `aside`.
-  // That run is WORK: Ori saying what it is about to do, and then doing it.
-  //
   // `streaming` is true while the turn is still being written; `calls` is the
   // turn's tool log, each entry carrying the `at` offset PiSession stamps. The
   // batches are why this takes `calls`: a working turn is speak, run, speak,
@@ -126,21 +123,11 @@ QtObject {
     // nothing to give it height and the list jumps on the first token.
     if (out.length === 0) out.push({ image: false, text: rich(src) })
 
-    // Which of this is work and which is the answer: in an agentic turn the
-    // answer is the last thing said, so everything up to and including the final
-    // tool call is preamble. Marked here because a delegate knows nothing about
-    // the piece after it.
-    var last = -1
-    for (var j = 0; j < out.length; j++) if (out[j].tool) last = j
-    for (var k = 0; k <= last; k++) out[k].aside = true
+    // No `aside` marking any more. Everything up to the last tool call used to
+    // be flagged as preamble so the delegate could grey it out and then fold it
+    // away; the panel folds nothing now, and prose the agent wrote between two
+    // commands is prose, not a footnote to itself.
     return out
-  }
-
-  // Where the answer starts, so the delegate can roll everything before it into
-  // one line. The whole length while a turn is still all work.
-  function answerAt(list) {
-    for (var i = 0; i < list.length; i++) if (!list[i].aside) return i
-    return list.length
   }
 
   // One stretch of the answer, cut into pieces. Fences FIRST, because a fenced
@@ -279,8 +266,13 @@ QtObject {
     // comes back as an empty italic wrapped round the word. The emphasis rules
     // want a boundary in front, so a snake_case identifier that escaped the
     // backticks is not silently italicised through its middle.
-    t = t.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
-         .replace(/__([^_\n]+)__/g, "<b>$1</b>")
+    // DemiBold, not <b>. Qt's <b> is weight 700 against a body of 400, and at
+    // panelBody 19 in Adwaita Sans that is a leap rather than a step -- every
+    // model opens every paragraph with `**Something:**`, so a whole answer came
+    // back looking like a list of headings. 600 still reads as emphasis and
+    // stops shouting.
+    t = t.replace(/\*\*([^*\n]+)\*\*/g, "<span style=\"font-weight:600\">$1</span>")
+         .replace(/__([^_\n]+)__/g, "<span style=\"font-weight:600\">$1</span>")
          .replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<i>$2</i>")
          .replace(/(^|[\s(])_([^_\n]+)_(?=[\s.,;:)]|$)/g, "$1<i>$2</i>")
     // A markdown `--` is an em dash and every model writes them. Qt's markdown

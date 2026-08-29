@@ -149,6 +149,7 @@ PanelWindow {
       PiSession.error !== "" ? Theme.red
     : PiSession.activeTool !== "" ? Theme.accent
     : PiSession.busy ? Theme.sapphire
+    : PiSession.bgCount > 0 ? Theme.accent
     : PiSession.warm ? Theme.sapphire
     : Theme.inactive
 
@@ -159,7 +160,30 @@ PanelWindow {
       PiSession.error !== "" ? "error"
     : PiSession.activeTool !== "" ? "running " + PiSession.activeTool.split(" ")[0]
     : !PiSession.busy ? ""
+    // Background work is NOT named here any more. It has a strip of its own
+    // (BackgroundTray) directly above this one, because it is a different kind
+    // of fact: this rail describes the turn in flight and collapses with it,
+    // and a backgrounded job outlives every turn there is.
     : (PiSession.liveTurn && PiSession.liveTurn.text !== "") ? "answering" : "thinking"
+
+  // WHY it is running that, beside the verb that says it is running something.
+  // `activeTool` is the tool name and its one summarised argument joined by a
+  // space, and summarizeArgs() prefers the `description` pi's tool-descriptions
+  // extension makes every call carry -- so this is the sentence Ori wrote for
+  // the call in flight. The panel had it all along and was throwing it away on
+  // `.split(" ")[0]`.
+  //
+  // Here, and not in the turn: this rail is the one place on the card that
+  // cannot move. The transcript scrolls, a turn's own rows arrive and grow, but
+  // the line directly above where you type is always in the same pixels -- so
+  // "what is it doing this second" is readable without looking for it. The
+  // transcript keeps the same sentence per call as a ToolLine, which is the
+  // record; this is the readout.
+  readonly property string stateDetail: {
+    if (PiSession.error !== "" || PiSession.activeTool === "") return ""
+    var cut = PiSession.activeTool.indexOf(" ")
+    return cut < 0 ? "" : PiSession.activeTool.substring(cut + 1)
+  }
 
   Fmt { id: fmt }
 
@@ -188,9 +212,21 @@ PanelWindow {
 
   FrameAnimation {
     id: clock
-    running: panel.opened && PiSession.busy
+    // Background jobs keep it running. A backgrounded command is the one kind
+    // of activity that outlives the turn that started it, so a clock that stops
+    // at `agent_settled` leaves every moving thing on the card frozen while
+    // work is still going on -- the rail's scan mid-track, the tool rows at
+    // whatever opacity the last frame gave them.
+    running: panel.opened && (PiSession.busy || PiSession.bgCount > 0)
     onTriggered: panel.nowMs = Date.now()
   }
+
+  // The panel's one breath, so everything alive on this surface rises and falls
+  // together rather than each running a loop of its own. Collapses to a
+  // constant when the clock stops, so nothing is stranded mid-cycle.
+  readonly property real breath: (PiSession.busy || PiSession.bgCount > 0)
+    ? 0.65 + 0.35 * Math.cos(2 * Math.PI * panel.nowMs / Style.ori.breathMs)
+    : 1
 
   readonly property real elapsedMs:
     PiSession.turnStartedAt > 0 ? Math.max(0, panel.nowMs - PiSession.turnStartedAt) : 0
@@ -345,7 +381,7 @@ PanelWindow {
         top: header.bottom
         left: parent.left
         right: parent.right
-        bottom: rail.top
+        bottom: tray.top
         leftMargin: 10
         rightMargin: 10
         topMargin: 10
@@ -413,6 +449,49 @@ PanelWindow {
         transcript.positionViewAtBeginning()
       }
 
+      // One callLater is not enough on a long transcript. The appends that
+      // matter land in the same frame as the model change, and the delegates
+      // they add -- a RichText answer column above all -- settle their heights
+      // over SEVERAL frames, not one. A view positioned against the stale
+      // heights can end up outside the laid-out region entirely: a viewport
+      // with nothing in it, the history gone "above the chat". Nothing forces
+      // a re-latch until the next contentHeight change, which on a cold turn
+      // is the first streamed token -- so the transcript read as blank until
+      // the answer started. Pin for a window of frames instead: long enough to
+      // outlive the settling, short enough that a scroll the user begins in
+      // that window still wins, because `moving` sets `stuck` false and the
+      // pin refuses to run when it is not stuck.
+      property int pinFrames: 0
+
+      Timer {
+        id: pinTimer
+        interval: 16
+        repeat: true
+        onTriggered: {
+          // The pin window outlives the instant that opened it: a fold settling
+          // (delegates shrink) or a re-wrap keeps this timer alive across the
+          // frames where the user takes the wheel. Without this gate the timer
+          // dragged the view back to the bottom WHILE the user was scrolling
+          // up -- `stuck` had already gone false, and the pin overruled them
+          // for the rest of its window. A pin is a promise made while stuck;
+          // unstuck, it is cancelled.
+          // QUALIFIED. A bare `pinFrames = 0` inside the Timer is not a write
+          // to the ListView's property -- the Timer has no such property, so
+          // QML treats it as a write to a global and refuses it: "Invalid write
+          // to global property", 129 times in one session. The stop() beside it
+          // still ran, so the symptom was mild and entirely invisible without
+          // reading the log: the counter simply kept its old value.
+          if (!transcript.stuck) { transcript.pinFrames = 0; pinTimer.stop(); return }
+          transcript.toBottom()
+          if (--transcript.pinFrames <= 0) pinTimer.stop()
+        }
+      }
+
+      function pin() {
+        transcript.pinFrames = 12
+        pinTimer.restart()
+      }
+
       function goBottom() {
         transcript.stuck = true
         transcript.toBottom()
@@ -421,6 +500,9 @@ PanelWindow {
         // yet -- the list then lands short and stays there, because nothing
         // else is going to correct a position the user asked for by hand.
         Qt.callLater(transcript.toBottom)
+        // ...and keep catching the frames after that, where the single
+        // callLater above was measured to arrive too early.
+        transcript.pin()
       }
 
       // The other end. Unsticks, because arriving at the oldest turn and then
@@ -456,6 +538,10 @@ PanelWindow {
         if (!transcript.stuck) return
         transcript.toBottom()
         Qt.callLater(transcript.toBottom)
+        // A re-wrap mid-stream can move content across frames without a new
+        // append; keep the pin window open so a frame that landed short is
+        // corrected by the next one rather than by the token after it.
+        transcript.pin()
       }
 
       Connections {
@@ -464,6 +550,7 @@ PanelWindow {
           if (!transcript.stuck) return
           transcript.toBottom()
           Qt.callLater(transcript.toBottom)
+          transcript.pin()
         }
       }
 
@@ -622,6 +709,18 @@ PanelWindow {
       entry: entry
     }
 
+    // ------------------------------------------------------------------ tray
+    // Above the rail, below the conversation. Zero-high when nothing is
+    // running, so an idle panel is exactly what it was.
+    BackgroundTray {
+      id: tray
+      anchors { left: parent.left; right: parent.right; bottom: rail.top
+                leftMargin: 10; rightMargin: 10; bottomMargin: 4 }
+      accent: Theme.accent
+      nowMs: panel.nowMs
+      breath: panel.breath
+    }
+
     // ------------------------------------------------------------------ rail
     // The live line, in the same place Claude Code puts its spinner: directly
     // above where you type. It describes the turn IN FLIGHT and nothing else --
@@ -673,6 +772,10 @@ PanelWindow {
       Text {
         id: verb
         anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter }
+        // Capped, so a long verb never squeezes the sentence beside it to
+        // nothing: the verb is four words the eye already knows and the detail
+        // is the part actually worth reading.
+        width: Math.min(implicitWidth, parent.width * 0.32)
         text: panel.stateLabel
         color: panel.accent
         elide: Text.ElideRight
@@ -686,13 +789,32 @@ PanelWindow {
         }
       }
 
+      // The intent of the call in flight. Quiet, because the verb beside it is
+      // the state and this is the footnote to it -- and one line, elided, since
+      // the rail is 28px and a description that wrapped would resize a layer
+      // surface mid-turn.
+      Text {
+        id: detail
+        anchors { left: verb.right; leftMargin: 8; right: readout.left; rightMargin: 8
+                  verticalCenter: parent.verticalCenter }
+        text: panel.stateDetail
+        color: Theme.subtext0
+        elide: Text.ElideRight
+        maximumLineCount: 1
+        font.family: Style.font.panelMono
+        font.pixelSize: Style.font.panelMeta
+        renderType: Text.QtRendering
+      }
+
       // Elapsed, and what has come back for it. Both are on the right because
       // they change every frame, and a number that twitches under the first
       // word of a sentence is unreadable.
       Text {
+        id: readout
         anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
-        text: fmt.duration(panel.elapsedMs)
-          + (PiSession.liveTokens > 0 ? "  ↓ " + fmt.tokens(PiSession.liveTokens) : "")
+        text: !PiSession.busy ? ""
+          : fmt.duration(panel.elapsedMs)
+            + (PiSession.liveTokens > 0 ? "  ↓ " + fmt.tokens(PiSession.liveTokens) : "")
         color: Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta

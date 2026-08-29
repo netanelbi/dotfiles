@@ -79,15 +79,28 @@ Item {
   // this the glyph sits filled and bright through a whole new turn, saying
   // "come and read me" about an answer that is already being replaced.
   readonly property bool holding: (unread || failed) && !thinking
+
+  // Something the agent started and walked away from: a command the bash tool
+  // backgrounded, still running with no turn waiting on it. It is the one state
+  // this cell could not previously show, because every other one is a fact
+  // about a TURN and this outlives the turn that made it. Ranked below the
+  // others -- what it is doing now, and what it is holding for you, both matter
+  // more than what is ticking away in a log somewhere.
+  readonly property bool background: PiSession.bgCount > 0
   // Set by Bar.qml when the gap between the islands cannot hold the open cell.
   // Treated exactly like the user's own right-click: the cell simply does not
   // open. See the comment at the OriCell instantiation for the measurement.
   property bool cramped: false
-  readonly property bool expanded: !cramped && !PiSession.cellCompact && (thinking || holding)
+  readonly property bool expanded: !cramped && !PiSession.cellCompact
+    && (thinking || holding || background)
 
+  // Mauve, the shell's own "touched the machine" colour, and the same one the
+  // panel gives a tool row -- so a job still running reads as machine activity
+  // wherever you meet it.
   readonly property color tint: thinking ? Theme.sapphire
     : failed ? Theme.urgent
     : unread ? Theme.sky
+    : background ? Theme.accent
     : Theme.subtext0
 
   // Cold is dim, not absent. subtext0 at 0.42/0.70 rather than `Theme.inactive`
@@ -117,9 +130,18 @@ Item {
   readonly property int elapsedSec: root.thinking
     ? root.liveSec : Math.round(PiSession.turnSeconds)
 
+  // The readout's right half is the turn's clock, which says nothing about a
+  // job that outlived it -- so an idle cell with work still running shows a
+  // COUNT there instead of a stale duration.
+  readonly property bool countingJobs: root.background && !root.thinking && !root.holding
+
   FrameAnimation {
     id: heart
-    running: root.thinking || root.flash > 0.001
+    // Background jobs keep it running too. They are the one kind of activity
+    // that outlives its turn, so the clock that draws activity has to outlive
+    // the turn with them -- otherwise the cell says "background" in a glyph
+    // frozen at whatever opacity the last turn left it on.
+    running: root.thinking || root.background || root.flash > 0.001
     onTriggered: {
       if (root.thinking) {
         var s = Math.max(0, Math.floor((Date.now() - PiSession.askedAt) / 1000))
@@ -155,7 +177,7 @@ Item {
   // The breath. Derived from the same clock and collapsing to a constant the
   // moment it stops, so nothing is ever stranded mid-animation.
   readonly property real breath: {
-    if (!root.thinking) return 1
+    if (!root.thinking && !root.background) return 1
     var p = (heart.elapsedTime * 1000) % Style.ori.breathMs / Style.ori.breathMs
     return Style.ori.dotFloor + (1 - Style.ori.dotFloor) * (0.5 + 0.5 * Math.cos(2 * Math.PI * p))
   }
@@ -221,6 +243,7 @@ Item {
       root.thinking ? (root.liveTool === "" ? "thinking" : String(root.liveTool).split(" ")[0])
     : root.failed ? "failed"
     : root.unread ? "answered"
+    : root.background ? "background"
     : ""
 
   // Claude Code's own format, so the two strips are comparable at a glance.
@@ -372,7 +395,7 @@ Item {
       // brightness change is not.
       text: root.holding ? "◆" : "◇"
       color: root.holding ? Qt.lighter(root.tint, 1 + 0.4 * root.flash) : root.tint
-      opacity: root.thinking ? root.breath : root.markAlpha
+      opacity: (root.thinking || root.background) ? root.breath : root.markAlpha
       font.family: Style.font.family
       font.pixelSize: Style.font.size
       font.weight: root.holding ? Style.font.boldWeight : Style.font.normalWeight
@@ -430,7 +453,9 @@ Item {
       Text {
         width: Style.ori.timeWidth
         horizontalAlignment: Text.AlignRight
-        text: root.humanTime(root.elapsedSec)
+        text: root.countingJobs
+          ? "\u00d7" + PiSession.bgCount
+          : root.humanTime(root.elapsedSec)
         color: root.tint
         font.family: Style.font.family
         font.pixelSize: Style.font.tiny

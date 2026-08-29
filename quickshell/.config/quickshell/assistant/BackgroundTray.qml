@@ -1,0 +1,183 @@
+import QtQuick
+import ".."
+
+// What is running with nobody waiting on it -- given a place of its own,
+// because it belongs to none of the places that already existed.
+//
+// A turn's tool rows are the record of one answer. The rail above the composer
+// is the state of the turn in flight. A backgrounded command is neither: it
+// outlives the turn that started it, it belongs to no answer, and when the
+// panel is scrolled back a week nothing about it should move. So it gets a
+// strip between the transcript and the rail, present exactly when there is
+// something in it.
+//
+//   ⠿ 2 tasks · 1 monitor                                   2m 14s
+//
+// Collapsed it is one line and a count. Opened it is a row per task: what it
+// is, what it was, and how long it has been. Deliberately NOT a live feed of
+// its output: you handed the work over, and a counter ticking past on screen is
+// supervision with extra steps. `kind` is the vocabulary
+// (PiSession.bgKindNoun) -- agents are already counted there and will appear
+// here with no change to this file.
+Item {
+  id: tray
+
+  property color accent: Theme.accent
+  // The panel's frame clock, which runs while anything is in here.
+  property real nowMs: 0
+  property real breath: 1
+
+  readonly property var ids: {
+    var out = []
+    for (var k in PiSession.bgJobs) out.push(k)
+    out.sort()
+    return out
+  }
+
+  property bool open: false
+
+  implicitHeight: PiSession.bgCount > 0
+    ? head.height + (open ? rows.implicitHeight + 4 : 0) : 0
+  height: implicitHeight
+  clip: true
+
+  Behavior on height {
+    NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
+  }
+
+  Fmt { id: fmt }
+
+  // The oldest thing still running. One number, because a strip that printed a
+  // clock per task would be four numbers changing every frame on a card whose
+  // point is the conversation.
+  readonly property real oldestMs: {
+    var t = 0
+    for (var k in PiSession.bgJobs) {
+      var age = tray.nowMs - PiSession.bgJobs[k].since
+      if (age > t) t = age
+    }
+    return Math.max(0, t)
+  }
+
+  // ------------------------------------------------------------- the line
+  Item {
+    id: head
+    anchors { left: parent.left; right: parent.right; top: parent.top }
+    height: PiSession.bgCount > 0 ? 24 : 0
+
+    Rectangle {
+      anchors.fill: parent
+      color: Theme.alpha(Theme.surface0, 0.5)
+      radius: 6
+    }
+
+    // The mark. Braille-dense rather than a spinner: it says "several things"
+    // in one glyph, and it breathes on the panel's clock instead of spinning on
+    // one of its own.
+    Text {
+      id: mark
+      anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
+      text: "⠿"
+      color: tray.accent
+      opacity: tray.breath
+      font.family: Style.font.panelMono
+      font.pixelSize: Style.font.panelMeta
+      renderType: Text.QtRendering
+    }
+
+    Text {
+      anchors { left: mark.right; leftMargin: 8; right: age.left; rightMargin: 8
+                verticalCenter: parent.verticalCenter }
+      text: PiSession.bgSummary
+      color: Theme.subtext0
+      elide: Text.ElideRight
+      font.family: Style.font.panelMono
+      font.pixelSize: Style.font.panelMeta
+      font.weight: Style.font.boldWeight
+      renderType: Text.QtRendering
+    }
+
+    Text {
+      id: age
+      anchors { right: caret.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
+      text: fmt.duration(tray.oldestMs)
+      color: Theme.overlay0
+      font.family: Style.font.panelMono
+      font.pixelSize: Style.font.panelMeta
+      renderType: Text.QtRendering
+    }
+
+    Text {
+      id: caret
+      anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+      text: "›"
+      color: Theme.overlay0
+      rotation: tray.open ? 90 : 0
+      transformOrigin: Item.Center
+      font.family: Style.font.panelMono
+      font.pixelSize: Style.font.panelMeta
+      renderType: Text.QtRendering
+
+      Behavior on rotation {
+        NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
+      }
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: tray.open = !tray.open
+    }
+  }
+
+  // ------------------------------------------------------------- the rows
+  Column {
+    id: rows
+    anchors { left: parent.left; right: parent.right; top: head.bottom
+              topMargin: 4; leftMargin: 10; rightMargin: 10 }
+    spacing: 4
+    visible: tray.open
+
+    Repeater {
+      // A count, not the array: `ids` is rebuilt whenever any job changes, and
+      // a Repeater handed a fresh array resets every row it has.
+      model: tray.open ? tray.ids.length : 0
+
+      delegate: Item {
+        id: task
+        required property int index
+        readonly property var job: PiSession.bgJobs[tray.ids[task.index]] || ({})
+
+        width: rows.width
+        implicitHeight: what.implicitHeight
+        height: implicitHeight
+
+        Text {
+          id: what
+          anchors { left: parent.left; right: pid.left; rightMargin: 8 }
+          // The command it is running, or the kind if there is nothing better.
+          text: String(task.job.label || PiSession.bgKindNoun[task.job.kind] || "task")
+          color: Theme.subtext0
+          elide: Text.ElideRight
+          maximumLineCount: 1
+          font.family: Style.font.panelMono
+          font.pixelSize: Style.font.panelMeta
+          renderType: Text.QtRendering
+        }
+
+        // The PID, because it is what `kill` and `bg_status` take -- the row is
+        // the thing you act on, not a note that something is out there.
+        Text {
+          id: pid
+          anchors { right: parent.right; baseline: what.baseline }
+          text: task.job.pid ? String(task.job.pid) : ""
+          color: Theme.overlay0
+          font.family: Style.font.panelMono
+          font.pixelSize: Style.font.panelMeta
+          renderType: Text.QtRendering
+        }
+
+      }
+    }
+  }
+}

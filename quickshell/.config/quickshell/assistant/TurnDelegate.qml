@@ -6,12 +6,13 @@ import ".."
 // being written breathes.
 //
 // Order inside an answer is the order things happened -- the text is cut where
-// each tool call ran, so a working turn reads speak, run, speak, run. Which is
-// right WHILE it happens and wrong once it has: a finished turn is not a
-// recording of a process, it is an answer. So the moment a turn settles,
-// everything up to its last tool call rolls up into one receipt line and the
-// answer takes the card. Nothing is thrown away -- the receipt says what the work
-// was, in the words the batch lines used, and opens back onto all of it.
+// each tool call ran, so a turn reads speak, run, speak, run -- and it STAYS
+// that way after it settles. A finished turn used to fold everything up to its
+// last tool call behind a caret; it no longer does. What the agent did is not
+// debugging output you go and dig for, it is half of the answer, and pi now
+// writes a one-line `description` per call saying why it made it. So every call
+// is one always-visible line (ToolLine), the narration between them is ordinary
+// prose in ordinary colour, and nothing on a settled turn is hidden.
 Item {
   id: turnItem
 
@@ -29,25 +30,28 @@ Item {
   // { ms, tokens } once the turn has settled.
   readonly property var cost: PiSession.turnCost[row] || null
 
-  // The turn, as pieces, and where its answer starts (Fmt.split / Fmt.answerAt).
+  // The turn, as an ordered run of pieces (Fmt.split).
   // Rebuilt per token while the answer streams, which is affordable because it
   // always was: the single Text this replaced re-laid out the whole answer too.
   readonly property var pieces: fmt.split(bodyText, pending, calls)
-  readonly property int cut: fmt.answerAt(pieces)
-
-  // A turn in flight shows everything -- watching it work IS the point while it
-  // works, and there is no answer yet to find. The fold is what settling looks
-  // like.
+  // NOTHING IS FOLDED ANY MORE.
   //
-  // A turn that ended ON a tool call has no answer half. This used to refuse to
-  // fold it, on the grounds that folding a turn into nothing is worse than not
-  // folding -- but the receipt renders either way, so the result was the receipt
-  // AND the work it summarises, on screen together. Steering mid-turn produces
-  // exactly that shape, and it read as the panel rendering the turn twice.
-  // A turn with no answer folds to its receipt, which is not nothing: it is the
-  // one line that says what happened, and the caret unrolls it.
-  readonly property bool folded: !user && !pending && !workOpen && cut > 0
-  readonly property var shown: folded ? pieces.slice(cut) : pieces
+  // A settled turn used to roll everything up to its last tool call into one
+  // grey receipt line with a caret on it, and the work only came back if you
+  // clicked. Three things were wrong with that, and the user named all three:
+  //
+  //   * the narration between calls went grey (Theme.overlay0 at panelAside),
+  //     which read as the answer having been half-erased;
+  //   * the work went behind a disclosure, so "what did it just do" cost a
+  //     click on every turn -- and the whole point of pi carrying a per-call
+  //     `description` is that you should not have to ask;
+  //   * folding is a HEIGHT CHANGE, and a delegate that shrinks the instant a
+  //     turn settles is the biggest single source of the scroll flicker. The
+  //     list is BottomToTop, so growth is free and shrinkage is a lurch.
+  //
+  // So the turn renders in the order things happened and stays that way. What
+  // used to be a batch line plus a drawer is now one ToolLine per call, always
+  // visible, carrying the sentence Ori wrote for it.
 
   // ------------------------------------------------------------ piece model
   // `shown` is a NEW ARRAY every time anything changes -- per token while the
@@ -107,21 +111,26 @@ Item {
   // over every call in the fold ("Ran 1 command · Ran 2 steps" is the inventory
   // it replaces). Duration and tokens used to sit in a `◇` footer UNDER the
   // answer, a strange place for the receipt of what you just read.
-  function receipt() {
-    var all = [], ms = 0
-    for (var i = 0; i < cut; i++) {
-      if (!pieces[i].tool) continue
-      all = all.concat(pieces[i].calls)
-      ms += batchMs(pieces[i].calls)
-    }
+  // The ledger's QUIET half. The batch lines already say what ran -- "Ran 3
+  // steps", in accent, one per batch -- and saying it again here was the
+  // doubling. What they cannot say is what the WHOLE turn cost, so this
+  // carries only that: "◇ 5.2s · 153 tok". Empty when nothing was measured.
+  // A PROPERTY, not a function. As a function it was called twice from the
+  // status row -- once to decide `visible`, once to build `text` -- and the two
+  // calls are two separate bindings over the same reads. They disagreed: an
+  // empty assistant row (the one the steer path closes where it stands, with
+  // no text and no calls) came out visible with nothing in it, so a settled
+  // conversation grew a stray `\u25c7` floating between two turns. One binding,
+  // read twice, cannot disagree with itself.
+  readonly property string receiptText: {
+    var ms = 0
+    for (var i = 0; i < pieces.length; i++)
+      if (pieces[i].tool) ms += batchMs(pieces[i].calls)
     var parts = []
-    if (all.length > 0) parts.push(pastLabel(batchKind(all), all.length))
-    // The turn's total when the engine recorded one; the time inside the tool
-    // calls is all a restored transcript can offer.
     var d = fmt.duration(cost ? cost.ms : ms)
     if (d !== "") parts.push(d)
     if (cost && cost.tokens > 0) parts.push(fmt.tokens(cost.tokens) + " tok")
-    return "\u25c7 " + parts.join(" · ")
+    return parts.join(" \u00b7 ")
   }
 
   // The panel's frame clock, handed down rather than started again here: it runs
@@ -134,6 +143,25 @@ Item {
   readonly property real breath:
     0.65 + 0.35 * Math.cos(2 * Math.PI * nowMs / Style.ori.breathMs)
 
+  // The tail of the reasoning, for the status row at the head of the turn.
+  // Reasoning streams into its own role (PiSession keeps thinking_delta and
+  // text_delta apart) and is never rendered as prose -- one line of it says
+  // what Ori is chewing on without becoming a second answer competing with the
+  // real one.
+  //
+  // Read off the LAST 300 characters, not off a split of the whole string.
+  // This re-evaluates on every reasoning token, and a long think is tens of
+  // kilobytes: splitting all of it 60 times a second is a real cost for a
+  // value of which only the final line is ever shown.
+  readonly property string thought: {
+    if (!turn) return ""
+    var t = String(turn.thinking || "")
+    if (t === "") return ""
+    var tail = t.slice(-300).replace(/\s+$/, "")
+    var nl = tail.lastIndexOf("\n")
+    return (nl >= 0 ? tail.slice(nl + 1) : tail).trim()
+  }
+
   // The answer text, placeholder included: a turn with nothing in it yet must not
   // collapse to zero height, or the list jumps on the first token. One SPACE, not
   // a word or a spinner -- the panel header already names the state in a fixed
@@ -142,50 +170,43 @@ Item {
     : turn.text !== "" ? turn.text
     : (pending ? " " : "")
 
-  // Whether this turn's work is unrolled. ONE control for the whole turn, up on
-  // the receipt: every batch used to carry a drawer of its own as well, which is
-  // two nested disclosures on a 460px card, and the second one only ever said
-  // what the first already summarised. Unrolled means unrolled -- narration,
-  // batch lines and the commands themselves.
-  property bool workOpen: false
 
   width: ListView.view ? ListView.view.width : 0
   height: user ? pill.height : answer.height
 
   Fmt { id: fmt }
 
+
   // ------------------------------------------------------------- vocabulary
-  // A batch is a COUNT plus the latest action, never a list of rows: each kind of
-  // call carries what it is doing, what it did and the noun it is counted in, so
-  // it reads as English. The receipt is built from the same words.
+  // A batch that is DONE is a count and nothing more -- "Ran 3 shell commands",
+  // one grey line. This came back after being deleted: showing every finished
+  // call was the overcorrection to hiding them all behind a fold, and neither
+  // is what you want to read. What you want is the call happening NOW in full,
+  // the ones that already returned as a tally, and the prose between batches
+  // intact -- which is what Claude Code does and what the user asked for after
+  // putting the two side by side.
   function kindOf(name) {
     var n = String(name).toLowerCase()
-    if (n.indexOf("search") >= 0 || n.indexOf("grep") >= 0 || n.indexOf("glob") >= 0) return "search"
+    if (n.indexOf("search") >= 0 || n.indexOf("grep") >= 0 || n.indexOf("glob") >= 0
+        || n.indexOf("find") >= 0) return "search"
     if (n.indexOf("write") >= 0 || n.indexOf("edit") >= 0) return "edit"
-    if (n.indexOf("read") >= 0 || n.indexOf("cat") >= 0) return "read"
-    if (n.indexOf("fetch") >= 0) return "fetch"
+    if (n.indexOf("read") >= 0 || n.indexOf("cat") >= 0 || n.indexOf("ls") >= 0) return "read"
+    if (n.indexOf("fetch") >= 0 || n.indexOf("web") >= 0) return "fetch"
     if (n.indexOf("bash") >= 0 || n.indexOf("shell") >= 0 || n.indexOf("exec") >= 0) return "bash"
     return "other"
   }
 
-  function liveVerb(kind) {
-    return ({ search: "Searching", edit: "Editing", read: "Reading",
-              fetch: "Fetching" })[kind] || "Running"
-  }
-
-  // Past tense, and both numbers right: "Ran 1 command", never "Ran 1 commands".
-  // "Searched 3 searches" stutters, so a search is counted in searches; a batch
-  // of mixed kinds has no one noun and is counted in steps.
+  // Past tense, and both numbers right: "Ran 1 shell command", never "1
+  // commands". "Searched 3 searches" stutters, so a search is counted in
+  // searches; a batch of mixed kinds has no one noun and is counted in steps.
   readonly property var noun: ({ read: "Read file", edit: "Edited file",
-    fetch: "Fetched page", search: "Ran search", bash: "Ran command" })
+    fetch: "Fetched page", search: "Ran search", bash: "Ran shell command" })
   function pastLabel(kind, n) {
     var w = String(noun[kind] || "Ran step").split(" ")
-    return w[0] + " " + n + " " + w[1]
-      + (n === 1 ? "" : w[1] === "search" ? "es" : "s")
+    var tail = w[w.length - 1]
+    return w[0] + " " + n + " " + w.slice(1, w.length - 1).concat([
+      tail + (n === 1 ? "" : tail === "search" ? "es" : "s")]).join(" ")
   }
-
-  // Functions over ONE batch, not properties over the turn: a turn now has as
-  // many batches as it had things to say between its tool calls.
 
   // The kind of a batch, or "mixed" when it had more than one.
   function batchKind(cs) {
@@ -198,10 +219,29 @@ Item {
     return k === "" ? "other" : k
   }
 
-  // A call is still open when it has no duration stamped yet. Only the last
-  // call of the turn being written can be, so only the last batch can be live.
-  function batchLive(cs) {
-    return pending && cs.length > 0 && cs[cs.length - 1].ms === 0
+  // A batch, split into the three things that render differently: the calls
+  // that are over (a tally), the jobs still alive in the background (a line
+  // each, because they are not over), and the one call in flight (in full).
+  // Returned as index lists so the delegates below can stay count-driven --
+  // see the `noPiece` note for why a fresh array must never be a model.
+  // Done means NOT live and NOT backgrounded -- defined by what it is not,
+  // deliberately, because the obvious test (`ms > 0`) is wrong on exactly the
+  // transcripts you are most likely to be looking at. A session read back off
+  // disk has no timings: rehydrate() writes t0 and ms as 0, because a session
+  // file records what a tool was asked to do and not when. Under `ms > 0`
+  // every restored call was neither done nor live nor backgrounded, so a
+  // reopened conversation rendered its tool batches as NOTHING AT ALL -- a gap
+  // between two paragraphs where the work had been. Which is also what a QML
+  // reload does, since the panel restores the last session on boot.
+  function doneOf(cs) {
+    var at = liveOf(cs)
+    var out = []
+    for (var i = 0; i < cs.length; i++) if (i !== at) out.push(i)
+    return out
+  }
+  // Only the last call of a turn being written can still be open.
+  function liveOf(cs) {
+    return (pending && cs.length > 0 && cs[cs.length - 1].ms === 0) ? cs.length - 1 : -1
   }
 
   // Time spent in a batch. The open call is measured against the panel's clock,
@@ -229,6 +269,25 @@ Item {
   // not its actual width, which would be measuring the pill with the pill.
   readonly property int sentWidth: Math.round(width * 0.85) - 24
 
+  // Whether the agent has the question yet. Sending is not instant: a cold
+  // panel has to spawn pi first (measured 6-7s to a first token), and a message
+  // typed WHILE a turn runs is a `steer`, which pi holds until the tool call in
+  // flight returns. The pill used to look finished the instant you pressed
+  // enter, so there was no way to tell "it has this" from "it will have this in
+  // a moment".
+  //
+  // PiSession tracks three steps (0 queued, 1 on the wire, 2 the agent has
+  // acted since) and this collapses them to the two that are worth a picture.
+  // The difference between 0 and 1 is milliseconds on a warm panel and is not
+  // the thing anyone is asking; the thing anyone is asking is whether it
+  // landed. Nothing in the protocol acknowledges a message by id, so "landed"
+  // is inferred from the agent producing its first token or tool call after the
+  // message went out (PiSession.markRead). A rehydrated transcript has no
+  // record of any of this and reads as landed, which is true: those messages
+  // were plainly answered.
+  readonly property bool landed:
+    !turn || turn.sent === undefined || Number(turn.sent) >= 2
+
   Rectangle {
     id: pill
     visible: turnItem.user
@@ -242,6 +301,28 @@ Item {
     // from, the way the notification cards enter from the edge they arrived on.
     bottomRightRadius: 3
     color: Theme.surface1
+
+    // The question's own rail, and the mirror of the answer's spine: an answer
+    // hangs off a rail at x=0 that breathes while it is being written, so a
+    // question hangs off one at its right edge that breathes while the agent
+    // has not taken it yet. Same breath, same 2px, same settling to a quiet
+    // surface colour when there is nothing left to wait for.
+    //
+    // A mark rather than a glyph on purpose. Ticks in the corner would be a
+    // second vocabulary on a card that already has one -- and the state does
+    // not need reading, only noticing, which is exactly what a rail is for.
+    Rectangle {
+      anchors { right: parent.right; top: parent.top; bottom: parent.bottom
+                topMargin: 8; bottomMargin: 8 }
+      width: 2
+      radius: 1
+      color: turnItem.landed ? Theme.surface2 : turnItem.accent
+      opacity: turnItem.landed ? 1 : turnItem.breath
+
+      Behavior on color {
+        ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
+      }
+    }
 
     Column {
       id: asked
@@ -370,64 +451,59 @@ Item {
       width: parent.width - 14
       spacing: 6
 
-      // ------------------------------------------------------------ seam
-      // The receipt: one line standing where the work was, with a hairline off it
-      // to the card's edge -- the turn's header and its disclosure at once. A
-      // rule rather than a fill or a frame, because the work is not somewhere
-      // else on this card: it is NOT THERE, and a boundary is the honest mark for
-      // that. One row where the work cost four, and at a squint every settled
-      // turn is the same three beats: question, thin line, block of prose.
+      // ------------------------------------------------------------ status
+      // ONE row at the head of every assistant turn, and it is the same row for
+      // the whole life of the turn: while it is being written it says what Ori
+      // is thinking about, and when it settles it says what the turn cost.
+      //
+      // The same row on purpose. The old thinking block was `visible: text ===
+      // "" && thinking !== ""`, so it vanished the instant the first answer
+      // token landed -- 453px of content gone in ONE frame, mid-stream, which
+      // is the flicker measured in AssistantPanel's sticking notes. A slot that
+      // only ever changes its TEXT cannot do that. Height is fixed; only the
+      // words move.
+      //
+      // The disclosure that used to live here is gone with the fold, and so is
+      // the hairline that pointed at it: with nothing hidden there is no
+      // boundary to draw.
       Item {
         id: seam
         width: parent.width
-        // A live turn has no receipt: nothing is settled to fold.
-        visible: !turnItem.pending && (turnItem.cut > 0 || turnItem.cost !== null)
-        height: visible ? 22 : 0
+        // NOT "visible while pending". The rail above the composer already says
+        // `thinking`, in a fixed place, with the elapsed time beside it -- so a
+        // turn that says it too is the same word twice on one card, which is
+        // what the user saw. This row carries only what the rail cannot: the
+        // reasoning itself, and afterwards the turn's cost.
+        //
+        // The 0 -> 20 step when the first reasoning token lands is safe in a
+        // way the old thinking block was not. The list is BottomToTop, so
+        // GROWTH is free and only shrinking lurches; this row grows once, near
+        // the head of the turn, and never shrinks again -- when the turn
+        // settles the receipt takes the same 20px. The block this replaced did
+        // the opposite: it was on screen from the start and VANISHED on the
+        // first answer token, which is the 453px one-frame collapse measured in
+        // AssistantPanel's sticking notes.
+        visible: (turnItem.pending && turnItem.thought !== "")
+                 || turnItem.receiptText !== ""
+        height: visible ? 20 : 0
 
         Text {
           id: told
-          anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-          // Capped, not anchored to the caret: a rule with 3px to cross is a
-          // smudge, so the text gives way before the rule does.
-          width: Math.min(implicitWidth, parent.width - 90)
-          text: turnItem.receipt()
-          color: Theme.overlay0
-          elide: Text.ElideRight
-          font.family: Style.font.panelMono
-          font.pixelSize: Style.font.panelMeta
-          renderType: Text.QtRendering
-        }
-
-        Rectangle {
-          anchors { left: told.right; right: caret.left; leftMargin: 10; rightMargin: 10
+          anchors { left: parent.left; right: parent.right
                     verticalCenter: parent.verticalCenter }
-          height: 1
-          color: Theme.surface1
-        }
-
-        Text {
-          id: caret
-          anchors { right: parent.right; rightMargin: 4; verticalCenter: parent.verticalCenter }
-          // Nothing to unroll on a turn that only thought.
-          visible: turnItem.cut > 0
-          text: "\u203a"
-          color: Theme.overlay0
-          rotation: turnItem.workOpen ? 90 : 0
-          transformOrigin: Item.Center
+          // Reasoning is streamed into its own role and never rendered as
+          // prose. One line of it, here, is the amount that is worth seeing:
+          // enough to know the shape of what it is considering, not so much
+          // that it competes with the answer that follows.
+          text: turnItem.pending ? "\u25c6 " + turnItem.thought
+                                 : "\u25c7 " + turnItem.receiptText
+          color: turnItem.pending ? Theme.subtext0 : Theme.overlay0
+          font.italic: turnItem.pending
+          elide: Text.ElideRight
+          maximumLineCount: 1
           font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelMeta
           renderType: Text.QtRendering
-
-          Behavior on rotation {
-            NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
-          }
-        }
-
-        MouseArea {
-          anchors.fill: parent
-          enabled: turnItem.cut > 0
-          cursorShape: Qt.PointingHandCursor
-          onClicked: turnItem.workOpen = !turnItem.workOpen
         }
       }
 
@@ -442,12 +518,10 @@ Item {
         spacing: 6
 
         Repeater {
-          // The fold is a MODEL, not a layout: a folded turn has fewer pieces,
-          // and nothing moves when it settles -- the list is BottomToTop, so the
-          // answer keeps its place and the work above it stops being drawn.
-          // The COUNT. See the `noPiece` block at the top of this file for why
-          // this is not `turnItem.shown`.
-          model: turnItem.shown.length
+          // The COUNT, not the array. See the `noPiece` block at the top of
+          // this file for why -- a fresh JS array resets a Repeater, and
+          // `pieces` is rebuilt on every single token.
+          model: turnItem.pieces.length
 
           delegate: Item {
             id: piece
@@ -456,21 +530,13 @@ Item {
             // fails to build -- silently, with a clean config log and a panel
             // missing every answer.
             required property int index
-            readonly property var m: turnItem.shown[piece.index] || turnItem.noPiece
+            readonly property var m: turnItem.pieces[piece.index] || turnItem.noPiece
 
             readonly property bool isTool: piece.m.tool === true
             readonly property bool code: piece.m.code === true
             readonly property bool head: piece.m.head === true
             readonly property bool bullet: piece.m.bullet === true
-            // Work, not the answer: on screen only while a turn is live or
-            // unrolled, and quieter than the answer in both cases.
-            readonly property bool aside: piece.m.aside === true
             readonly property var cs: piece.isTool ? (piece.m.calls || []) : []
-            readonly property bool live: piece.isTool && turnItem.batchLive(piece.cs)
-            // The commands themselves. Never while the batch is live: the line
-            // above already names the command it is running this second, and
-            // three rows of shell under it is what the collapse exists to stop.
-            readonly property bool open: piece.isTool && turnItem.workOpen && !piece.live
 
             // A list marker sits in the gutter and the item hangs off it: 14px,
             // not the 55 Qt indents a markdown list by, which at 426px of measure
@@ -527,7 +593,7 @@ Item {
               // undefined here logged "Unable to assign [undefined] to QString"
               // on every batch line drawn.
               text: piece.m.image ? "" : (piece.m.text || "")
-              color: piece.aside ? Theme.overlay0 : Theme.text
+              color: Theme.text
               readOnly: true
               activeFocusOnPress: false
               wrapMode: TextEdit.Wrap
@@ -550,8 +616,7 @@ Item {
                 .replace(/\u200b/g, "").replace(/\u2011/g, "-").replace(/\u00a0/g, " "))
               font.family: piece.code ? Style.font.panelMono : Style.font.panelFamily
               font.pixelSize: piece.code ? Style.font.panelMeta
-                : piece.head ? Style.font.panelHead
-                : piece.aside ? Style.font.panelAside : Style.font.panelBody
+                : piece.head ? Style.font.panelHead : Style.font.panelBody
               font.weight: piece.head ? Font.DemiBold : Style.font.normalWeight
               renderType: Text.QtRendering
             }
@@ -565,107 +630,152 @@ Item {
             }
 
             // ------------------------------------------------------- tools
-            // ONE line for the whole batch, not one block per call: rewritten in
-            // place while it runs, frozen into a past-tense line when it closes.
-            // The breath survives the per-token rebuild only because nothing
-            // streams while a tool runs.
-            Item {
+            // A batch, in two parts, and the order is the order it reads:
+            //
+            //   ⟩ Ran 3 shell commands                        4.2s
+            //   ● restart the shell so the panel reloads
+            //     └ systemctl --user restart quickshell
+            //
+            // The tally is what is OVER. The expanded row is what is happening
+            // right now. Anything handed off to the background is over as far
+            // as this turn is concerned -- see the note further down.
+            //
+            // Once the turn settles there is no live row and no bg row left to
+            // draw, and the whole batch is the one grey line -- which is why
+            // nothing has to fold: the compaction is a consequence of the work
+            // finishing, not a second state the card can be put into.
+            Column {
               id: batch
               width: piece.width
               visible: piece.isTool
-              // Zero when this piece is text: a hidden Item still reports a height,
-              // and the column would space around a row that is not there.
-              height: piece.isTool ? summary.height + drawer.height : 0
+              // Zero when this piece is text: a hidden Column still reports a
+              // height, and the column above would space around a row that is
+              // not there.
+              height: piece.isTool ? implicitHeight : 0
+              spacing: 3
 
-              Column {
-                id: summary
-                anchors { left: parent.left; right: parent.right; top: parent.top }
-                spacing: 1
+              readonly property var done: piece.isTool ? turnItem.doneOf(piece.cs) : []
+              readonly property int liveAt: piece.isTool ? turnItem.liveOf(piece.cs) : -1
+
+              // Clicked open: the tally gives way to the calls it counted, each
+              // one a full row. Per BATCH, not per turn -- the old fold was one
+              // switch over everything a turn did, so opening it to check a
+              // single command unrolled twenty. Here you open the three that ran
+              // between two paragraphs and the rest stays a count.
+              property bool open: false
+
+              // ------------------------------------------------- the tally
+              // What is over, as a number. Click it to see what the number was.
+              Item {
+                width: parent.width
+                visible: batch.done.length > 0 && !batch.open
+                height: visible ? tally.implicitHeight : 0
 
                 Text {
-                  id: head
-                  width: parent.width
-                  // Live: what it is doing this second. Settled: what it did, in
-                  // total. The tool name only earns a word when the verb does not
-                  // already contain it -- "Running bash", but just "Reading".
-                  text: {
-                    if (!piece.live)
-                      return "⟩ " + turnItem.pastLabel(turnItem.batchKind(piece.cs), piece.cs.length)
-                        + (fmt.duration(turnItem.batchMs(piece.cs)) !== ""
-                            ? " · " + fmt.duration(turnItem.batchMs(piece.cs)) : "")
-                    var last = piece.cs[piece.cs.length - 1]
-                    var kind = turnItem.kindOf(last.name)
-                    var verb = turnItem.liveVerb(kind)
-                    return "⟩ " + (kind === "bash" || kind === "other"
-                      ? verb + " " + String(last.name).toLowerCase() : verb) + "…"
-                  }
-                  color: Theme.accent
+                  id: tally
+                  anchors { left: parent.left; right: tallyMs.left; rightMargin: 8 }
+                  text: "\u27e9 " + turnItem.pastLabel(
+                    turnItem.batchKind(piece.cs), batch.done.length)
+                  color: Theme.overlay0
                   elide: Text.ElideRight
-                  // The same breath the spine and the bar dot keep, so the line
-                  // still being rewritten is visibly the live one.
-                  opacity: piece.live ? turnItem.breath : 1
                   font.family: Style.font.panelMono
                   font.pixelSize: Style.font.panelMeta
-                  font.weight: Style.font.boldWeight
                   renderType: Text.QtRendering
                 }
 
-                // The stat tail: everything that is NOT the current action, in
-                // one quiet line, counted rather than enumerated.
                 Text {
-                  width: parent.width
-                  visible: piece.live
+                  id: tallyMs
+                  anchors { right: parent.right; baseline: tally.baseline }
+                  // The time the FINISHED calls took. The live row keeps its
+                  // own clock, so adding it in here would count it twice.
                   text: {
-                    if (!piece.live) return ""
-                    var parts = []
-                    var last = piece.cs[piece.cs.length - 1]
-                    if (String(last.arg) !== "") parts.push(String(last.arg))
-                    var d = fmt.duration(turnItem.batchMs(piece.cs))
-                    if (d !== "") parts.push(d)
-                    parts.push(piece.cs.length
-                      + (piece.cs.length === 1 ? " step" : " steps"))
-                    return parts.join(" · ")
+                    var t = 0
+                    for (var i = 0; i < batch.done.length; i++)
+                      t += piece.cs[batch.done[i]].ms
+                    return fmt.duration(t)
                   }
                   color: Theme.overlay0
-                  elide: Text.ElideRight
-                  maximumLineCount: 1
                   font.family: Style.font.panelMono
                   font.pixelSize: Style.font.panelMeta
                   renderType: Text.QtRendering
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: batch.open = true
                 }
               }
 
-              // ------------------------------------------------------- the detail
-              // The commands themselves, when the work is unrolled. Switched, not
-              // animated: the narration and the batch lines above it appear the
-              // instant the receipt is clicked, and one row sliding under three
-              // that did not is worse than none sliding at all.
-              Column {
-                id: drawer
-                anchors { left: parent.left; right: parent.right; top: summary.bottom }
-                topPadding: 4
-                spacing: 4
-                visible: piece.open
-                height: piece.open ? implicitHeight : 0
+              // ---------------------------------------- the tally, unrolled
+              // The calls the tally counted, in full. Clicking ANYWHERE on them
+              // puts them back -- there is no "hide" button, because a control
+              // is only worth its row when the thing it controls is not itself
+              // an obvious target. The block you just opened is exactly that
+              // target: you looked, you are done, you click it away.
+              //
+              // The MouseArea is declared AFTER the rows and fills the same
+              // box, so it sits on top and takes every click in it. That is
+              // deliberate rather than accidental -- it also swallows the
+              // per-row "show the whole command" toggle inside an unrolled
+              // batch, which is the right trade: two different meanings for one
+              // click in one block is worse than losing the second one. The
+              // live row and any background job keep that toggle, since neither
+              // is inside here.
+              Item {
+                width: parent.width
+                visible: batch.open
+                height: visible ? rows.implicitHeight : 0
 
-                Repeater {
-                  // A count here too: `cs` is a slice of the same rebuilt
-                  // array, so it is a new identity on every update as well.
-                  model: piece.cs.length
+                Column {
+                  id: rows
+                  anchors { left: parent.left; right: parent.right; top: parent.top }
+                  spacing: 3
 
-                  delegate: ToolCallRow {
-                    required property int index
-                    readonly property var modelData: piece.cs[index] || turnItem.noPiece
-                    width: drawer.width
-                    call: modelData
-                    // Only the last call of the turn being written can still be
-                    // open; `ms` is stamped the moment a call returns.
-                    live: turnItem.pending && modelData.ms === 0
-                    // Deliberately NOT the panel's live accent: a tool block is
-                    // mauve for good, so scrolling back you can tell which parts
-                    // of a conversation touched the machine.
+                  Repeater {
+                    model: batch.open ? batch.done.length : 0
+
+                    delegate: ToolLine {
+                      required property int index
+                      width: rows.width
+                      call: piece.cs[batch.done[index]] || turnItem.noPiece
+                      nowMs: turnItem.nowMs
+                      breath: turnItem.breath
+                    }
                   }
                 }
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: batch.open = false
+                }
+              }
+
+              // A BACKGROUNDED JOB GETS NO ROW HERE.
+              //
+              // It used to keep one -- expanded, pulsing, with its command
+              // under it -- on the reasoning that a job still running is not
+              // over and should not compact. True, and it stopped being this
+              // card's problem the moment the tray existed: the same job was
+              // then drawn twice, once in the transcript under the turn that
+              // started it and once in the strip above the composer, both
+              // pulsing, both saying the same PID.
+              //
+              // The division that settles it: the TRANSCRIPT is what a turn
+              // did, and handing a command off IS what the turn did with it.
+              // The TRAY is what is still running. So the row compacts into the
+              // tally with every other finished call, and unrolling the tally
+              // still shows it, `\u21b3 bg <pid>` and all.
+              // --------------------------------------------- the call in flight
+              ToolLine {
+                width: batch.width
+                visible: batch.liveAt >= 0
+                height: visible ? implicitHeight : 0
+                call: batch.liveAt >= 0 ? piece.cs[batch.liveAt] : turnItem.noPiece
+                live: batch.liveAt >= 0
+                nowMs: turnItem.nowMs
+                breath: turnItem.breath
               }
             }
           }

@@ -435,6 +435,91 @@ Singleton {
   // notifies on assignment. Tool calls are seconds apart, so the copy is free.
   property var toolLog: ({})
 
+  // Handed from tool_execution_end to onActiveToolChanged, which run one after
+  // the other: { pid, log } when the call being closed was backgrounded rather
+  // than finished, null otherwise. Cleared as it is consumed, so it can never
+  // leak onto the next call.
+  property var closingBg: null
+
+  // The literal argument of the call in flight, handed from
+  // tool_execution_start to onActiveToolChanged the same way `closingBg` is
+  // handed the other direction. A property rather than a third field welded
+  // into the `tool` role's string: that string is split on its first space to
+  // recover the name, and a command contains spaces of its own.
+  property string activeToolRaw: ""
+
+  // ------------------------------------------------------ background jobs
+  // What is still running with nobody waiting on it. A backgrounded command
+  // outlives the turn that started it -- that is the whole point -- so it
+  // cannot be tracked by anything scoped to a turn, and the panel had no way
+  // to say "something is still out there" once the answer settled.
+  //
+  // pid -> { pid, since }. Added when the bash tool hands one back, removed
+  // when the extension's completion message arrives. Event-driven both ways:
+  // nothing here polls a process table.
+  // id -> { id, pid, kind, label, since, lines }
+  //
+  // `kind` is the field this is built around rather than bolted onto, because
+  // the tray that shows these has to say WHAT is running and not merely how
+  // much: "2 tasks · 1 monitor" is a different sentence to "3 things". Three
+  // kinds are defined; only two can occur today.
+  //
+  //   job      a command the bash tool backgrounded and walked away from
+  //   monitor  the same, but with a live filter on its output -- it is not
+  //            going to finish on its own and you are watching it
+  //   agent    reserved. Nothing produces one yet; the tray counts it because
+  //            adding a kind later should be a line in bgKindNoun and nothing
+  //            else, not a rewrite of the thing that displays them.
+  property var bgJobs: ({})
+  readonly property int bgCount: Object.keys(root.bgJobs).length
+
+  readonly property var bgKindNoun: ({ job: "task", monitor: "monitor", agent: "agent" })
+  readonly property var bgKindOrder: ["job", "monitor", "agent"]
+
+  // { job: n, monitor: n, agent: n } -- recomputed off bgJobs, which is
+  // reassigned rather than mutated, so this follows it.
+  readonly property var bgKinds: {
+    var out = { job: 0, monitor: 0, agent: 0 }
+    for (var k in root.bgJobs) {
+      var kind = String(root.bgJobs[k].kind || "job")
+      if (out[kind] === undefined) out[kind] = 0
+      out[kind] += 1
+    }
+    return out
+  }
+
+  // "2 tasks · 1 monitor". Only the kinds that exist, in a fixed order, so the
+  // line does not reshuffle itself as jobs come and go.
+  readonly property string bgSummary: {
+    var parts = []
+    for (var i = 0; i < root.bgKindOrder.length; i++) {
+      var kind = root.bgKindOrder[i]
+      var n = root.bgKinds[kind] || 0
+      if (n === 0) continue
+      var noun = root.bgKindNoun[kind]
+      parts.push(n + " " + noun + (n === 1 ? "" : "s"))
+    }
+    return parts.join(" · ")
+  }
+
+  function addBgJob(pid, kind, label) {
+    if (!pid) return
+    var next = {}
+    for (var k in root.bgJobs) next[k] = root.bgJobs[k]
+    next[String(pid)] = { id: String(pid), pid: pid,
+                          kind: String(kind || "job"),
+                          label: String(label || ""),
+                          since: Date.now() }
+    root.bgJobs = next
+  }
+
+  function dropBgJob(pid) {
+    if (!pid || root.bgJobs[String(pid)] === undefined) return
+    var next = {}
+    for (var j in root.bgJobs) if (j !== String(pid)) next[j] = root.bgJobs[j]
+    root.bgJobs = next
+  }
+
   onActiveToolChanged: {
     var row = turnModel.count - 1
     if (row < 0) return
@@ -452,12 +537,20 @@ Singleton {
         // The answer as it stands RIGHT NOW, which is everything Ori said
         // before reaching for this tool. Read off the same row the log is
         // keyed by, so the two can never describe different turns.
-        at: String(turnModel.get(row).text).length
+        at: String(turnModel.get(row).text).length,
+        // What it actually ran, beside what it said it was doing.
+        raw: root.activeToolRaw
       })
+      root.activeToolRaw = ""
     } else if (list.length > 0 && list[list.length - 1].ms === 0) {
       var open = list[list.length - 1]
-      list[list.length - 1] = { name: open.name, arg: open.arg, t0: open.t0,
-                                ms: Date.now() - open.t0, at: open.at }
+      list[list.length - 1] = { name: open.name, arg: open.arg, raw: open.raw,
+                                t0: open.t0,
+                                ms: Date.now() - open.t0, at: open.at,
+                                // null for an ordinary call; { pid, log } for
+                                // one the bash tool detached and left running.
+                                bg: root.closingBg }
+      root.closingBg = null
     }
 
     var next = {}
@@ -604,8 +697,36 @@ Singleton {
   property double genMs: 0
 
   function grow(field, delta) {
+    // The first thing back after a question is the receipt for that question.
+    root.markRead()
+
+    // A TURN THE PANEL DID NOT OPEN.
+    //
+    // Every turn used to start here, so a row was always waiting: ask() appends
+    // the question and an empty assistant row, and the deltas stream into it.
+    // That stopped being true the moment the agent could be woken by something
+    // other than the user. The bash tool backgrounds a long command and wakes
+    // the agent when it finishes (sendMessage with triggerTurn), and the first
+    // delta of THAT turn arrived with no pending row -- so lastAssistant()
+    // handed back the answer that had already settled, and the new turn was
+    // appended to the end of its last sentence:
+    //
+    //   ...ticking away in the background as PID 305128.BACKGROUNDED — done, exit 0.
+    //
+    // One reply welded to the tail of another, with no break and no receipt of
+    // its own. Opening a row when there is no pending one is the whole fix, and
+    // it is general: any turn the agent starts by itself lands correctly now,
+    // not just this one.
     var i = lastAssistant()
-    if (i < 0) return
+    if (i < 0 || !turnModel.get(i).pending) {
+      appendTurn("assistant", "", "", "", true, "")
+      i = turnModel.count - 1
+      // The agent is demonstrably working -- it is mid-sentence. Nothing else
+      // is going to set this, because nothing here asked it a question.
+      root.busy = true
+      root.turnStartedAt = Date.now()
+      root.appended()
+    }
     turnModel.setProperty(i, field, turnModel.get(i)[field] + delta)
     var now = Date.now()
     if (root.lastAppendAt > 0) {
@@ -630,8 +751,40 @@ Singleton {
   // The one place a row is added, so the role set can never diverge between
   // ask(), the streaming turn, and rehydrate().
   function appendTurn(role, text, thinking, tool, pending, images) {
+    // `sent` is written on EVERY row, assistant rows included, for the reason
+    // the `images` note above gives: a ListModel fixes its roles from the first
+    // row inserted, and a role missing there can never be written afterwards.
+    // 2 is the resting value -- see `sentState` in TurnDelegate; the two paths
+    // that actually have something to report (ask/steer) knock it down to 0
+    // straight after appending.
     turnModel.append({ role: role, text: text, thinking: thinking,
-                       tool: tool, pending: pending, images: images })
+                       tool: tool, pending: pending, images: images, sent: 2 })
+  }
+
+  // ----------------------------------------------------- delivery receipts
+  // Where the newest question got to: 0 queued, 1 on the wire, 2 the agent has
+  // acted since. Nothing in the protocol acknowledges a message by id, so 2 is
+  // INFERRED -- the first token or tool call after a question went out is the
+  // agent demonstrably working on it, which is the fact the tick is claiming.
+  // That is a weaker guarantee than a real read receipt and a stronger one than
+  // the alternative, which was to show nothing at all and let a 7-second cold
+  // spawn look like a message that had vanished.
+  property bool awaitingRead: false
+
+  function markSent(state) {
+    for (var i = turnModel.count - 1; i >= 0; i--) {
+      if (turnModel.get(i).role !== "user") continue
+      if (Number(turnModel.get(i).sent) < state) turnModel.setProperty(i, "sent", state)
+      return
+    }
+  }
+
+  // Called from the two places that prove the agent is working on it. Gated on
+  // a flag rather than scanning the model, because grow() runs per token.
+  function markRead() {
+    if (!root.awaitingRead) return
+    root.awaitingRead = false
+    markSent(2)
   }
 
   // Returns whether the question was ACCEPTED. The composer keys its "clear the
@@ -725,6 +878,13 @@ Singleton {
         turnModel.setProperty(cur, "tool", "")
       }
       appendTurn("user", msg, "", "", false, labels.join("\n"))
+      // Already on the wire -- but pi holds a steer until the tool call in
+      // flight returns and only then delivers it, so "sent" is the whole truth
+      // and "read" is not yet. This is the case the ticks exist for: the gap
+      // between pressing enter and the agent turning round is seconds long and
+      // used to look like nothing happening.
+      markSent(1)
+      root.awaitingRead = true
       appendTurn("assistant", "", "", "", true, "")
       root.appended()
       return true
@@ -746,6 +906,11 @@ Singleton {
     root.genMs = 0
     root.lastAppendAt = Date.now()
     appendTurn("user", msg, "", "", false, labels.join("\n"))
+    // Queued, not sent. On a cold panel the child does not exist yet and this
+    // sits in `pending` until flush() runs from onPiStarted -- measured 6-7s
+    // out. The pill says so instead of pretending.
+    markSent(0)
+    root.awaitingRead = true
     // The assistant's turn exists before a single token arrives, so the view has
     // a row to stream into and the conversation never visibly jumps.
     appendTurn("assistant", "", "", "", true, "")
@@ -954,10 +1119,44 @@ Singleton {
     printErrors: false
   }
 
+  // Abort, then VERIFY. pi's documented abort path (agent_end -> agent_settled
+  // within 10ms) is what normally happens, and `busy = false` here matches it
+  // closely enough that the composer unlocks immediately. But the path pi
+  // cannot take is the one this exists for: an abort arriving while a tool
+  // call is wedged -- a backgrounded command holding the pipe, a fetch with no
+  // timeout -- never settles, because pi's turn cannot end until the tool
+  // returns. pi stays busy on its side while the panel already thinks it is
+  // idle, and the next question is then rejected by pi's own guard:
+  //
+  //   Agent is already processing. Specify streamingBehavior ('steer' or
+  //   'followUp') to queue the message.
+  //
+  // -- which lands on the error strip and the message goes nowhere. That was
+  // the "ctrl+c worked, the next message is stuck" report, and it is why the
+  // optimistic clear is not trusted blindly: `aborting` arms a watchdog, and
+  // any settle (settleTurn) or an exit (onPiExited) disarms it. If neither
+  // comes, pi is wedged past persuasion and the watchdog kills the child.
+  // The next ask cold-spawns and reattaches to the session, so the cost is
+  // the lost half of the aborted turn, which ctrl+c had already written off.
+  property bool aborting: false
+
+  Timer {
+    id: abortWatchdog
+    interval: 4000
+    onTriggered: {
+      if (!root.aborting) return
+      root.aborting = false
+      console.log("abort did not settle in " + interval + "ms -- the turn is wedged on a tool call; killing pi")
+      control({ type: "__kill" })
+    }
+  }
+
   function abort() {
     if (!root.warm) return
     send({ type: "abort" })
     root.busy = false
+    root.aborting = root.warm
+    abortWatchdog.restart()
   }
 
   // Drop the conversation without dropping the process -- the cheap "start
@@ -1210,7 +1409,8 @@ Singleton {
           // is what makes a restored turn fold exactly like a live one, which
           // is the property this whole function exists to preserve.
           list.push({ name: String(blk.name || "tool"),
-                      arg: summarizeArgs(blk.arguments), t0: 0, ms: 0,
+                      arg: summarizeArgs(blk.arguments),
+                      raw: rawArgs(blk.arguments), t0: 0, ms: 0,
                       at: text.length })
           log[row] = list
           calledTool = true
@@ -1876,6 +2076,8 @@ Singleton {
 
   function flush() {
     if (root.pending === "") return
+    // Leaving here IS the send, so this is where the first tick is earned.
+    markSent(1)
     var msg = { type: "prompt", message: root.pending }
     // Omitted entirely when there are none: an empty array is a different
     // message from no field, and there is no reason to send one.
@@ -2079,6 +2281,18 @@ Singleton {
       if (d.success === false) {
         var msg = String(d.error || "rejected")
         root.busy = false
+        // A prompt rejected with "already processing" right after a ctrl+c is
+        // the wedged turn still holding pi: the watchdog's timer has not run
+        // out yet, but the outcome is already known. Escalate now rather than
+        // leaving the user to read a guard message for a turn they killed.
+        if (root.aborting && msg.indexOf("already processing") !== -1) {
+          root.aborting = false
+          abortWatchdog.stop()
+          console.log("prompt rejected while aborting -- killing the wedged turn")
+          control({ type: "__kill" })
+          root.error = "the aborted turn was wedged on a tool call and has been killed; send that again"
+          break
+        }
         settleTurn()
         // A pinned thinking level the endpoint refuses would otherwise fail
         // EVERY turn from here on, because it is baked into buildCommand(). The
@@ -2107,12 +2321,43 @@ Singleton {
     }
 
     case "tool_execution_start":
+      // A turn that reaches for a tool before saying a word is still the agent
+      // acting on the question, so this counts as picking it up too.
+      root.markRead()
+      // Written BEFORE the row, because writing the row is what fires
+      // onActiveToolChanged, and that is where the call is pushed onto the log.
+      root.activeToolRaw = rawArgs(d.args)
       setTurn("tool", String(d.toolName || "tool") + " " + summarizeArgs(d.args))
       break
 
-    case "tool_execution_end":
+    case "tool_execution_end": {
+      // A tool that RETURNED is not necessarily a job that FINISHED. The bash
+      // tool auto-backgrounds anything still alive at its timeout: it resolves
+      // immediately with a PID and a log file, so from the protocol's point of
+      // view the call is over while the command is still running. Drawn as an
+      // ordinary settled call that would be a lie -- `5.0s` next to a build
+      // with four minutes to go.
+      //
+      // `result` is the tool's own return value and reaches us verbatim:
+      // toJsonEvent() passes every event but message_update straight through,
+      // so `details.backgrounded` is exactly what the extension set. Stashed
+      // rather than applied here because the call is closed by
+      // onActiveToolChanged, which fires off `tool` going empty on the next
+      // line -- so this is the last moment the detail exists to be read.
+      var det = d.result && d.result.details ? d.result.details : null
+      root.closingBg = (det && det.backgrounded)
+        ? { pid: Number(det.pid) || 0, log: String(det.logFile || "") } : null
+      if (root.closingBg)
+        root.addBgJob(root.closingBg.pid,
+                      det.watching ? "monitor" : "job",
+                      // The intent first, the command only if there was none.
+                      // A tray row answers "what is running and why", and a
+                      // shell one-liner elided at 40 characters answers
+                      // neither.
+                      String(det.label || det.command || ""))
       setTurn("tool", "")
       break
+    }
 
     case "extension_ui_request":
       // An extension asking for a UI that does not exist outside a TTY. The
@@ -2145,12 +2390,23 @@ Singleton {
     // Only the first clause is kept. pi's message here carries the URL, the
     // response body and a JS stack, which is a paragraph on a strip sized for a
     // line -- and the first clause is the half that says what went wrong.
-    case "message_end":
+    case "message_end": {
+      // The other end of a background job. The bash tool announces a finished
+      // one as a CUSTOM message (customType bg_process_done), which pi appends
+      // to the session and emits here like any other -- so this is the event
+      // that clears the badge, and nothing has to poll a process table to
+      // notice.
+      var bd = d.message ? d.message.details : null
+      if (d.message && d.message.customType === "bg_process_done") {
+        if (bd && bd.pid) root.dropBgJob(Number(bd.pid))
+        break
+      }
       if (d.message && d.message.stopReason === "error") {
         var why = String(d.message.errorMessage || "the model returned an error")
         root.error = why.split(";")[0].split("\n")[0]
       }
       break
+    }
 
     case "agent_settled":
       root.busy = false
@@ -2172,6 +2428,9 @@ Singleton {
   // text is kept rather than cleared -- it is the record of how the answer was
   // reached, and the view decides whether to show it.
   function settleTurn() {
+    // Any settle is proof the abort went through the ordinary path; the
+    // watchdog has nothing left to guard against.
+    root.aborting = false
     if (root.settledAtMs === 0 || root.busy) root.settledAtMs = Date.now()
     var i = lastAssistant()
     if (i < 0) return
@@ -2184,9 +2443,31 @@ Singleton {
   // the meaning for that tool. Truncated: this sits on a single row.
   function summarizeArgs(args) {
     if (!args || typeof args !== "object") return ""
-    var v = args.command || args.file_path || args.path || args.pattern || args.query || ""
+    // A description the agent wrote for this call beats any mechanical
+    // summary -- that is the whole point of tools that carry one.
+    var v = args.description || args.command || args.file_path || args.path || args.pattern || args.query || ""
     v = String(v).split("\n")[0]
     return v.length > 70 ? v.substring(0, 70) + "…" : v
+  }
+
+  // The other half. summarizeArgs() answers "what is it doing"; this answers
+  // "what did it actually run" -- the command, the path, the pattern -- and it
+  // never falls back to the description, because a row that prints the same
+  // sentence twice is worse than a row that prints it once.
+  //
+  // Both are kept because the panel now shows both: the intent on one line and
+  // the literal call under it, which is the shape the user asked for after
+  // seeing Claude Code do it. Before this, `description` simply WON and the
+  // command was thrown away at the door -- there was no second field to render
+  // even if the delegate had wanted one.
+  //
+  // Not truncated. A command is wrapped and line-capped by the delegate that
+  // draws it, which knows how much room it has; cutting it to 70 characters
+  // here would elide the half that says which file.
+  function rawArgs(args) {
+    if (!args || typeof args !== "object") return ""
+    var v = args.command || args.file_path || args.path || args.pattern || args.query || ""
+    return String(v).replace(/\s+$/, "")
   }
 
   // --------------------------------------------------------------- transport
@@ -2279,6 +2560,37 @@ Singleton {
     root.warm = !!d.warm
     if (d.workdir) root.workdir = String(d.workdir)
     root.welcomed = true
+
+    // THE BROKER CAME BACK WITH NOTHING RUNNING, AND WE THINK SOMETHING IS.
+    //
+    // That combination has exactly one cause: the turn this panel was watching
+    // died with the process that was serving it. The way it happens in practice
+    // is Ori restarting its own unit from its own bash tool -- `systemctl
+    // --user restart ori-agent` kills the broker, and pi is in the broker's
+    // cgroup, so pi goes with it. The tool call never returns, no
+    // tool_execution_end and no agent_settled is ever sent, and the socket just
+    // drops.
+    //
+    // Reconnecting was already handled; being WEDGED was not. `busy` stayed
+    // true forever: the rail spun, the spine breathed, ask() refused every
+    // message ("a turn is running"), and the only way out was a shell reload.
+    // The panel had all the evidence it needed -- a fresh broker saying it is
+    // idle -- and was not reading it.
+    //
+    // onPiExited() cannot cover this, because there is no exit event to hear:
+    // the thing that would have sent it is the thing that died.
+    if (!d.busy && root.busy) {
+      root.busy = false
+      root.awaitingRead = false
+      root.aborting = false
+      abortWatchdog.stop()
+      root.pending = ""
+      root.pendingImages = []
+      if (root.error === "")
+        root.error = "the agent restarted mid-turn -- that answer is gone, ask again"
+      settleTurn()
+    }
+
     // A reconnect while a turn is in flight is the case this whole rewrite is
     // for, and it is not only a boot case: the broker restarting mid-answer
     // lands here too, and wants the same treatment.
@@ -2355,6 +2667,12 @@ Singleton {
   }
 
   function onPiExited(code) {
+    // The jobs were children of the process that just died, so they are not
+    // running any more either. Anything else leaves a badge on screen counting
+    // processes that no longer exist.
+    root.bgJobs = ({})
+    root.aborting = false
+    abortWatchdog.stop()
     root.warm = false
     root.pending = ""
     root.pendingImages = []
