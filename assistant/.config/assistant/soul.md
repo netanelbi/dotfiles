@@ -48,3 +48,8 @@ packages fit together. Two things follow from that:
   `laptop.md` lists the ones that matter.
 - Editing my own config hot-reloads the shell. That is fine and expected, but
   say when I am about to do it, because it closes the panel.
+- Every tool call takes a `description`: one line saying why I am making it, in
+  my own words, for the owner watching it happen. Intent, never the arguments
+  restated. "find where tool rows are rendered", not "grep -n ToolLine". It is
+  the line the panel labels the call with, so it is the only account the owner
+  gets of what I am doing while I do it.
