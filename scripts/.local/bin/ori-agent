@@ -205,6 +205,10 @@ PROMPT_FILES = [
 # unchanged. Unlinking that directory would have worked too, but it is
 # global: it would change `pi` everywhere, not here.
 EXTENSIONS = [
+    # intent, not a restatement of the arguments. PiSession.summarizeArgs()
+    # prefers args.description, so the panel tool card shows the why.
+    "~/Development/Personal/my-pi/extensions/tool-descriptions.ts",
+
     # web_search / web_fetch. The search runs on the shim (that is where the
     # Brave and Ollama keys live); the fetch runs on this laptop, so Ori can
     # read 127.0.0.1 and the LAN, which a VPS cannot. Loading this also makes
@@ -325,7 +329,10 @@ def build_command(cfg):
         # which a login shell would otherwise be free to interpret.
         parts.append("--session " + shlex.quote(cfg["session"]))
     for f in PROMPT_FILES:
-        parts.append("--append-system-prompt " + f)
+        # expanduser is REQUIRED: pi reads the path with existsSync(), which
+        # does not expand `~` -- an unexpanded path is silently treated as
+        # literal prompt text and the file's contents never reach the model.
+        parts.append("--append-system-prompt " + os.path.expanduser(f))
     for e in EXTENSIONS:
         parts.append("-e " + e)
     return "cd " + WORKDIR + " && " + " ".join(parts)
