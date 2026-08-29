@@ -156,7 +156,7 @@ Scope {
       Rectangle {
         anchors.fill: parent
         color: "#0b0b14"
-        opacity: root.showNight ? 0.42 : 0
+        opacity: root.showNight ? 0.18 : 0
         Behavior on opacity { NumberAnimation { duration: 4000; easing.type: Easing.InOutSine } }
       }
 
