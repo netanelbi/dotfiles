@@ -11,14 +11,25 @@ import ".."
 // strip between the transcript and the rail, present exactly when there is
 // something in it.
 //
-//   ⠿ 2 tasks · 1 monitor                                   2m 14s
+//   ⠿ 2 agents · 1 monitor                                  2m 14s
 //
 // Collapsed it is one line and a count. Opened it is a row per task: what it
 // is, what it was, and how long it has been. Deliberately NOT a live feed of
-// its output: you handed the work over, and a counter ticking past on screen is
-// supervision with extra steps. `kind` is the vocabulary
-// (PiSession.bgKindNoun) -- agents are already counted there and will appear
-// here with no change to this file.
+// its OUTPUT: you handed the work over, and a counter ticking past on screen is
+// supervision with extra steps.
+//
+// An agent row carries one more line, and only while it runs:
+//
+//   ⠿ 2 agents                                              2m 14s
+//     check-algo-harness                                    184213
+//       ↳ read the AlgoVsVal scoring code
+//
+// That is the delegate's own tool `description` -- the one line it wrote for a
+// human to read. It is not output and it is not progress: it is the answer to
+// "why is this still running", which a name and a clock could never give. It
+// comes off PiSession.agentActivity, keyed by the handle in `job.name`.
+//
+// `kind` is the vocabulary (PiSession.bgKindNoun).
 Item {
   id: tray
 
@@ -148,16 +159,41 @@ Item {
         required property int index
         readonly property var job: PiSession.bgJobs[tray.ids[task.index]] || ({})
 
+        // A delegate's live line, joined by its handle. Empty for a bash job,
+        // and empty again the moment the delegate settles -- so the second row
+        // below appears only while there is something true to put in it.
+        readonly property string activity:
+          String(PiSession.agentActivity[task.job.name] || "")
+
         width: rows.width
         implicitHeight: what.implicitHeight
+          + (task.activity !== "" ? doing.implicitHeight + 1 : 0)
         height: implicitHeight
 
         Text {
           id: what
           anchors { left: parent.left; right: pid.left; rightMargin: 8 }
-          // The command it is running, or the kind if there is nothing better.
+          // The delegate's handle, the command a job is running, or the kind if
+          // there is nothing better.
           text: String(task.job.label || PiSession.bgKindNoun[task.job.kind] || "task")
           color: Theme.subtext0
+          elide: Text.ElideRight
+          maximumLineCount: 1
+          font.family: Style.font.panelMono
+          font.pixelSize: Style.font.panelMeta
+          renderType: Text.QtRendering
+        }
+
+        // What that delegate is doing right now, in its own words. Dimmer and
+        // indented, because the handle is the thing you act on and this is the
+        // thing you read.
+        Text {
+          id: doing
+          anchors { left: parent.left; leftMargin: 12
+                    right: parent.right; top: what.bottom; topMargin: 1 }
+          visible: task.activity !== ""
+          text: "↳ " + task.activity
+          color: Theme.overlay0
           elide: Text.ElideRight
           maximumLineCount: 1
           font.family: Style.font.panelMono

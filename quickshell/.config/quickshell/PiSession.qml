@@ -457,19 +457,19 @@ Singleton {
   // pid -> { pid, since }. Added when the bash tool hands one back, removed
   // when the extension's completion message arrives. Event-driven both ways:
   // nothing here polls a process table.
-  // id -> { id, pid, kind, label, since, lines }
+  // id -> { id, pid, kind, label, name, since }
   //
   // `kind` is the field this is built around rather than bolted onto, because
   // the tray that shows these has to say WHAT is running and not merely how
-  // much: "2 tasks · 1 monitor" is a different sentence to "3 things". Three
-  // kinds are defined; only two can occur today.
+  // much: "2 tasks · 1 monitor" is a different sentence to "3 things". All
+  // three kinds occur.
   //
   //   job      a command the bash tool backgrounded and walked away from
   //   monitor  the same, but with a live filter on its output -- it is not
   //            going to finish on its own and you are watching it
-  //   agent    reserved. Nothing produces one yet; the tray counts it because
-  //            adding a kind later should be a line in bgKindNoun and nothing
-  //            else, not a rewrite of the thing that displays them.
+  //   agent    a delegate that outlived the turn that started it. The only
+  //            kind with a `name`, and so the only one whose row can be joined
+  //            to agentActivity and say what it is doing.
   property var bgJobs: ({})
   readonly property int bgCount: Object.keys(root.bgJobs).length
 
@@ -502,13 +502,24 @@ Singleton {
     return parts.join(" · ")
   }
 
-  function addBgJob(pid, kind, label) {
+  // handle -> the one line the delegate wrote about what it is doing now.
+  // Empty for everything that is not an agent, and empty again the moment an
+  // agent finishes: the subagent extension clears the field with the status,
+  // so a settled row cannot keep claiming it is reading a file.
+  property var agentActivity: ({})
+
+  function addBgJob(pid, kind, label, name) {
     if (!pid) return
     var next = {}
     for (var k in root.bgJobs) next[k] = root.bgJobs[k]
     next[String(pid)] = { id: String(pid), pid: pid,
                           kind: String(kind || "job"),
                           label: String(label || ""),
+                          // The delegate's handle, and the ONLY field that
+                          // joins this row to agentActivity. A tray row is
+                          // written once and never updated -- what moves is the
+                          // registry the panel reads, keyed by this.
+                          name: String(name || ""),
                           since: Date.now() }
     root.bgJobs = next
   }
@@ -1724,6 +1735,44 @@ Singleton {
     onLoadFailed: root.enabledModels = []
   }
 
+  // What every running delegate is doing, read off the subagent extension's own
+  // registry.
+  //
+  // The extension is a different process, and the tray row for an agent is
+  // written once when the call returns -- there is no event that says "this
+  // delegate is now doing X", and adding one would mean a message appended to
+  // the session for every tool call every delegate makes. The registry already
+  // exists on disk, already carries the line, and is already rewritten on each
+  // of those calls. So the panel watches the file instead: no protocol change,
+  // no session noise, and still not a poll.
+  FileView {
+    id: subagentRegistry
+    path: Quickshell.env("HOME") + "/.pi/agent/subagents/registry.json"
+    preload: true
+    printErrors: false
+    watchChanges: true
+    onFileChanged: subagentRegistry.reload()
+    onLoaded: {
+      try {
+        var d = JSON.parse(text()) || {}
+        var out = {}
+        for (var k in d) {
+          // Only a live one. A record keeps its handle for a day after it
+          // finishes so it can be resumed, and none of those belong on a strip
+          // that says what is running.
+          if (d[k] && d[k].status === "running" && d[k].activity)
+            out[k] = String(d[k].activity)
+        }
+        root.agentActivity = out
+      } catch (e) {
+        root.agentActivity = ({})
+      }
+    }
+    // No file yet is the normal state -- nothing has been delegated. It is not
+    // an error, and it is not distinguishable from an empty one.
+    onLoadFailed: root.agentActivity = ({})
+  }
+
   FileView {
     id: piModelsFile
     path: Quickshell.env("HOME") + "/.pi/agent/models.json"
@@ -2359,7 +2408,8 @@ Singleton {
                       // A tray row answers "what is running and why", and a
                       // shell one-liner elided at 40 characters answers
                       // neither.
-                      String(det.label || det.command || ""))
+                      String(det.label || det.command || ""),
+                      String(det.name || ""))
       setTurn("tool", "")
       break
     }
