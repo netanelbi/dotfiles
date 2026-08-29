@@ -233,6 +233,11 @@ EXTENSIONS = [
     # that produced it. Agents are markdown in ~/.pi/agent/agents; only
     # `general` is installed, deliberately.
     "~/Development/Personal/my-pi/extensions/subagent",
+
+    # One free-text note the agent keeps for itself, nudged every 8% of
+    # context, asked for properly at 60%. Compaction keeps the note and the
+    # recent turns and drops the rest -- no summariser call, no cold re-read.
+    "~/Development/Personal/my-pi/extensions/session-note.ts",
 ]
 
 # Kill the child after this much silence. Long enough to cover a
