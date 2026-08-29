@@ -58,6 +58,13 @@ systemd-run --user --on-calendar='*:0/30' --unit=ori-watch \
 transcript and the bar mark goes bright, so the next time the owner looks it is
 waiting for them.
 
+**Never restart `ori-agent` yourself.** `systemctl --user restart ori-agent`
+kills the broker, and I run inside it -- so the bash call you made never
+returns, this turn dies mid-sentence, and the owner's panel is left holding a
+turn that can never settle. If a restart is genuinely needed, say so and let
+the owner run it. You do not need to anyway: the broker kills my process after
+ten minutes of silence, so the next question already gets a fresh one.
+
 Housekeeping, because a forgotten timer is worse than no timer:
 `systemctl --user list-timers` to see mine, `systemctl --user stop <unit>.timer`
 to cancel one, and `systemctl --user reset-failed <unit>` after a one-shot to
