@@ -62,6 +62,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECTS = Path.home() / ".claude" / "projects"
+# pi (Ori's engine) writes the same shape of JSONL, one directory per cwd, so
+# it costs one extra root and one extra `type` to search those conversations
+# too. Kept as a separate corpus rather than merged: these are indexed under a
+# `pi:` project prefix, so `recall --project pi` is the whole filter and the
+# default search spans both.
+PI_SESSIONS = Path.home() / ".pi" / "agent" / "sessions"
 DB = Path.home() / ".cache" / "recall" / "index.db"
 HOME_PREFIX = "-home-netanel-"
 SCHEMA = 3
@@ -150,7 +156,10 @@ def extract_transcript(path: Path):
                 o = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if o.get("type") not in ("user", "assistant"):
+            # "message" is pi's entry type -- it marks every turn that way and
+            # carries the role inside `message.role`, which the line below
+            # already prefers.
+            if o.get("type") not in ("user", "assistant", "message"):
                 continue
             m = o.get("message")
             if not isinstance(m, dict):
@@ -197,6 +206,16 @@ def index(con: sqlite3.Connection, full: bool = False):
         proj_name = pretty_project(proj.name)
         for md in (proj / "memory").glob("*.md"):
             targets.append((md, proj_name, "memory"))
+        for js in proj.rglob("*.jsonl"):
+            targets.append((js, proj_name, "transcript"))
+
+    # pi's own sessions. No memory/ dir there -- Ori's memory is two capped
+    # files in ~/.config/assistant, which are small enough to live in its system
+    # prompt and are never worth searching for.
+    for proj in sorted(PI_SESSIONS.glob("*")):
+        if not proj.is_dir():
+            continue
+        proj_name = "pi:" + pretty_project(proj.name.strip("-"))
         for js in proj.rglob("*.jsonl"):
             targets.append((js, proj_name, "transcript"))
 
