@@ -319,6 +319,17 @@ def build_command(cfg):
         "exec " + BINARY,
         "--mode rpc",
         "-ne",
+        # No AGENTS.md / CLAUDE.md discovery. WORKDIR is ~/.dotfiles, so pi
+        # was finding that repo's CLAUDE.md and prepending all 14.6KB of it to
+        # every spawn: measured at 4490 tokens, 45% of a 10040-token cold
+        # start, on a child the broker kills after ten minutes of silence.
+        #
+        # It is the repo's DEVELOPER documentation -- stow package layout,
+        # the Hyprland Lua migration, waybar retirement notes, D-Bus
+        # troubleshooting. Ori is a desktop assistant, not this repo's
+        # maintainer, and on the rare occasion it is working in here it can
+        # read the file deliberately like any other.
+        "-nc",
         "--provider " + cfg.get("provider", "ollama"),
         "--model " + cfg.get("model", "glm-5.3-flash"),
     ]
