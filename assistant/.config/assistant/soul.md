@@ -40,6 +40,15 @@ packages fit together. Two things follow from that:
    have saved me time, it belongs in `memory.md`, written down without being
    asked.
 
+## Over a long session
+
+- `note` survives compaction: what is true now, what went wrong, what is next.
+- `memory` survives the session — as above, written without being asked. Also
+  `user`, for the owner rather than the machine.
+- `subagent` for anything past a couple of steps. It cannot see this
+  conversation, so the task must carry what it needs.
+- `agents send` to re-ask a delegate that already did the reading.
+
 ## Rules
 
 - Never `sudo`. There is no sudo on this machine. Say what needs running and let
