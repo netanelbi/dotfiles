@@ -2364,8 +2364,15 @@ Singleton {
       // text_delta, each with its own _start and _end). Keeping them apart is
       // what lets the panel show the thinking as a loading state and then
       // replace it with the answer, instead of running the two together.
-      if (e.type === "thinking_delta") root.grow("thinking", String(e.delta || ""))
-      else if (e.type === "text_delta") root.grow("text", String(e.delta || ""))
+      if (e.type === "thinking_delta") {
+        root.grow("thinking", String(e.delta || ""))
+      } else if (e.type === "text_delta") {
+        // Text arriving means the model is no longer inside a tool: retire the
+        // stale "running …" label, or the rail would keep confessing to a call
+        // that already returned while "answering" is what is true.
+        if (root.activeTool !== "") setTurn("tool", "")
+        root.grow("text", String(e.delta || ""))
+      }
       break
     }
 
@@ -2393,6 +2400,11 @@ Singleton {
       // rather than applied here because the call is closed by
       // onActiveToolChanged, which fires off `tool` going empty on the next
       // line -- so this is the last moment the detail exists to be read.
+      // The tool string is deliberately NOT cleared here: the rail keeps
+      // showing "running bash — check latest session…" through the gap the
+      // model spends composing, until the next call replaces it or the turn
+      // settles. ToolLine ms and closingBg are consumed by whichever of those
+      // fires first -- slightly later timing, same result.
       var det = d.result && d.result.details ? d.result.details : null
       root.closingBg = (det && det.backgrounded)
         ? { pid: Number(det.pid) || 0, log: String(det.logFile || "") } : null
@@ -2410,7 +2422,6 @@ Singleton {
                       // neither.
                       String(det.label || det.command || ""),
                       String(det.name || ""))
-      setTurn("tool", "")
       break
     }
 

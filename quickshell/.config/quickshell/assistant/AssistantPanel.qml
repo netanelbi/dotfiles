@@ -899,7 +899,7 @@ PanelWindow {
           // While a turn runs the field is refused, so it says what the key
           // that DOES do something is, rather than inviting a message that
           // would be dropped.
-          text: PiSession.busy ? "ctrl+c to stop" : "Message"
+          text: PiSession.busy ? "ctrl+c to stop" : "ask anything — / for commands"
           color: Theme.overlay0
           font.family: Style.font.panelFamily
           font.pixelSize: Style.font.panelBody
@@ -1104,6 +1104,17 @@ PanelWindow {
       // back: clearing the transcript empties the context gauge beside it and
       // moves this one not at all. One window rather than two, and a dash
       // rather than a zero when it does not know -- see Usage.qml for both.
+      // A hairline where the plan readout sits when it has nothing to say, so
+      // the wide gap between the model and the ctx numbers reads as a deliberate
+      // split rather than missing text.
+      Rectangle {
+        anchors { horizontalCenter: parent.horizontalCenter
+                  verticalCenter: parent.verticalCenter; verticalCenterOffset: 1 }
+        width: 1; height: 12
+        visible: Usage.label === ""
+        color: Theme.alpha(Theme.overlay0, 0.35)
+      }
+
       Text {
         id: planUsage
         anchors { horizontalCenter: parent.horizontalCenter
