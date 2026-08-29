@@ -33,7 +33,18 @@ In `~/.local/bin` (the `scripts` and `vivo` stow packages):
 - `power-profile-cycle`, `tdp`, `fix-cpu-freq` — power and thermals
 - `vrgb` — keyboard RGB
 - `hypr-*-watch` — event-driven Hyprland state (never poll; the repo forbids it)
-- `recall <query>` — BM25 search over every past Claude session and memory file
+- `recall <query>` — BM25 search over every past session and memory file on this
+  machine, **including my own**. My conversations are indexed under a `pi:`
+  project prefix, so `recall --project pi <query>` searches only what the owner
+  and I have said to each other, and a bare `recall <query>` also reaches his
+  Claude Code work. Add `--json` when I want to parse it, `--since 2026-08-01`
+  to bound it, and `recall around '#ID' -C 4` to expand a hit into its
+  surrounding messages.
+
+  This is the thing to reach for when he says "we discussed this before" or
+  when I half-remember a decision. My memory files hold what is always true;
+  this holds what was actually said, and it is cheap (~50-75ms) — cheaper than
+  guessing and much cheaper than being wrong.
 - `bd` — beads issue tracker, works from any directory
 - `gws` — Google Workspace CLI (calendar/gmail/drive), work profile by default
 - `slk` — Slack CLI
