@@ -536,6 +536,7 @@ Item {
             readonly property bool code: piece.m.code === true
             readonly property bool head: piece.m.head === true
             readonly property bool bullet: piece.m.bullet === true
+            readonly property bool tbl: piece.m.table === true
             readonly property var cs: piece.isTool ? (piece.m.calls || []) : []
 
             // A list marker sits in the gutter and the item hangs off it: 14px,
@@ -552,6 +553,7 @@ Item {
             width: body.width
             implicitHeight: piece.isTool ? batch.height
               : piece.m.image ? shot.implicitHeight
+              : piece.tbl ? mdTable.implicitHeight
               : chunk.y + chunk.implicitHeight + (piece.code ? 6 : 0)
             height: implicitHeight
 
@@ -588,7 +590,7 @@ Item {
               // it, and a column with one spacing cannot say so on its own.
               y: piece.head ? 12 : piece.code ? 6 : 0
               width: parent.width - x - (piece.code ? 10 : 0)
-              visible: !piece.m.image
+              visible: !piece.m.image && !piece.tbl
               // `|| ""`: a tool piece carries no text at all, and binding
               // undefined here logged "Unable to assign [undefined] to QString"
               // on every batch line drawn.
@@ -627,6 +629,30 @@ Item {
               visible: piece.m.image
               source: piece.m.image ? piece.m.source : ""
               alt: piece.m.image ? piece.m.alt : ""
+            }
+
+            // ------------------------------------------------------ table
+            // Qt's markdown engine has rendered GFM tables for years; this
+            // panel's earlier attempt to lay them out by hand did not survive
+            // contact. The raw block arrives from Fmt and Qt does the rest --
+            // wrapping cells, weighting the header, all of it.
+            TextEdit {
+              id: mdTable
+              visible: piece.tbl
+              width: parent.width
+              height: implicitHeight
+              text: piece.tbl ? (piece.m.md || "") : ""
+              readOnly: true
+              activeFocusOnPress: false
+              textFormat: TextEdit.MarkdownText
+              wrapMode: TextEdit.Wrap
+              color: Theme.text
+              selectByMouse: true
+              selectionColor: Theme.sapphire
+              selectedTextColor: Theme.base
+              font.family: Style.font.panelFamily
+              font.pixelSize: Style.font.panelAside
+              renderType: Text.QtRendering
             }
 
             // ------------------------------------------------------- tools

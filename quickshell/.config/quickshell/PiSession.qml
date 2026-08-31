@@ -279,6 +279,11 @@ Singleton {
   property bool busy: false
   // Set when pi refuses a command or the child dies; cleared on the next ask.
   property string error: ""
+  // Non-error feedback (/compact saved, /export wrote) on the SAME strip, but
+  // separate: the card border keys on `error` -- a lingering success notice
+  // kept the border lit in the busy accent forever, which is exactly what made
+  // the effort colours look like they never loaded.
+  property string notice: ""
 
   // Whether a pi child exists behind the socket. Reported by the broker --
   // `__welcome` on connect, then `__pi_started` / `__pi_exited` -- rather than
@@ -365,6 +370,8 @@ Singleton {
       root.usageInput = 0
       root.usageOutput = 0
       root.usageTotal = 0
+      root.usageEstimated = false
+      root.usageStaleAbove = 0
       root.outputBase = 0
     }
   }
@@ -598,6 +605,24 @@ Singleton {
   // The stats response, dug out defensively: the payload has been seen at the
   // top level of the response frame, and a wrapper key would be a silent zero
   // rather than a visible break.
+  // True while the context readout is pi's post-compaction ESTIMATE rather than
+  // a measured number. pi reports no usage between a compaction and the first
+  // answer after it, so without this the footer sits at the pre-compact size --
+  // showing a context that was just thrown away. The estimate is marked (`~`)
+  // and the first real reading replaces it.
+  property bool usageEstimated: false
+  // The reading to distrust while estimating: the pre-compact total. A stats
+  // answer at or above it is the old number arriving late, not a new one.
+  property int usageStaleAbove: 0
+
+  function applyCompactEstimate(after) {
+    var a = Number(after || 0)
+    if (a <= 0) return
+    root.usageStaleAbove = Math.max(root.compactBeforeTokens, root.usageTotal)
+    root.usageTotal = a
+    root.usageEstimated = true
+  }
+
   function applyStats(d) {
     var s = d.stats || d.result || d.data || d
     if (!s) return
@@ -612,7 +637,15 @@ Singleton {
     var cu = s.contextUsage
     if (!cu) return
     if (Number(cu.contextWindow) > 0) root.contextWindow = Number(cu.contextWindow)
-    if (Number(cu.tokens) > 0) root.usageTotal = Number(cu.tokens)
+    if (Number(cu.tokens) > 0) {
+      var t = Number(cu.tokens)
+      // A reading at or above the pre-compact size, while an estimate stands,
+      // is the number compaction just invalidated. Keep the estimate.
+      if (root.usageEstimated && root.usageStaleAbove > 0 && t >= root.usageStaleAbove) return
+      root.usageTotal = t
+      root.usageEstimated = false
+      root.usageStaleAbove = 0
+    }
   }
 
   // Whether there is a real percentage to show. The panel prints raw tokens
@@ -1173,6 +1206,26 @@ Singleton {
   // Drop the conversation without dropping the process -- the cheap "start
   // over" that keeps the 1.2s warm latency. `new_session` clears pi's own
   // context so the model forgets it too, not just the screen.
+  // /restart. Kills the CHILD, not the broker -- the broker survives, the panel
+  // stays open, and the next question cold-spawns with a brain that has re-read
+  // its skills, model, settings and whatever else it cached at boot. This is
+  // the useful half of "restart ori": the other half -- restarting the broker
+  // itself -- is the thing that cannot be done from INSIDE the panel, because
+  // this connection and this turn live inside what would be killed. For that
+  // there is `systemctl --user restart ori-agent`, which only the owner runs.
+  function restartChild() {
+    if (root.busy) {
+      root.error = "/restart: a turn is running -- ctrl+c to stop it first"
+      return
+    }
+    dropChild()
+    // The menu would otherwise keep offering the dying child's commands until
+    // the next question's spawn re-reads them -- an hour, if the panel sits
+    // idle. The list IS the child; an empty menu beats a stale one.
+    root.commands = []
+    root.notice = "restarted -- the next question cold-spawns fresh"
+  }
+
   function newChat() {
     if (root.busy) abort()
     turnModel.clear()
@@ -1496,7 +1549,10 @@ Singleton {
     onLoaded: {
       try {
         var d = JSON.parse(text())
-        root.commands = (d && d.commands) ? d.commands : []
+        var cc = (d && d.commands) ? d.commands : []
+        var kept = []
+        for (var i = 0; i < cc.length; i++) if (root.commandUsable(cc[i])) kept.push(cc[i])
+        root.commands = kept
       } catch (e) {
         root.commands = []
       }
@@ -1508,13 +1564,29 @@ Singleton {
   // From ingest(), on the get_commands response -- once per cold spawn. Written
   // every time rather than diffed first: one small file per spawn is well under
   // what the session index already writes per settled turn.
+  // pi's built-in llama extension registers /llama (manage llama.cpp router
+  // models), which lands in get_commands like any other extension command. It
+  // does nothing from the panel -- it wants interactive TUI input -- so it is
+  // filtered here, at both the cache read and the live answer, rather than in
+  // the completion list where every future consumer would re-filter it.
+  readonly property string droppedCommands: "llama"
+  function commandUsable(c) {
+    return String(c.name) !== root.droppedCommands.split(" ", 1)[0]
+  }
+
   function applyCommands(d) {
     var list = ((d.data || {}).commands) || []
-    // A child that answered with nothing is not a reason to throw away a cache
-    // that works.
-    if (list.length === 0) return
-    root.commands = list
-    commandsFile.setText(JSON.stringify({ version: 1, commands: list }))
+    var kept = []
+    for (var i = 0; i < list.length; i++) if (root.commandUsable(list[i])) kept.push(list[i])
+    // The broker spawns with -ne and no --skill, so get_commands answers with
+    // SKILLS ONLY. An empty list is therefore a true statement -- "no skills
+    // installed" -- and swallowing it left the last deleted skill in the menu
+    // forever, which is how /skill:ori-test survived its own removal and one
+    // restart. Replace unconditionally; the completion list merges the panel's
+    // own commands, so an empty engine list leaves a working menu.
+    if (d.success === false) return
+    root.commands = kept
+    commandsFile.setText(JSON.stringify({ version: 1, commands: kept }))
   }
 
 
@@ -1978,7 +2050,17 @@ Singleton {
     { name: "model", source: "panel",
       description: "switch model  ·  " + root.usableModels.length + " usable" },
     { name: "effort", source: "panel",
-      description: "thinking level  ·  " + (root.thinkingLevels.join(" ") || "unknown until Ori has run once") }
+      description: "thinking level  ·  " + root.effortScale().join(" ") },
+    { name: "new", source: "panel",
+      description: "start a fresh conversation" },
+    { name: "compact", source: "panel",
+      description: "shrink context now" },
+    { name: "name", source: "panel",
+      description: "rename this session" },
+    { name: "export", source: "panel",
+      description: "session to an HTML file" },
+    { name: "restart", source: "panel",
+      description: "kill the child -- next question is a fresh cold spawn" }
   ]
 
   // The values each takes, for the completion list's second stage. This is the
@@ -2005,23 +2087,143 @@ Singleton {
   // panel command -- INCLUDING when it was a bad one, because a rejected
   // `/model nope` must land on the error strip and not in the conversation.
   function runPanelCommand(text) {
-    var m = /^\/(model|effort)(?:\s+([\s\S]*))?$/.exec(String(text || "").trim())
+    var m = /^\/(model|effort|new|compact|export|name|restart)(?:\s+([\s\S]*))?$/.exec(String(text || "").trim())
     if (!m) return false
     var arg = String(m[2] || "").trim()
     if (m[1] === "effort") root.setEffort(arg)
-    else root.chooseModel(arg)
+    else if (m[1] === "model") root.chooseModel(arg)
+    else if (m[1] === "new") root.newChat()
+    else if (m[1] === "restart") root.restartChild()
+    else if (m[1] === "compact") root.compactNow()
+    else if (m[1] === "export") root.exportNow()
+    else if (m[1] === "name") root.setName(arg)
     return true
+  }
+
+  // /compact -- hand pi's RPC the same frame newChat() half-uses. A warm child
+  // is the whole precondition: a cold one has no context to shrink, and the
+  // next question spawns one that starts small anyway. The compact response
+  // reports what it saved on the strip.
+  // ---------------------------------------------------------- compact progress
+  // pi does not stream the compaction summarizer -- the LLM call under
+  // /compact is opaque on the wire, and even the only "after" number that
+  // exists (estimatedTokensAfter) is a heuristic known at the END, so a target
+  // to progress toward does not exist. What pi DOES give is events:
+  // compaction_start, retry notices while the summary call fumbles, and
+  // compaction_end. So the honest progress display is a start receipt (how
+  // many tokens are going in), a ticking clock, retry notes and an end
+  // receipt -- not a bar, because there is no denominator to fill it against.
+  property bool compacting: false
+  property real compactStartedAt: 0
+  property int compactBeforeTokens: 0
+
+  function fmtK(t) {
+    if (t <= 0) return "?"
+    if (t < 10000) return String(t)
+    return Math.round(t / 1000) + "k"
+  }
+
+  // What the summariser is doing, in the panel's words. pi streams nothing
+  // from the call itself, so this is the phase the EVENTS name -- summarising,
+  // a retry, the write -- and never a guess about how far along it is.
+  property string compactPhase: "summarising"
+  // Bumped once a second by the tick. Its only job is to move something on
+  // screen: a clock that counts and dots that walk say "still working" where a
+  // frozen line says "wedged", and that distinction is the whole ask.
+  property int compactBeat: 0
+
+  property string compactLabel: {
+    if (!compacting) return ""
+    var base = "compacting · " + fmtK(compactBeforeTokens) + " tokens · " + compactPhase
+    if (compactStartedAt === 0) return base
+    var secs = Math.round((Date.now() - compactStartedAt) / 1000)
+    var dots = ""
+    for (var k = 0; k <= compactBeat % 3; k++) dots += "·"
+    return base + " " + secs + "s " + dots
+  }
+
+  Timer {
+    // Ticks compactLabel while compacting; the notice is set imperatively here
+    // rather than bound, because Date.now() is not a property and would never
+    // re-evaluate a binding on its own.
+    id: compactTick
+    interval: 1000
+    repeat: true
+    running: root.compacting
+    onTriggered: {
+      if (!root.compacting) return
+      root.compactBeat += 1
+      root.notice = root.compactLabel
+    }
+  }
+
+  function startCompactPhase() {
+    root.compacting = true
+    root.compactPhase = "summarising"
+    root.compactBeat = 0
+    root.compactStartedAt = Date.now()
+    // usageTotal IS the context size at the moment compaction begins -- the
+    // same number the footer readout shows -- so take the receipt's "before"
+    // from there if the event got here before the response of get_session_stats.
+    if (root.compactBeforeTokens === 0) root.compactBeforeTokens = root.usageTotal
+  }
+
+  function compactNow() {
+    if (!root.warm) { root.error = "/compact: nothing running -- ask Ori something first"; return }
+    root.compactBeforeTokens = root.usageTotal
+    root.compacting = true
+    root.compactPhase = "summarising"
+    root.compactBeat = 0
+    root.compactStartedAt = Date.now()
+    root.notice = root.compactLabel
+    send({ type: "compact" })
+  }
+
+  // /export -- export_html, default path. Like /compact it is a live-child
+  // frame; there is a session file on disk when cold, but it belongs to a
+  // conversation the picker owns, not to a bare prompt.
+  function exportNow() {
+    if (!root.warm) { root.error = "/export: nothing running -- ask Ori something first"; return }
+    root.notice = "exporting..."
+    send({ type: "export_html" })
+  }
+
+  // /name -- set_session_name. There is no local copy to keep: the name lives
+  // in pi's state and reaches the picker through get_state on the next spawn.
+  function setName(name) {
+    if (name === "") { root.error = "/name <new name>"; return }
+    if (!root.warm) { root.error = "/name: nothing running -- ask Ori something first"; return }
+    root.notice = "\"" + name + "\""
+    send({ type: "set_session_name", name: name })
+  }
+
+  // Shift+Tab -- walk the model's supported levels, wrapping. setEffort does
+  // the validation, the strip feedback and the live set_thinking_level, so this
+  // is only the index arithmetic. Cold panel: falls back to the universal
+  // scale below, and the worst case is a level the model does not accept --
+  // visible on the strip, clamped by pi, never silently swallowed.
+  function cycleEffort() {
+    var levels = root.effortScale()
+    var at = levels.indexOf(root.thinkingLevel !== "" ? root.thinkingLevel : root.effort)
+    // Unknown starts from the bottom, so the first press is a real move.
+    root.setEffort(levels[(at + 1) % levels.length])
+  }
+
+  // The level list to offer. The model's own list when one has been read,
+  // otherwise pi's universal scale -- off/minimal/low/medium/high/xhigh -- so
+  // /effort and shift+tab work on a panel that has never run. The cold choice
+  // is persisted with the model choice and reaches the spawn as --thinking;
+  // an unsupported level is clamped by pi, which is the agreed worst case.
+  readonly property var baseLevels: ["off", "minimal", "low", "medium", "high", "xhigh"]
+  function effortScale() {
+    return root.thinkingLevels.length > 0 ? root.thinkingLevels : root.baseLevels
   }
 
   function setEffort(level) {
     // Nothing has ever run, so there is no list to check against and pi would
     // clamp an unknown level to "off" without a word. Say so instead.
-    if (root.thinkingLevels.length === 0) {
-      root.error = "/effort: no level list yet -- ask Ori something once first"
-      return
-    }
-    if (level === "" || root.thinkingLevels.indexOf(level) < 0) {
-      root.error = "/effort " + root.thinkingLevels.join(" | ")
+    if (level === "" || root.effortScale().indexOf(level) < 0) {
+      root.error = "/effort " + root.effortScale().join(" | ")
       return
     }
     root.error = ""
@@ -2142,6 +2344,7 @@ Singleton {
     // Cleared before the question rather than after the last one, so a notice
     // left over from a previous turn can never settle this one early.
     root.extensionNotice = ""
+    root.notice = ""
     root.promptId = send(msg)
     root.pending = ""
     root.pendingImages = []
@@ -2254,6 +2457,39 @@ Singleton {
         send({ type: "get_state" })
         break
       }
+      // The answers to /compact, /export and /name. The strip is the notice
+      // channel here rather than the transcript: a compaction or an export is
+      // bookkeeping the conversation did, not something to speak. The context
+      // readout refreshes itself on its next get_session_stats -- and per the
+      // rpc docs the usage numbers are deliberately absent until the first
+      // post-compaction answer, so nothing is queued here to chase them.
+      if (d.command === "compact") {
+        if (d.success === false) {
+          root.compacting = false
+          root.error = String(d.error || "compact failed")
+          break
+        }
+        var c = d.data || {}
+        var secs = root.compactStartedAt > 0 ? Math.round((Date.now() - root.compactStartedAt) / 1000) : 0
+        root.notice = "compacted: " + (c.tokensBefore || root.compactBeforeTokens || "?")
+          + " → " + (c.estimatedTokensAfter || "?") + " tokens"
+          + (secs > 0 ? " in " + secs + "s" : "")
+        root.applyCompactEstimate(c.estimatedTokensAfter)
+        root.compacting = false
+        root.compactStartedAt = 0
+        break
+      }
+      if (d.command === "set_session_name") {
+        // Success is silent -- the name shows up in the session picker on its
+        // own, and repeating it on the strip would linger for no one.
+        if (d.success === false) root.error = String(d.error || "rename failed")
+        break
+      }
+      if (d.command === "export_html") {
+        if (d.success === false) { root.error = String(d.error || "export failed"); break }
+        root.notice = "exported: " + String((d.data || {}).path || "session.html")
+        break
+      }
       // Deliberately not read. It says success:true for every string it was
       // ever given, clamped ones included -- see the measurement in the panel
       // commands block. get_state is the only honest answer to "what is it now".
@@ -2280,7 +2516,39 @@ Singleton {
           // the broker deliver what it has. Strictly after rehydrate, which
           // clears the model -- an assistant row opened before it would be the
           // first casualty.
-          if (root.replayPending) root.openReplayTurn()
+          //
+          // -- UNLESS the turn already settled. pi appends the question early
+          // and the answer only when it finishes, so the last message on disk
+          // says which state we reattach into. The broker's replay buffer
+          // holds the whole settled turn too -- every hot reload mid-session
+          // was repainting the last answer twice: once from disk, once from
+          // the buffer. Only an answer that does not exist on disk yet earns a
+          // replay of the buffer.
+          if (root.replayPending) {
+            var ents = ((d.data || {}).entries) || []
+            var lastMsg = null
+            for (var e = ents.length - 1; e >= 0; e--) {
+              var ent = ents[e]
+              if (ent.type !== "message" || !ent.message) continue
+              lastMsg = ent.message
+              break
+            }
+            // A turn still in flight is last message = the question, OR an
+            // assistant entry that ended by asking for a tool (stopReason
+            // "toolUse" -- the loop is mid-flight, the buffer has the rest).
+            // stopReason "stop" is a finished answer, already on disk in full;
+            // the buffer holds it too, and replaying both is the duplicate.
+            var settled = lastMsg && lastMsg.role === "assistant"
+              && String(lastMsg.stopReason || "stop") !== "toolUse"
+            // Either way the hold must be released. openReplayTurn() sends
+            // __replay itself; the settled path opens no row, so it sends its
+            // own -- without it the broker holds every event until HOLD_TIMEOUT,
+            // and the next question streams into nothing.
+            if (settled) {
+              root.replayPending = false
+              root.control({ type: "__replay" })
+            } else root.openReplayTurn()
+          }
         } else {
           root.error = String(d.error || "get_entries failed")
           root.replayPending = false
@@ -2473,6 +2741,49 @@ Singleton {
       }
       break
     }
+
+    // Compaction progress. pi does not stream the summariser's tokens -- the
+    // call under /compact is opaque on the wire -- so these events are the
+    // whole of what a real progress display can honestly show: that it started
+    // (vs the response frame merely ACKing the request), retries while the
+    // provider fumbles, and the two failure shapes the compact RESPONSE cannot
+    // carry, an abort and an error.
+    case "compaction_start":
+      // The authoritative start; tokensBefore rides from whichever witness
+      // arrived first -- this event or compactNow().
+      root.startCompactPhase()
+      root.notice = root.compactLabel
+      break
+
+    case "compaction_end":
+      // The success receipt belongs to the compact response frame, which knows
+      // both token counts. This event is read only for what the response
+      // cannot report: abort, and error with its message. Either way the
+      // in-progress clock has to stop.
+      root.compacting = false
+      root.applyCompactEstimate((d.result || {}).estimatedTokensAfter)
+      // A compaction that finished instantly (a fresh session note swaps text
+      // with no summariser call) starts no turn, so no agent_settled ever
+      // follows and the footer's context readout would sit at its pre-compact
+      // size until the next answer. pi rebuilt its messages the moment this
+      // event fired -- ask it now, once, same ask agent_settled makes.
+      if (!d.aborted && !d.errorMessage) send({ type: "get_session_stats" })
+      if (d.aborted) { root.notice = "compaction aborted"; break }
+      if (d.errorMessage) root.error = "compact failed: " + String(d.errorMessage).split("\n")[0].substring(0, 120)
+      break
+
+    case "summarization_retry_scheduled":
+      root.compactPhase = "provider error, retry " + Number(d.attempt || 1)
+        + "/" + Number(d.maxAttempts || 3)
+        + " in " + Math.round(Number(d.delayMs || 0) / 1000) + "s"
+      root.notice = root.compactLabel
+      break
+
+    case "summarization_retry_finished":
+      if (!root.compacting) break
+      root.compactPhase = "writing the summary"
+      root.notice = root.compactLabel
+      break
 
     case "agent_settled":
       root.busy = false
@@ -2744,6 +3055,8 @@ Singleton {
     root.pendingImages = []
     root.awaitingEntries = false
     root.replayPending = false
+    // Same reasoning as restartChild: the command list died with the child.
+    root.commands = []
     // An exit while busy is a crash or the idle kill misfiring, not a normal
     // end: say so rather than leaving the panel spinning forever on an answer
     // that will never come.

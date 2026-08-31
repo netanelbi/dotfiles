@@ -199,6 +199,29 @@ QtObject {
       // A closing run of hashes is optional in markdown and never content.
       var h = l.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/)
       var b = l.match(/^(\s*)(?:([-*+])|(\d+)[.)])\s+(.+)$/)
+      // A GFM table, before the pipe row is mistaken for a paragraph. A table
+      // is only ever the shape the models write: a pipe row, then a separator
+      // row, then pipe rows. The separator is what separates a table from a
+      // line of prose that happens to open with `|`; without it nothing is
+      // claimed and the pipes fall through as the text they are.
+      var tr = parseRow(l)
+      if (tr !== null && i + 1 < lines.length && isSep(lines[i + 1])) {
+        var rows = [tr]
+        var from = i
+        i += 2            // skip the separator with the loop's next increment
+        while (i < lines.length && (tr = parseRow(lines[i])) !== null) {
+          rows.push(tr); i++
+        }
+        i--               // the gather stopped one step short of staying put
+        flush(out, buf); buf = []
+        // The RAW block rides along, because the renderer that draws it is
+        // Qt's markdown engine -- the one that has answered for tables since
+        // before this panel existed. Parsing the cells proved to be the easy
+        // half; laying them out by hand was where the bugs lived.
+        out.push({ image: false, table: true, rows: rows,
+                   md: lines.slice(from, i + 1).join("\n") })
+        continue
+      }
       if (!h && !b) { buf.push(l); continue }
       flush(out, buf); buf = []
       if (h) out.push({ image: false, head: true, text: prep(h[2]) })
@@ -210,6 +233,30 @@ QtObject {
                       depth: Math.min(2, Math.floor(b[1].length / 2)) })
     }
     flush(out, buf)
+  }
+
+  // One pipe row of a table, as its cells -- or null when the line is not one.
+  // Leading pipe required, trailing optional; `\|` is a cell's own pipe char, a
+  // distinction the split cannot see, so it hides under a placeholder for the
+  // one character that cannot occur in an answer.
+  function parseRow(l) {
+    var s = String(l).trim()
+    if (!/^\|.+.?\|?$/.test(s) || s === "|") return null
+    var cells = s.replace(/^\|/, "").replace(/\|$/, "")
+                 .replace(/\\\|/g, "\u0001").split("|")
+                 .map(function (c) { return c.trim().replace(/\u0001/g, "|") })
+    return cells
+  }
+
+  // The separator row `|---|:--:|`, true to GFM: dashes and colons, nothing
+  // else, in every cell. Alignment is not read -- at 426px of card the cells
+  // wrap wherever they must, and left is the only alignment left standing.
+  function isSep(l) {
+    var cells = parseRow(l)
+    if (cells === null || cells.length === 0) return false
+    for (var i = 0; i < cells.length; i++)
+      if (!/^:?-+:?$/.test(cells[i])) return false
+    return true
   }
 
   // The prose gathered between two blocks, or "" if it was only whitespace.

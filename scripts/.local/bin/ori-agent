@@ -563,6 +563,26 @@ class Broker:
         log("hold expired without __replay -- going live, the turn is lost to the panel")
         self.release()
 
+    @staticmethod
+    def _disk_done(line):
+        """True for a buffered frame pi has already appended to the session.
+
+        pi appends each assistant message to the session file the moment it
+        completes, so a message_end for an assistant role is exactly the
+        boundary between "rehydrate() already rendered this from disk" and
+        "only the event buffer holds this". Everything up to and including
+        the last such frame is redundant on every replay; everything after it
+        is the in-flight tail the replay exists to deliver.
+        """
+        try:
+            d = json.loads(line)
+        except Exception:
+            return False
+        if d.get("type") != "message_end":
+            return False
+        m = d.get("message") or {}
+        return m.get("role") == "assistant" and not m.get("customType")
+
     def replay(self):
         """Dump the current turn and go live.
 
@@ -573,9 +593,25 @@ class Broker:
         agent_settled and the file being written where a reconnect gets
         neither; it is real, it is smaller than the reconnect itself, and
         closing it would mean this process second-guessing where pi keeps its
-        transcripts."""
-        log("replay: %d buffered frames" % len(self.buf))
-        for line in self.buf:
+        transcripts.
+
+        The buffer lives until the NEXT PROMPT, not until settle, so a panel
+        that reattaches twice inside one long turn (every hot reload is one)
+        would otherwise replay events it already played -- and that the panel
+        has also rehydrated from disk, turning one answer into as many copies
+        as there were reloads. Trim through the last assistant message_end:
+        everything before it is in the session file, which get_entries in the
+        same handshake has already put on screen. Tool events ahead of that
+        point belong to calls whose records live in the disk transcript's
+        toolCall blocks; the results are not rendered anyway."""
+        cut = -1
+        for i, line in enumerate(self.buf):
+            if self._disk_done(line):
+                cut = i
+        tail = self.buf[cut + 1:]
+        log("replay: %d buffered frames, %d on disk -> replaying %d"
+            % (len(self.buf), cut + 1, len(tail)))
+        for line in tail:
             self.to_client(line)
         self.release()
 

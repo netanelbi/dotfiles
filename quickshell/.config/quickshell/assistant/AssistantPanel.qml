@@ -197,7 +197,9 @@ PanelWindow {
   // the conversation is getting heavy.
   readonly property string contextLabel: {
     if (PiSession.usageTotal <= 0) return "—"
-    var out = fmt.tokens(PiSession.usageTotal)
+    // `~` while the number is pi's post-compaction estimate: the readout says
+    // what it knows and admits it is not measured yet.
+    var out = (PiSession.usageEstimated ? "~" : "") + fmt.tokens(PiSession.usageTotal)
     if (!PiSession.contextKnown) return out
     var pct = PiSession.contextFraction * 100
     return out + " · " + (pct < 10 ? pct.toFixed(1) : String(Math.round(pct))) + "%"
@@ -267,6 +269,23 @@ PanelWindow {
     }
   }
 
+  // The colour per thinking level, shared by the card border and the composer
+  // edge. Lives on the panel, not on the card, because both bindings resolve it
+  // as panel.effortColor. Unknown or empty (no model yet, level dropped on a
+  // switch) falls back to the neutral dim sapphire, so a cold panel looks as
+  // before.
+  function effortColor(level) {
+    switch (String(level)) {
+    case "off":    return Theme.overlay0
+    case "minimal": return Theme.overlay0
+    case "low":    return Theme.blue
+    case "medium": return Theme.yellow
+    case "high":   return Theme.red
+    case "xhigh":  return Theme.red
+    default:       return Theme.alpha(Theme.sapphire, 0.4)
+    }
+  }
+
   // ------------------------------------------------------------------- card
   Rectangle {
     id: card
@@ -285,7 +304,10 @@ PanelWindow {
     radius: 16
     border.width: 2
     // The edge of the card is the furthest-away readout there is: dim when
-    // nothing is happening, lit in the accent of whatever is.
+    // nothing is happening, lit in the accent of whatever is. Kept neutral for
+    // effort on purpose -- Netanel tried the effort heat scale here and asked
+    // for it on the composer edge alone; the full-card flash at every cycle
+    // was louder than the signal.
     border.color: PiSession.busy || PiSession.error !== ""
       ? panel.accent : Theme.alpha(Theme.sapphire, 0.4)
     clip: true
@@ -827,8 +849,10 @@ PanelWindow {
       id: errorStrip
       anchors { left: parent.left; right: parent.right; bottom: composer.top
                 leftMargin: card.border.width; rightMargin: card.border.width }
-      height: PiSession.error !== "" ? errText.implicitHeight + 12 : 0
-      color: Theme.alpha(Theme.red, 0.15)
+      height: PiSession.error !== "" || PiSession.notice !== ""
+              ? errText.implicitHeight + 12 : 0
+      color: PiSession.error !== "" ? Theme.alpha(Theme.red, 0.15)
+                                    : Theme.alpha(Theme.sapphire, 0.12)
       clip: true
 
       Behavior on height {
@@ -838,8 +862,8 @@ PanelWindow {
       Text {
         id: errText
         anchors { left: parent.left; right: parent.right; top: parent.top; margins: 6 }
-        text: PiSession.error
-        color: Theme.red
+        text: PiSession.error !== "" ? PiSession.error : PiSession.notice
+        color: PiSession.error !== "" ? Theme.red : Theme.subtext0
         wrapMode: Text.Wrap
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
@@ -856,6 +880,11 @@ PanelWindow {
       // is a fixed size, so this only moves the boundary between the two panes.
       height: Math.min(entry.implicitHeight, 120) + 20
       color: Theme.surface0
+      // No border tint here either: the effort readout lives in the footer --
+      // the level's own word carrying the colour -- after the full-card border
+      // flash AND a tinted field edge were both tried and disliked. The field
+      // stays quiet.
+      border.width: 0
 
       Behavior on height {
         NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
@@ -932,6 +961,19 @@ PanelWindow {
             if (event.modifiers & Qt.ControlModifier) {
               transcript.goTop()
               event.accepted = true
+            }
+            return
+          case Qt.Key_Tab:
+          // Qt folds Shift+Tab into a Backtab key before an event handler ever
+          // sees a Key_Tab with ShiftModifier -- the same reason the share
+          // picker's grid keys on Backtab. Only the shifted chord is claimed;
+          // a bare Tab falls through to the TextEdit's default untouched, and
+          // the completion list already had first refusal above.
+          case Qt.Key_Backtab:
+            if (event.modifiers & Qt.ShiftModifier || event.key === Qt.Key_Backtab) {
+              PiSession.cycleEffort()
+              event.accepted = true
+              return
             }
             return
           case Qt.Key_Return:
@@ -1053,7 +1095,12 @@ PanelWindow {
         // Carries its own separator, so that the dot goes with the level rather
         // than being left stranded on the end of an elided model id.
         text: PiSession.effortLabel !== "" ? "·  " + PiSession.effortLabel : ""
-        color: Theme.overlay0
+        // The effort readout: the word itself is the indicator, in the same
+        // heat scale everywhere else in pi speaks effort -- neutral for off,
+        // then blue, yellow, red as the thinking level rises. One word, in the
+        // line the eye already reads for state; nothing else on the panel
+        // changes colour for it.
+        color: panel.effortColor(PiSession.effortLabel)
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
