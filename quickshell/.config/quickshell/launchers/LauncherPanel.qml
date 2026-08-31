@@ -49,6 +49,31 @@ PanelWindow {
   property var list: null
 
   property bool opened: false
+  // Hover must not count until the pointer has deliberately moved since the
+  // panel opened: the card is screen-centred, so the cursor often opens
+  // sitting on a row, and entry alone made the selection jump on launch.
+  // A single move event is not enough either -- a palm brush on the touchpad
+  // while typing is 2-3px and would still steal the highlight. So hover only
+  // arms after hoverArmTravel px of accumulated travel. Rows call
+  // hoverMoved() from onPositionChanged with scene coords.
+  property bool hoverArmed: false
+  readonly property int hoverArmTravel: 16
+  property point hoverLast
+  property bool hoverLastValid: false
+  property real hoverTravel: 0
+
+  function hoverMoved(g) {
+    if (hoverArmed) return
+    if (!hoverLastValid) {
+      hoverLast = g
+      hoverLastValid = true
+      return
+    }
+    // Manhatten distance; direction does not matter, intention does.
+    hoverTravel += Math.abs(g.x - hoverLast.x) + Math.abs(g.y - hoverLast.y)
+    hoverLast = g
+    if (hoverTravel >= hoverArmTravel) hoverArmed = true
+  }
 
   default property alias content: body.data
   readonly property alias query: input.text
@@ -63,6 +88,9 @@ PanelWindow {
   function present() {
     if (opened) return
     input.text = ""
+    hoverArmed = false
+    hoverLastValid = false
+    hoverTravel = 0
     panel.screen = focusedScreen()
     presented()
     opened = true

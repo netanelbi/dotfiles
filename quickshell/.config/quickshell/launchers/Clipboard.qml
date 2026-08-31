@@ -251,7 +251,8 @@ Scope {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onEntered: list.currentIndex = clipRow.index
+          onEntered: if (panel.hoverArmed) list.currentIndex = clipRow.index
+          onPositionChanged: panel.hoverMoved(mapToItem(null, mouse.x, mouse.y))
           onClicked: root.pick(clipRow.index)
         }
       }

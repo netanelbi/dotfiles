@@ -198,7 +198,8 @@ Scope {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onEntered: list.currentIndex = emojiRow.index
+          onEntered: if (panel.hoverArmed) list.currentIndex = emojiRow.index
+          onPositionChanged: panel.hoverMoved(mapToItem(null, mouse.x, mouse.y))
           onClicked: root.pick(emojiRow.index)
         }
       }
