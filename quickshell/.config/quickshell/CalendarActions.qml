@@ -32,14 +32,15 @@ Singleton {
   //
   // Derived from `gws auth status`, whose JSON carries `user` -- that is the
   // account the events themselves were fetched as, so the link can never
-  // disagree with the data on screen. The literal below is the fallback for
-  // when that call fails, and is the same address.
+  // disagree with the data on screen. CALENDAR_ACCOUNT is the fallback for
+  // when that call fails; leave it unset and the hint is simply omitted --
+  // openLink() already returns the bare URL when the account is empty.
   //
   // ONE account, deliberately: the personal calendar is out of scope for now.
   // When it is added, this stops being a shell-wide constant and becomes a
   // per-event field -- CalendarData already knows which calendar each event
   // came from, so the hint would ride along on the event.
-  property string account: "you@example.com"
+  property string account: Quickshell.env("CALENDAR_ACCOUNT") || ""
 
   Process {
     id: whoami

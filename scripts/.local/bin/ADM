@@ -9,7 +9,8 @@
 # One Ctrl-C stops both. Refuses to start if the ports are already taken.
 set -euo pipefail
 
-REPO="$HOME/Development/admin-console"
+# Which checkout to run. Override per machine: export ADM_REPO=/path/to/repo
+REPO="${ADM_REPO:-$HOME/Development/admin-console}"
 ENV=dev
 
 while [[ $# -gt 0 ]]; do

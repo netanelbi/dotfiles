@@ -318,9 +318,9 @@ def build_command(cfg):
     so that was the model, not the flag.)
 
     Not added, and the token count is the smaller half of why. That
-    directory is Claude Code's, not Ori's: those 29 are things like
-    project-backend-dev and beckmann-obgyn, written for an agent with a
-    different toolset, and pointing pi at it would make the panel's command
+    directory is Claude Code's, not Ori's: those 29 are per-project and
+    domain-reference skills, written for an agent with a different
+    toolset, and pointing pi at it would make the panel's command
     list change whenever a skill is installed for an unrelated tool. If Ori
     is to have skills, they want a directory of Ori's own --
     ~/.config/assistant/skills, next to the prompt files -- and that

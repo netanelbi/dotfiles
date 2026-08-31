@@ -39,7 +39,7 @@ end
 # One-time: configure a personal GCP project + OAuth client for the personal dir.
 #   gwsp-setup --project YOUR_PERSONAL_PROJECT_ID    then:    gwsp-login
 # Creates client_secret.json in the personal dir. Needed because the work
-# client_secret belongs to the org-internal work-gws app, which a @gmail account
+# client_secret belongs to an org-internal OAuth app, which a @gmail account
 # can't consent to. Run gwsp-login afterwards for the consumer-safe scope set.
 function gwsp-setup --description 'One-time: set up personal GCP OAuth client for gws'
     # CLOUDSDK_ACTIVE_CONFIG_NAME=personal so the gcloud calls `gws auth setup`

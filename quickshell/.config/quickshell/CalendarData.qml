@@ -17,9 +17,9 @@ import Quickshell.Io
 // `gws` is invoked by ABSOLUTE PATH. `gwsw`/`gwsp` are fish functions that
 // swap the profile by pointing at a different config dir; they do not exist
 // outside an interactive fish, and going through `sh -lc gws` would find the
-// binary but is one more thing to go wrong. Plain `gws` == the work profile
-// (you@example.com), which is the default config dir, so the bare binary is
-// already the right account.
+// binary but is one more thing to go wrong. Plain `gws` == the work profile,
+// which is the default config dir, so the bare binary is already the right
+// account.
 //
 // `gws` prints "Using keyring backend: keyring" on STDERR before every call --
 // stdout is clean JSON, so stdout is parsed and stderr is kept only to quote

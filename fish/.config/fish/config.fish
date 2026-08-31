@@ -53,10 +53,8 @@ fish_add_path $ANDROID_SDK_ROOT/cmdline-tools/latest/bin
 # GWS auth aliases → superseded by ~/.config/fish/conf.d/cloud-profiles.fish
 # (gwsw/gwswa/gwsp + *-login wrappers). Run `cloud-profiles` for the cheat sheet.
 
-# Work aliases
-alias appDIR="cd $HOME/Development/mobile-app"
-alias devDIR="cd $HOME/Development/devbench"
-alias UM="devDIR && $HOME/Development/devbench/.venv/bin/python -m devbench.UserManagement"
+# Work-repo aliases (machine-local) live in conf.d/secrets.fish, which is
+# gitignored -- they name private repos and paths that do not belong here.
 
 # Misc aliases
 alias nano=micro
