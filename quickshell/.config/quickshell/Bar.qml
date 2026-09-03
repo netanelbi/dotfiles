@@ -54,6 +54,17 @@ PanelWindow {
     y: -Style.bar.height
     Component.onCompleted: introAnimation.start()
 
+    // A hot reload can race the animation driver on a second output: the
+    // intro never ticks and the bar stays at opacity 0 forever -- seen on
+    // DP-2 while eDP-1's identical bar was fine. This watchdog forces the
+    // end state if the intro has not landed; a bar that finished its intro
+    // is untouched.
+    Timer {
+      interval: 1500
+      running: true
+      onTriggered: if (content.opacity < 1) { content.opacity = 1; content.y = 0 }
+    }
+
     ParallelAnimation {
       id: introAnimation
       NumberAnimation { target: content; property: "opacity"; to: 1; duration: Style.anim.slow; easing.type: Style.anim.easingSmooth }
@@ -69,13 +80,28 @@ PanelWindow {
       //   hyprland/workspaces, custom/scratchpad, custom/windows.
 
       // hyprland/workspaces -- the mauve-outlined pills for this monitor.
-      Workspaces { barScreen: bar.screen }
+      Workspaces { id: workspacesWidget; barScreen: bar.screen }
 
       // custom/scratchpad -- the gold 󰝖 counter, gone when nothing is stashed.
-      Scratchpad { }
+      Scratchpad { id: scratchpadWidget }
 
       // custom/windows -- the live title list for the visible workspace.
-      Windows { }
+      Windows {
+        id: windowsWidget
+        barScreen: bar.screen
+        // The title list may not run under the clock. Its budget is everything
+        // from the island's leading edge to the centre island's, minus this
+        // island's own padding, the two pills beside it, and one island-gap of
+        // breathing room; titles that do not fit collapse into the "+N" chip
+        // (see widgets/Windows.qml). centreIsland's x depends on the centre
+        // island's own width and nothing else, so the binding cannot loop back
+        // through this island.
+        maxListWidth: Math.max(0,
+            centerIsland.x - Style.bar.islandGap
+            - (leftIsland.x + 2 * Style.bar.islandPaddingH)
+            - workspacesWidget.implicitWidth
+            - scratchpadWidget.implicitWidth)
+      }
     }
 
     Island {

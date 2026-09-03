@@ -30,6 +30,11 @@ Singleton {
     readonly property int slotHeight: islandHeight - 2 * islandPaddingV
     // config.jsonc "spacing": 0 -- modules are separated by their own padding.
     readonly property int islandSpacing: 0
+
+    // Breathing room kept between islands. The window-title list yields to it
+    // rather than running under the clock: Bar.qml folds it into the cap the
+    // Windows widget trims itself to.
+    readonly property int islandGap: 24
   }
 
   // --------------------------------------------------------------- module

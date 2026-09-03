@@ -1,5 +1,16 @@
 #!/bin/bash
 # Watch and display windows in active workspace with focus indicator
+#
+# MONITOR-AWARE: one instance of this runs per bar (one per monitor), so the
+# output carries a section PER MONITOR -- each bar reads its own monitor's
+# active workspace (or the scratchpad when that monitor has it open), not
+# whatever workspace the keyboard happens to be on. The top-level text/class/
+# tooltip mirror the FOCUSED monitor's section so the single-monitor shape is
+# unchanged for anything that reads those.
+#
+# Emits, per event:
+#   { "text": <focused monitor's list>, "tooltip": ..., "class": ...,
+#     "monitors": { "eDP-1": {"text","tooltip","class"}, "DP-2": {...} } }
 
 # Find Hyprland socket
 if [ -n "$HYPRLAND_INSTANCE_SIGNATURE" ]; then
@@ -34,70 +45,97 @@ pango_escape() {
 }
 
 get_windows() {
-    local scratchpad_visible ws_name ws_class focused_color unfocused_color focused
-    scratchpad_visible=$(hyprctl monitors -j 2>/dev/null | jq -r '[.[] | select(.specialWorkspace.name == "special:magic")] | length > 0' 2>/dev/null)
+    local monitors_json clients_json
+    monitors_json=$(hyprctl monitors -j 2>/dev/null) || monitors_json="[]"
+    clients_json=$(hyprctl clients -j 2>/dev/null) || clients_json="[]"
 
-    if [ "$scratchpad_visible" == "true" ]; then
-        ws_name="special:magic"
-        ws_class="scratchpad"
-        focused_color="#f9e2af"
-    else
-        ws_name=$(hyprctl activeworkspace -j 2>/dev/null | jq -r '.name' 2>/dev/null)
-        ws_class="workspace"
-        focused_color="#cba6f7"
-    fi
-    unfocused_color="#6c7086"
+    local focused_monitor
+    focused_monitor=$(jq -r '[.[] | select(.focused == true)] | (.[0].name // "")' <<<"$monitors_json")
 
-    focused=$(hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty' 2>/dev/null)
+    local names=() texts=() tooltips=() classes=()
 
-    local windows_json
-    windows_json=$(hyprctl clients -j 2>/dev/null | jq -c --arg ws "$ws_name" --arg focused "$focused" '
-        [.[] | select(.workspace.name == $ws)] |
-        sort_by(.pid) |
-        map({
-            addr: .address,
-            title: ((.title // .class) | if length > 25 then .[0:22] + "..." else . end),
-            full_title: (.title // .class),
-            is_focused: (.address == $focused)
-        })
-    ' 2>/dev/null)
+    while IFS= read -r mon; do
+        [[ -z "$mon" ]] && continue
 
-    if [[ -z "$windows_json" || "$windows_json" == "null" ]]; then
-        echo '{"text": "", "class": "", "tooltip": ""}' || exit 0
-        return
-    fi
+        local mname special ws_name ws_class focused_color unfocused_color focused
+        mname=$(jq -r '.name' <<<"$mon")
+        special=$(jq -r '.specialWorkspace.name' <<<"$mon")
 
-    local windows="" tooltip_lines=() title full_title is_focused
-    while IFS= read -r window; do
-        [[ -z "$window" ]] && continue
-        title=$(pango_escape "$(jq -r '.title' <<<"$window")")
-        full_title=$(pango_escape "$(jq -r '.full_title' <<<"$window")")
-        is_focused=$(jq -r '.is_focused' <<<"$window")
-
-        if [ "$is_focused" == "true" ]; then
-            windows+="<span foreground='$focused_color' weight='bold'>$title</span>  │  "
-            tooltip_lines+=("<span foreground='$focused_color' weight='bold'>▶ $full_title</span>")
+        if [ "$special" == "special:magic" ]; then
+            ws_name="special:magic"
+            ws_class="scratchpad"
+            focused_color="#f9e2af"
         else
-            windows+="<span foreground='$unfocused_color'>$title</span>  │  "
-            tooltip_lines+=("<span foreground='$unfocused_color'>  $full_title</span>")
+            ws_name=$(jq -r '.activeWorkspace.name' <<<"$mon")
+            ws_class="workspace"
+            focused_color="#cba6f7"
         fi
-    done < <(jq -c '.[]' <<<"$windows_json")
+        unfocused_color="#6c7086"
 
-    windows="${windows%  │  }"
+        # Hyprland exposes ONE keyboard focus, so the window that "has focus"
+        # on a monitor you are not pointing at is the one you focused there
+        # last -- the lowest focusHistoryID on its workspace (0 = the globally
+        # focused window, each older focus one higher).
+        focused=$(jq -r --arg ws "$ws_name" '
+            [.[] | select(.workspace.name == $ws)] |
+            sort_by(.focusHistoryID) |
+            (.[0].address // empty)' <<<"$clients_json")
 
-    local tooltip
-    tooltip=$(printf '%s\n' "${tooltip_lines[@]}")
-    tooltip="${tooltip%$'\n'}"
+        local windows_json
+        windows_json=$(jq -c --arg ws "$ws_name" --arg focused "$focused" '
+            [.[] | select(.workspace.name == $ws)] |
+            sort_by(.pid) |
+            map({
+                addr: .address,
+                title: ((.title // .class) | if length > 25 then .[0:22] + "..." else . end),
+                full_title: (.title // .class),
+                is_focused: (.address == $focused)
+            })
+        ' <<<"$clients_json" 2>/dev/null)
 
-    if [ -z "$windows" ]; then
-        echo '{"text": "", "class": "", "tooltip": ""}' || exit 0
-    else
-        # jq -Rs reliably JSON-encodes the string (handles newlines, quotes, backslashes)
-        local text_escaped tooltip_escaped
-        text_escaped=$(printf '%s' "$windows" | jq -Rs .)
-        tooltip_escaped=$(printf '%s' "$tooltip" | jq -Rs .)
-        echo "{\"text\": ${text_escaped}, \"class\": \"$ws_class\", \"tooltip\": $tooltip_escaped}" || exit 0
-    fi
+        local text="" tooltip="" tooltip_lines=() title full_title is_focused
+        if [[ -n "$windows_json" && "$windows_json" != "null" ]]; then
+            while IFS= read -r window; do
+                [[ -z "$window" ]] && continue
+                title=$(pango_escape "$(jq -r '.title' <<<"$window")")
+                full_title=$(pango_escape "$(jq -r '.full_title' <<<"$window")")
+                is_focused=$(jq -r '.is_focused' <<<"$window")
+
+                if [ "$is_focused" == "true" ]; then
+                    text+="<span foreground='$focused_color' weight='bold'>$title</span>  │  "
+                    tooltip_lines+=("<span foreground='$focused_color' weight='bold'>▶ $full_title</span>")
+                else
+                    text+="<span foreground='$unfocused_color'>$title</span>  │  "
+                    tooltip_lines+=("<span foreground='$unfocused_color'>  $full_title</span>")
+                fi
+            done < <(jq -c '.[]' <<<"$windows_json")
+            text="${text%  │  }"
+        fi
+        if [ "${#tooltip_lines[@]}" -gt 0 ]; then
+            tooltip=$(printf '%s\n' "${tooltip_lines[@]}")
+            tooltip="${tooltip%$'\n'}"
+        fi
+
+        names+=("$mname")
+        texts+=("$(printf '%s' "$text" | jq -Rs .)")
+        tooltips+=("$(printf '%s' "$tooltip" | jq -Rs .)")
+        classes+=("$ws_class")
+    done < <(jq -c '.[]' <<<"$monitors_json")
+
+    # Assemble: top level mirrors the focused monitor (single-monitor shape),
+    # then one section per monitor in "monitors".
+    local top_i=0 out first=1 i
+    for i in "${!names[@]}"; do
+        if [ "${names[$i]}" == "$focused_monitor" ]; then top_i=$i; fi
+    done
+    out="{\"text\": ${texts[$top_i]}, \"tooltip\": ${tooltips[$top_i]}, \"class\": \"${classes[$top_i]}\", \"monitors\": {"
+    local sep=""
+    for i in "${!names[@]}"; do
+        out+="$sep\"${names[$i]}\": {\"text\": ${texts[$i]}, \"tooltip\": ${tooltips[$i]}, \"class\": \"${classes[$i]}\"}"
+        sep=", "
+    done
+    out+="}}"
+    echo "$out"
 }
 
 get_windows
@@ -108,7 +146,7 @@ SOCAT_PID=$!
 
 while read -r event <&3; do
     case "$event" in
-        workspace*|activewindow*|openwindow*|closewindow*|movewindow*|windowtitle*)
+        workspace*|activewindow*|openwindow*|closewindow*|movewindow*|windowtitle*|createspecial*|closespecial*)
             get_windows
             ;;
     esac

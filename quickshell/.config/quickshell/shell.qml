@@ -60,6 +60,7 @@ ShellRoot {
 
   // The xdg-desktop-portal-hyprland screen-share picker, replacing
   // /usr/bin/hyprland-share-picker's three tabs of text with live thumbnails.
+  // Fullscreen GPU screensaver on idle, replacing the kitty + tte pair.
   // Built only when ~/.local/bin/hypr-share-picker asks it to open.
   SharePicker { }
 }
