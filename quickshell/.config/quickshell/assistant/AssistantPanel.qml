@@ -419,6 +419,21 @@ PanelWindow {
       // its row back through `count - 1 - index`.
       verticalLayoutDirection: ListView.BottomToTop
 
+      // Stop at the edge, no rubber band. Two reasons: a touchpad flick's
+      // overshoot pushes visibleArea past its range for several frames, and
+      // the stick logic below reads exactly those numbers -- a bounce at the
+      // bottom would read as the view having left the newest turn. And the
+      // settle-back animation an overscroll costs carries no information on a
+      // surface whose every other motion means something.
+      boundsBehavior: Flickable.StopAtBounds
+
+      // Lay out a little beyond the viewport in each direction. Every turn is
+      // a column of RichText TextEdits, and building one cold, mid-scroll, is
+      // the hitch that made wheel scrolling feel broken: the list stopped, a
+      // screenful built, then it moved. Prebuilding one screen and a half of
+      // runway amortises that build off the critical path.
+      cacheBuffer: 600
+
       // `nowMs` is the panel's own frame clock, handed to the delegates so the
       // live tool batch can count its elapsed time off the same tick as the
       // rail -- and stop dead with it when the turn settles.
@@ -446,6 +461,12 @@ PanelWindow {
       // lurches to catch up. Only the last two are fixable from here; the
       // instant collapse belongs to the delegate.
       property bool stuck: true
+      // True while the last scroll gesture moved toward the bottom. A
+      // contentY tick may RE-stick during a downward move; never during an
+      // upward one.
+      property bool wheelingDown: false
+      // contentHeight as of the last change, for the reading-view anchor.
+      property real lastContentHeight: 0
 
       // How far the newest turn sits below the bottom edge, in pixels. Read off
       // visibleArea rather than contentY on purpose: under BottomToTop the
@@ -465,6 +486,9 @@ PanelWindow {
       readonly property int stickSlack: 24
 
       function toBottom() {
+        // A pin takes the view; a glide it left running would keep writing
+        // contentY against it for the rest of the animation.
+        wheelAnim.stop()
         // index 0 under BottomToTop is the NEWEST turn, at the bottom edge --
         // the delegate reads its row back through `count - 1 - index`. So the
         // beginning of the content is the bottom of the conversation.
@@ -510,7 +534,14 @@ PanelWindow {
       }
 
       function pin() {
-        transcript.pinFrames = 12
+        // 40 frames (~0.65s at 60Hz), not 12. The settle it has to outlive was
+        // measured at 650ms on a two-line answer -- a long RichText turn on a
+        // long transcript settles its delegate heights over MORE frames than
+        // that, and every frame past the window was a frame the view could be
+        // left parked on stale heights: which is exactly "I submitted and it
+        // showed me an older message". Re-armed by every contentHeight change
+        // while stuck, so a slow settle keeps extending it.
+        transcript.pinFrames = 40
         pinTimer.restart()
       }
 
@@ -521,7 +552,9 @@ PanelWindow {
         // current, and after a model change or a first show they are not final
         // yet -- the list then lands short and stays there, because nothing
         // else is going to correct a position the user asked for by hand.
-        Qt.callLater(transcript.toBottom)
+        // Guarded on stuck, like every queued correction: a wheel notch in
+        // between must win.
+        Qt.callLater(function () { if (transcript.stuck) transcript.toBottom() })
         // ...and keep catching the frames after that, where the single
         // callLater above was measured to arrive too early.
         transcript.pin()
@@ -532,6 +565,98 @@ PanelWindow {
       function goTop() {
         transcript.stuck = false
         transcript.positionViewAtEnd()
+      }
+
+      // ------------------------------------------------------------ wheel
+      // Mouse-wheel scrolling. Qt's built-in wheel path on a list moves one
+      // fixed step per notch, with no animation, and never raises `moving` --
+      // so next to the touchpad flick on the same surface it reads as slow
+      // and choppy, and it never participates in the stick logic. This claims
+      // only MOUSE wheels: the touchpad keeps the native flick path, which
+      // already animates. Each notch becomes a short glide, and the target
+      // accumulates while the wheel keeps turning, so a fast run composes
+      // into one longer move rather than machine-gun restarts.
+      //
+      // Direction and range are MEASURED, not assumed: under BottomToTop the
+      // newest message rests at contentY == -height and the oldest at
+      // contentY == -contentHeight (both collapse to -height when the content
+      // fits) -- the [-(contentHeight - height), 0] range one would port from
+      // a TopToBottom list is wrong here. So wheel-up, toward older, drives
+      // contentY MORE NEGATIVE, and this list's own stick logic below works
+      // off visibleArea, which is direction-independent and stayed correct.
+      readonly property real wheelStep: 110
+      property real wheelTargetY: 0
+
+      function clampScrollY(y) {
+        var oldest = -contentHeight
+        var newest = -height
+        if (oldest > newest) oldest = newest
+        return Math.max(oldest, Math.min(newest, y))
+      }
+
+      // n is in notches: +1 = one wheel notch AWAY from the user (up), i.e.
+      // toward older messages, which under this list's measured coordinates
+      // means subtracting from contentY.
+      function wheelNotches(n) {
+        // Re-base on the real position when idle, so a settled glide, a pin
+        // that moved the view or a flick since the last notch all land in the
+        // target rather than being overridden by it.
+        if (!wheelAnim.running) wheelTargetY = contentY
+        wheelTargetY = clampScrollY(wheelTargetY - n * wheelStep)
+        if (wheelTargetY === contentY) return
+        // A wheel move is a user gesture: it takes the view, so the pin
+        // window opened by an append is cancelled rather than fought over.
+        pinFrames = 0
+        pinTimer.stop()
+        // A downward run that lands within the stick slack IS the bottom:
+        // snap the last pixels exactly and re-engage the stick. Without this,
+        // a wheel run that stopped a few pixels short left the view unstuck
+        // for good -- the newest turn kept streaming in unwatched, and only
+        // the ctrl+down chord got the bottom back. Scrolling down is wanting
+        // the bottom; arriving near it is arriving.
+        if (n < 0 && -height - wheelTargetY <= stickSlack) {
+          wheelTargetY = -height
+          stuck = true
+        }
+        wheelAnim.to = wheelTargetY
+        wheelAnim.restart()
+      }
+
+      // Touchpad scrolls arrive as PIXELS, at event rate, and are applied
+      // 1:1 with no animation of our own -- the deltas are already per-frame
+      // smooth, and animating a chase of a target that advances every frame
+      // reads as lag. Quantising them into notches (dividing their small
+      // angle deltas by 120) was the first attempt here and turned a
+      // two-finger drag into a crawl that could not cross a screen, let alone
+      // reach the bottom.
+      function wheelPixels(dy) {
+        if (wheelAnim.running) wheelAnim.stop()
+        pinFrames = 0
+        pinTimer.stop()
+        wheelTargetY = clampScrollY(contentY + dy)
+        wheelingDown = dy > 0
+        if (wheelTargetY !== contentY) contentY = wheelTargetY
+        // A direct write raises no moving/flick signal to lean on, so the
+        // stick is handled here explicitly: scrolling up releases it at once
+        // (same no-grace rule as the notched wheel), scrolling into the
+        // bottom's slack snaps exactly and re-engages. The stick is handled
+        // even when the target clamps to where we already are -- an unstuck
+        // view parked at the bottom (a short up-scroll clamped back) must
+        // still re-engage on the next downward tick.
+        if (dy < 0) {
+          stuck = false
+        } else if (visibleArea.heightRatio > 0.01 && belowBottom <= stickSlack) {
+          contentY = -height
+          stuck = true
+        }
+      }
+
+      NumberAnimation {
+        id: wheelAnim
+        target: transcript
+        property: "contentY"
+        duration: 180
+        easing.type: Easing.OutCubic
       }
 
       // Corrected every frame the content changes, NOT animated. An animation
@@ -557,9 +682,31 @@ PanelWindow {
       // -- so the first lands the common case and the second catches the late
       // one. Together they are silent; either alone is not.
       onContentHeightChanged: {
-        if (!transcript.stuck) return
+        // Remember the growth: while unstuck it is exactly how far the
+        // reading view has to shift to stay still (below).
+        var grew = contentHeight - transcript.lastContentHeight
+        transcript.lastContentHeight = contentHeight
+        if (!transcript.stuck) {
+          // An unstuck view anchors to the CONTENT, not to the newest
+          // message. Under this direction the live row grows at content y 0
+          // and every word above it slides up token by token -- the
+          // tug-of-war that made scrolling up mid-answer feel like fighting
+          // the stick. Shifting the viewport by the growth keeps the reading
+          // position put. Skipped mid-gesture (a drag or a glide owns
+          // contentY then) and caught up on the next change.
+          if (grew !== 0 && !transcript.moving && !wheelAnim.running
+              && transcript.visibleArea.heightRatio > 0.01)
+            transcript.contentY = transcript.clampScrollY(transcript.contentY - grew)
+          return
+        }
         transcript.toBottom()
-        Qt.callLater(transcript.toBottom)
+        // Queued corrections are GUARDED on the stick: a callLater lands
+        // after everything else in the current event-loop turn, and a wheel
+        // notch that arrived in between has by then released the stick --
+        // firing a stale correction then would stop a glide the user just
+        // started (measured in the test harness: every glide started in the
+        // same turn as a goBottom died exactly this way).
+        Qt.callLater(function () { if (transcript.stuck) transcript.toBottom() })
         // A re-wrap mid-stream can move content across frames without a new
         // append; keep the pin window open so a frame that landed short is
         // corrected by the next one rather than by the token after it.
@@ -571,18 +718,79 @@ PanelWindow {
         function onAppended() {
           if (!transcript.stuck) return
           transcript.toBottom()
-          Qt.callLater(transcript.toBottom)
+          Qt.callLater(function () { if (transcript.stuck) transcript.toBottom() })
           transcript.pin()
         }
+        // The user's own message. Different contract from onAppended: an
+        // append landing while they are scrolled up reading is theirs to
+        // ignore, but the message they just sent comes with the expectation
+        // of watching the answer arrive under it -- so the view goes to the
+        // bottom for this one whatever the scroll position was.
+        function onAsked() { transcript.goBottom() }
       }
 
       // Only a move the USER caused may change whether we are stuck. Qt raises
       // `moving` for a wheel or a drag and leaves it false for
       // positionViewAtBeginning(), which is the whole reason the stick cannot
       // unstick itself -- and the reason scrolling up is never overruled.
-      onMovingChanged: transcript.stuck = transcript.belowBottom <= transcript.stickSlack
-      onContentYChanged: if (transcript.moving)
-          transcript.stuck = transcript.belowBottom <= transcript.stickSlack
+      //
+      // Both paths are GUARDED on heightRatio. Mid-settle, after an append,
+      // the viewport can sit briefly outside the laid-out region -- the same
+      // stale-heights moment the pin exists for -- and there visibleArea
+      // collapses toward heightRatio 0 and belowBottom lies, reporting the
+      // view far from the bottom. Recomputing `stuck` from that figure unstuck
+      // the pin exactly during the frames it was correcting for, and the
+      // settle then finished under a view left parked on an older message.
+      // A real viewport always has height; a lie does not.
+      onMovingChanged: {
+        if (transcript.moving) {
+          // The user has taken the view: release at once. The first pixels
+          // of a scroll up must not sit inside the slack getting yanked
+          // back by the next token.
+          wheelAnim.stop()
+          if (transcript.visibleArea.heightRatio > 0.01) transcript.stuck = false
+          return
+        }
+        // The gesture settled. Within the slack of the bottom means wanting
+        // the bottom: snap exactly and re-engage the stick.
+        if (transcript.visibleArea.heightRatio < 0.01) return
+        if (transcript.belowBottom <= transcript.stickSlack) {
+          transcript.stuck = true
+          transcript.toBottom()
+        } else {
+          transcript.stuck = false
+        }
+      }
+      // Re-stick ONLY, and only on downward motion: a contentY tick elsewhere
+      // must never release the stick (releasing is explicit -- the wheel up,
+      // the pixel scroll up, the flick taking the view), and must never fire
+      // during an upward glide passing back through the slack zone.
+      onContentYChanged: {
+        var engaged = transcript.moving
+          || (wheelAnim.running && transcript.wheelingDown)
+        if (!engaged || transcript.visibleArea.heightRatio < 0.01) return
+        if (transcript.belowBottom <= transcript.stickSlack) transcript.stuck = true
+      }
+    }
+
+    // The transcript's wheel face. A SIBLING of the list, not a child: a
+    // Flickable with content SMALLER than its viewport stops delivering wheel
+    // events to anything inside it (measured), which on a fresh session is
+    // exactly the state of this list -- a brand-new conversation would have
+    // been deaf to the wheel. Anchored to the list and declared right after
+    // it, so it sits above the delegates and below the session picker.
+    MouseArea {
+      anchors.fill: transcript
+      acceptedButtons: Qt.NoButton
+      onWheel: function (w) {
+        // A touchpad scroll carries pixel deltas and goes 1:1; a discrete
+        // mouse wheel has angles only and takes the animated-notch path.
+        var pd = w.pixelDelta
+        if (pd && (pd.x !== 0 || pd.y !== 0))
+          transcript.wheelPixels(-pd.y)
+        else
+          transcript.wheelNotches(w.angleDelta.y / 120)
+      }
     }
 
     // ----------------------------------------------------------------- toast
@@ -908,11 +1116,38 @@ PanelWindow {
         }
       }
 
-      TextEdit {
-        id: entry
+      // The scrollable draft. TextEdit never scrolls by itself: past the
+      // 120px ceiling the field just clipped, and what was typed beyond the
+      // edge was written blind. The standard arrangement is the fix -- the
+      // field keeps its natural height inside a Flickable, and the caret is
+      // followed (onCursorRectangleChanged), so typing or arrowing past the
+      // visible edge scrolls just enough to bring the line into view.
+      Flickable {
+        id: entryScroll
         anchors { fill: parent; leftMargin: 30; rightMargin: 12; topMargin: 10; bottomMargin: 10 }
+        contentWidth: width
+        contentHeight: entry.implicitHeight
+        clip: true
+        // A drag inside a TextEdit is a text selection, so the pane is not
+        // itself draggable; it is scrolled by the wheel below and by the caret.
+        interactive: false
 
-        color: Theme.text
+        function ensureVisible(r) {
+          if (r.y < contentY) contentY = r.y
+          else if (r.y + r.height > contentY + height) contentY = r.y + r.height - height
+          contentY = Math.max(0, Math.min(contentY, Math.max(0, contentHeight - height)))
+        }
+
+        TextEdit {
+          id: entry
+          // Width only: the height must stay the field's own implicitHeight
+          // for contentHeight above to be the real draft length. Anchoring
+          // both edges would pin the field to the viewport height and scroll
+          // it INTERNALLY instead -- the exact blind-writing failure this
+          // exists to fix.
+          width: parent.width
+
+          color: Theme.text
         selectionColor: Theme.sapphire
         selectedTextColor: Theme.base
         selectByMouse: true
@@ -1025,6 +1260,39 @@ PanelWindow {
             }
             return
           }
+        }
+
+          // Follow the caret. cursorRectangle is in the field's own
+          // coordinates, which are the pane's content coordinates: the field
+          // sits at 0,0 inside it.
+          onCursorRectangleChanged: entryScroll.ensureVisible(entry.cursorRectangle)
+        }
+      }
+
+      // Wheel over the draft. A SIBLING of the Flickable, not a child: while
+      // the draft is SHORTER than the pane, a Flickable stops delivering wheel
+      // events to anything inside it (measured -- the short-draft case went
+      // deaf, and that is exactly the case that must forward to the
+      // transcript). While the text overflows the pane it scrolls the draft;
+      // when the draft fits, the gesture is handed to the transcript, so a
+      // short field never eats the wheel. No buttons accepted, so clicks and
+      // text selection pass through to the field.
+      MouseArea {
+        anchors.fill: entryScroll
+        acceptedButtons: Qt.NoButton
+        onWheel: function (w) {
+          var pd = w.pixelDelta
+          var down = pd && pd.y !== 0 ? -pd.y : -(w.angleDelta.y / 120) * 44
+          if (entryScroll.contentHeight > entryScroll.height + 1) {
+            entryScroll.contentY = Math.max(0,
+              Math.min(entryScroll.contentY + down,
+                       entryScroll.contentHeight - entryScroll.height))
+          } else if (pd && (pd.x !== 0 || pd.y !== 0)) {
+            transcript.wheelPixels(-pd.y)
+          } else {
+            transcript.wheelNotches(w.angleDelta.y / 120)
+          }
+          w.accepted = true
         }
       }
     }

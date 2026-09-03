@@ -145,21 +145,32 @@ Item {
 
   // The tail of the reasoning, for the status row at the head of the turn.
   // Reasoning streams into its own role (PiSession keeps thinking_delta and
-  // text_delta apart) and is never rendered as prose -- one line of it says
-  // what Ori is chewing on without becoming a second answer competing with the
-  // real one.
+  // text_delta apart) and is never rendered as prose -- a SHORT WINDOW of it
+  // says what Ori is chewing on without becoming a second answer competing
+  // with the real one.
   //
-  // Read off the LAST 300 characters, not off a split of the whole string.
-  // This re-evaluates on every reasoning token, and a long think is tens of
-  // kilobytes: splitting all of it 60 times a second is a real cost for a
-  // value of which only the final line is ever shown.
+  // Four whole lines, not one, and always the NEWEST four: the window is cut
+  // on source newlines off the tail of the stream, so as reasoning arrives the
+  // block flows -- lines push up and the line being written is always the one
+  // at the bottom. Whole lines rather than a raw character slice so the window
+  // never opens mid-word; capped at four so a think made of short lines cannot
+  // run away down the card. The last line is mid-write by definition -- that
+  // is the flow.
   readonly property string thought: {
     if (!turn) return ""
     var t = String(turn.thinking || "")
     if (t === "") return ""
-    var tail = t.slice(-300).replace(/\s+$/, "")
-    var nl = tail.lastIndexOf("\n")
-    return (nl >= 0 ? tail.slice(nl + 1) : tail).trim()
+    // The last four lines that actually SAY something: blank lines are
+    // skipped, so a stream that opens with newlines renders words, not an
+    // empty slot. The final line is mid-write by definition -- that is the
+    // flow.
+    var lines = t.slice(-2000).split("\n")
+    var out = []
+    for (var i = lines.length - 1; i >= 0 && out.length < 4; i--) {
+      if (lines[i].trim() === "") continue
+      out.unshift(lines[i])
+    }
+    return out.join("\n")
   }
 
   // The answer text, placeholder included: a turn with nothing in it yet must not
@@ -175,6 +186,19 @@ Item {
   height: user ? pill.height : answer.height
 
   Fmt { id: fmt }
+
+  // One line of the status row's font, for the reasoning slot's reserved
+  // height. A hidden one-line Text rather than TextMetrics: TextMetrics.height
+  // reads 0 with no text set on this Qt (measured -- the slot collapsed to 2px
+  // and clipped the reasoning to a sliver, which is the “i dont see the
+  // thinking” bug), while a laid-out Text cannot lie.
+  Text {
+    id: thinkLine
+    visible: false
+    text: "Xg"
+    font.family: Style.font.panelMono
+    font.pixelSize: Style.font.panelMeta
+  }
 
 
   // ------------------------------------------------------------- vocabulary
@@ -330,7 +354,7 @@ Item {
                 leftMargin: 12; rightMargin: 12; topMargin: 8 }
       spacing: 6
 
-      Text {
+      TextEdit {
         id: said
         width: parent.width
         // An image-only question is a real thing, and an empty Text would
@@ -338,7 +362,17 @@ Item {
         visible: text !== ""
         text: turnItem.turn ? turnItem.turn.text : ""
         color: Theme.text
-        wrapMode: Text.Wrap
+        readOnly: true
+        activeFocusOnPress: false
+        wrapMode: TextEdit.Wrap
+        // Selection is driven from Selection.qml (SelectableArea below), so a
+        // drag can start on your own message and cross into the answer -- it
+        // used to be a Text and the one thing on the card you could not copy.
+        selectByMouse: false
+        persistentSelection: true
+        selectionColor: Theme.sapphire
+        selectedTextColor: Theme.base
+        textFormat: TextEdit.RichText
         font.family: Style.font.panelFamily
         font.pixelSize: Style.font.panelBody
         // MEDIUM, and only here. "my input messages render a little blurry" is
@@ -355,6 +389,12 @@ Item {
         // is what made this panel look thin at 1.5x in the first place.
         font.weight: Font.Medium
         renderType: Text.QtRendering
+
+        // The mouse face of the question. A CHILD of the field, not a sibling
+        // in the Column: an anchored item inside a positioner breaks the
+        // positioner's layout outright (measured -- every sibling stayed at
+        // y 0), and as a child it rides the field it belongs to.
+        SelectableArea { anchors.fill: parent; sel: said }
       }
 
       // ------------------------------------------------------- attachments
@@ -483,24 +523,42 @@ Item {
         // the opposite: it was on screen from the start and VANISHED on the
         // first answer token, which is the 453px one-frame collapse measured in
         // AssistantPanel's sticking notes.
+        //
+        // Since the reasoning window widened to four lines this row is a
+        // RESERVED slot, not a measured one: four line-heights from the moment
+        // the first reasoning token lands, and the text is anchored to its
+        // BOTTOM edge and clipped -- so the block NEVER changes height while
+        // the think streams. Lines complete and push the older ones up inside
+        // the box; the newest line is always the one at the bottom; nothing
+        // outside the slot moves, which is the difference between a flowing
+        // readout and the flicker a growing row produced (every delegate
+        // re-layout shifted the whole answer, once per completed line). The
+        // only height changes left are the slot's opening when reasoning
+        // starts and its collapse to the one-line receipt at the settle --
+        // both animated, neither per-token.
         visible: (turnItem.pending && turnItem.thought !== "")
                  || turnItem.receiptText !== ""
-        height: visible ? 20 : 0
+        height: !visible ? 0
+          : turnItem.pending ? thinkLine.height * 4 + 2
+          : thinkLine.height + 2
+        clip: true
+
+        Behavior on height {
+          NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
+        }
 
         Text {
           id: told
-          anchors { left: parent.left; right: parent.right
-                    verticalCenter: parent.verticalCenter }
+          anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
           // Reasoning is streamed into its own role and never rendered as
-          // prose. One line of it, here, is the amount that is worth seeing:
+          // prose. The tail of it, bottom-anchored in the reserved slot above:
           // enough to know the shape of what it is considering, not so much
           // that it competes with the answer that follows.
           text: turnItem.pending ? "\u25c6 " + turnItem.thought
                                  : "\u25c7 " + turnItem.receiptText
           color: turnItem.pending ? Theme.subtext0 : Theme.overlay0
           font.italic: turnItem.pending
-          elide: Text.ElideRight
-          maximumLineCount: 1
+          wrapMode: Text.Wrap
           font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelMeta
           renderType: Text.QtRendering
@@ -607,20 +665,31 @@ Item {
               // plain and settles on its partner exactly as before. PlainText
               // for a fence, where markup would eat a shell line's punctuation.
               textFormat: piece.code ? TextEdit.PlainText : TextEdit.RichText
-              // Selecting copies, on its own (Copy.qml). Per BLOCK: the answer is
-              // a column of pieces, and a drag cannot cross from one to the next.
-              selectByMouse: true
+              // Selecting copies, on its own (Copy.qml) -- but the mouse is
+              // owned by the SelectableArea below and the selection is set by
+              // Selection.qml, so ONE drag crosses blocks: this paragraph, the
+              // next one, a table, your own message. What is NOT registered (a
+              // collapsed batch tally, a tool row) is skipped for not being a
+              // TextEdit, so collapsed areas fall out of a multi-block copy
+              // with no special case.
+              selectByMouse: false
+              persistentSelection: true
               selectionColor: Theme.sapphire
               selectedTextColor: Theme.base
-              // Minus Fmt's invisible wrap guards, so a paste that looks right
-              // also RUNS: real hyphens, real spaces, no zero-width anything.
-              onSelectedTextChanged: Copy.take(selectedText
-                .replace(/\u200b/g, "").replace(/\u2011/g, "-").replace(/\u00a0/g, " "))
               font.family: piece.code ? Style.font.panelMono : Style.font.panelFamily
               font.pixelSize: piece.code ? Style.font.panelMeta
                 : piece.head ? Style.font.panelHead : Style.font.panelBody
               font.weight: piece.head ? Font.DemiBold : Style.font.normalWeight
               renderType: Text.QtRendering
+            }
+
+            // The mouse face of this paragraph. List items are lines of one
+            // list, so they join a multi-block copy with a single newline;
+            // paragraphs with a break.
+            SelectableArea {
+              anchors.fill: chunk
+              sel: chunk
+              sep: piece.bullet ? "\n" : "\n\n"
             }
 
             InlineImage {
@@ -647,13 +716,18 @@ Item {
               textFormat: TextEdit.MarkdownText
               wrapMode: TextEdit.Wrap
               color: Theme.text
-              selectByMouse: true
+              // Same arrangement as the answer chunks above: the SelectableArea
+              // below owns the mouse, Selection sets the range.
+              selectByMouse: false
+              persistentSelection: true
               selectionColor: Theme.sapphire
               selectedTextColor: Theme.base
               font.family: Style.font.panelFamily
               font.pixelSize: Style.font.panelAside
               renderType: Text.QtRendering
             }
+
+            SelectableArea { anchors.fill: mdTable; sel: mdTable }
 
             // ------------------------------------------------------- tools
             // A batch, in two parts, and the order is the order it reads:

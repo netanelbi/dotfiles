@@ -337,6 +337,12 @@ Singleton {
   // Emitted whenever the newest turn grows, so the view can keep itself pinned
   // to the bottom without polling.
   signal appended()
+  // Emitted when the USER's own message is accepted -- steer path and startTurn
+  // both. Distinct from `appended` on purpose: an append that arrives while the
+  // user is scrolled up reading must NOT yank the view, but the message the
+  // user just sent is a different contract -- they are expecting an answer
+  // under it, so the view always goes to the bottom for this one.
+  signal asked()
 
   // ----------------------------------------------------------------- turns
   // The conversation, oldest first -- the panel is a view of THIS, not of a
@@ -931,6 +937,7 @@ Singleton {
       root.awaitingRead = true
       appendTurn("assistant", "", "", "", true, "")
       root.appended()
+      root.asked()
       return true
     }
 
@@ -959,6 +966,7 @@ Singleton {
     // a row to stream into and the conversation never visibly jumps.
     appendTurn("assistant", "", "", "", true, "")
     root.appended()
+    root.asked()
 
     // Queued rather than sent, because the child may not exist yet. `flush()`
     // runs either immediately (warm) or from onPiStarted (cold), so the caller
