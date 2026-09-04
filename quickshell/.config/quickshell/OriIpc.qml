@@ -260,6 +260,25 @@ Scope {
         var r = PiSession.turns.get(i)
         var line = "[" + i + "] " + r.role + ": " + String(r.text).replace(/\s+/g, " ")
         if (String(r.images) !== "") line += "  {img: " + String(r.images).replace(/\n/g, ", ") + "}"
+        // The TOOL CALLS, because a row can be entirely made of them and
+        // printing `text` alone then reads as an empty row that the panel is
+        // in fact drawing as a ToolLine. That misreading was passed on as a
+        // bug report once already: an interrupted turn holding a `sleep 9`
+        // call showed here as `[33] assistant:` and nothing else, and the
+        // "stray empty band" it was taken for did not exist on screen.
+        var calls = PiSession.toolLog[i] || []
+        if (calls.length > 0) {
+          var names = []
+          for (var c = 0; c < calls.length; c++)
+            names.push(String(calls[c].name)
+              + (calls[c].ms > 0 ? " " + Math.round(calls[c].ms) + "ms" : " running"))
+          line += "  {tools: " + names.join(", ") + "}"
+        }
+        var cost = PiSession.turnCost[i]
+        if (cost) line += "  {cost: " + Math.round(cost.ms) + "ms/" + cost.tokens + "tok}"
+        if (r.pending) line += "  {pending}"
+        // Only NOW is a row genuinely empty -- no text, no calls, nothing.
+        if (String(r.text) === "" && calls.length === 0) line += "  (EMPTY ROW)"
         out.push(line)
       }
       return out.length === 0 ? "(empty)" : out.join("\n")
