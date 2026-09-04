@@ -84,14 +84,17 @@ Scope {
     function scroll(): string {
       var l = ScrollProbe.list
       if (!l) return "no transcript registered"
+      var kids = l.contentItem.children
       var out = ["contentY=" + l.contentY.toFixed(1)
         + " height=" + l.height.toFixed(1)
         + " contentHeight=" + l.contentHeight.toFixed(1)
         + " count=" + l.count
         + " stuck=" + l.stuck
         + " yPos=" + l.visibleArea.yPosition.toFixed(3)
-        + " hRatio=" + l.visibleArea.heightRatio.toFixed(3)]
-      var kids = l.contentItem.children
+        + " hRatio=" + l.visibleArea.heightRatio.toFixed(3),
+        "cacheBuffer=" + l.cacheBuffer
+        + " children=" + kids.length
+        + " avgBuilt=" + (l.count > 0 ? (l.contentHeight / l.count).toFixed(1) : "-")]
       // Seeded from the FIRST measured child rather than from 0, because this
       // list is BottomToTop: its delegates sit at NEGATIVE y. Bounds seeded at
       // 0 therefore pin `hi` to at least 0, which overstates the extent by the
@@ -101,7 +104,11 @@ Scope {
       var lo = NaN, hi = NaN
       for (var i = 0; i < kids.length; i++) {
         var c = kids[i]
-        if (!c.height || c.height === undefined) continue
+        // Zero-height children are LISTED, not skipped. A delegate that built
+        // but measured 0 is exactly the shape of a blank gap, and skipping it
+        // hid it from the one report meant to find it.
+        if (c.height === undefined) continue
+        if (c.height === 0) { out.push("  [" + i + "] y=" + c.y.toFixed(1) + " h=0  ZERO"); continue }
         lo = isNaN(lo) ? c.y : Math.min(lo, c.y)
         hi = isNaN(hi) ? c.y + c.height : Math.max(hi, c.y + c.height)
         out.push("  [" + i + "] y=" + c.y.toFixed(1) + " h=" + c.height.toFixed(1)
@@ -114,6 +121,24 @@ Scope {
       out.push("  extent=" + (hi - lo).toFixed(1)
         + "  ghost=" + (l.contentHeight - (hi - lo)).toFixed(1))
       return out.join("\n")
+    }
+
+    // TEMPORARY, for the scroll hunt: drive the transcript's own wheel handlers
+    // from a script. The reported bug is a MOUSE one, and a mouse is the one
+    // input a test cannot supply -- so the notch path is called directly,
+    // exactly as the wheel face calls it, and `scroll` is read either side.
+    function wheel(notches: string): string {
+      var l = ScrollProbe.list
+      if (!l) return "no transcript registered"
+      l.wheelNotches(Number(notches))
+      return "wheeled " + notches
+    }
+
+    function wheelPx(dy: string): string {
+      var l = ScrollProbe.list
+      if (!l) return "no transcript registered"
+      l.wheelPixels(Number(dy))
+      return "wheeled " + dy + "px"
     }
 
     // The turn model as text, which is the only way to see from a script that a
