@@ -341,6 +341,33 @@ Quickshell re-acquires the name on its own the moment a squatter exits -- it
 logs "Registration will be attempted again if the active service is
 unregistered" and means it.
 
+### Never read a ListView's geometry off `contentItem.children`
+It mixes POSITIONED delegates with POOLED ones the view is holding for reuse,
+and a pooled item keeps whatever `y` it last had. Use `itemAtIndex(i)`, which
+returns the delegate for a model index or `null` when it has not been created.
+
+This is not a subtle trap — it produced confident, wrong conclusions three
+separate times in one evening. Two reviewers independently *inferred*
+`ListView.originY` from the span of `children` and reported a divergence that
+did not exist; the diagnostic probe built to settle the argument then made the
+same mistake and reported `lastEnd=+2686.7` when the newest turn ended at
+`-18.0`, plus one delegate with `height=-137.0`.
+
+The general rule it belongs to, learned the same evening: **every quantity Qt
+reports about this list has lied at least once.** `contentHeight` is an
+extrapolation from whichever delegates happen to be built (measured 3.4x the
+true height, and separately *smaller* than the real extent). `originY` agrees
+with `-contentHeight` mid-list and diverges at the end of the list by exactly
+the residual estimate error. `visibleArea.yPosition` is a CACHED value
+refreshed by `updateVisible()`, so it read 0.985 — "at the end" — while the
+view was 918.6px short of the end.
+
+What has not lied: the positions of live delegates, and coverage computed from
+them. Prefer "is the viewport actually covered by something drawn" over any
+assertion comparing two framework numbers. `qs -p ~/.config/quickshell ipc call
+ori scroll` reports exactly that (`gap`), and judging it needs `ghost >= 0`,
+`children ≈ count + 1`, and the view at rest.
+
 ### A scroll/layout measurement taken with the display asleep proves nothing
 Qt renders no frames while the output is in DPMS off, so a ListView never
 relayouts: delegates are not built, `contentHeight` never moves, and any
