@@ -5,8 +5,9 @@ import ".."
 // what in an answer is a picture, and the pass that cuts an answer into blocks.
 // The activity rail and every settled turn print a duration and a token count,
 // and the two must read identically or the eye stops trusting either. A QtObject
-// rather than a singleton; it holds no state, so an instance per delegate is
-// free.
+// rather than a singleton, and now for a second reason: splitCached() keeps ONE
+// streaming turn's settled prefix, so the instance has to belong to the turn
+// that owns the text.
 QtObject {
   id: fmt
 
@@ -92,8 +93,27 @@ QtObject {
   // line, because the text is one string and the log was a flat list.
   function split(body, streaming, calls) {
     var src = String(body || "")
-    var list = calls || []
     var out = []
+    // Only the tail is still being typed; everything before a tool call was
+    // finished the moment the call started.
+    scan(out, src.slice(tools(out, src, calls || [])), streaming)
+
+    // An answer with no text at all still needs one piece, or the turn has
+    // nothing to give it height and the list jumps on the first token.
+    if (out.length === 0) out.push({ image: false, text: rich(src) })
+
+    // No `aside` marking any more. Everything up to the last tool call used to
+    // be flagged as preamble so the delegate could grey it out and then fold it
+    // away; the panel folds nothing now, and prose the agent wrote between two
+    // commands is prose, not a footnote to itself.
+    return out
+  }
+
+  // The tool half of that pass, on its own so splitCached() can replay it: the
+  // batches and the prose BETWEEN them, up to the last call. Returns how much of
+  // src it consumed -- everything after that offset is the stretch still being
+  // written into.
+  function tools(out, src, list) {
     var at = 0        // how much of src has been emitted
     var batch = []    // the batch being gathered
     var n = 0         // which batch this is, so the delegate can key its drawer
@@ -114,21 +134,188 @@ QtObject {
       batch.push(list[i])
     }
     if (batch.length > 0) out.push({ image: false, tool: true, calls: batch, n: n++ })
+    return at
+  }
 
-    // Only the tail is still being typed; everything before a tool call was
-    // finished the moment the call started.
-    scan(out, src.slice(at), streaming)
+  // ------------------------------------------------------- the settled prefix
+  // split() again, but only over what has ARRIVED since last time.
+  //
+  // The binding that calls this re-runs on every delta, and `body` is the whole
+  // answer, so the un-cached pass costs the whole answer per token: measured
+  // offscreen on Qt 6.11.2's V4 (/tmp/orifmt/bench.qml), streaming one answer in
+  // 20-char deltas cost 10ms at 2k chars, 253ms at 10k and 660ms at 20k -- more
+  // than four times the total for twice the words, which is the quadratic. Per
+  // call at 20k that is 1.15ms of a 16.7ms frame, spent re-deriving text that
+  // cannot have changed. Through here the same three answers cost 2ms, 12ms and
+  // 54ms, and every piece comes out identical (checked delta by delta against
+  // split() over 2.2M deltas of generated markdown).
+  //
+  // WHAT MAKES A BLOCK FINAL is the whole question, and "before the last blank
+  // line" is NOT the answer here: push() gathers plain lines into `buf` and only
+  // a heading, a bullet or a table ever flushes it, so a blank line does not end
+  // a piece -- it becomes the `<br><br>` inside one. Cutting there would turn
+  // one paragraph into two. The boundaries Fmt actually segments on are:
+  //
+  //   * a heading line, and a bullet line -- both flush buf and emit their own
+  //     piece, so push() of what follows starts with an empty buf either way;
+  //   * a line that CLOSES a fence with nothing after the backticks -- scan()
+  //     splits on ``` and the part that follows begins fresh.
+  //
+  // and a cut is only taken at the newline that ENDS such a line, so no piece
+  // can straddle it. Four things disqualify a cut:
+  //
+  //   * an odd number of ``` before it -- inside a fence, where a `- ` is not a
+  //     bullet and a `## ` is not a heading;
+  //   * a `![` ANYWHERE on the line. push() never sees that line: images() runs
+  //     first and pulls the `![...](...)` out, so what push() is handed starts
+  //     MID-LINE and the line is not a boundary at all. Measured -- `- ![shot]
+  //     (/tmp/a.png) the wallpaper` followed by a line of prose came back as two
+  //     paragraphs where split() gives one, and it did not heal when the turn
+  //     settled, because the cache stays warm. A bullet holding ONLY an image is
+  //     equivalent either way; disqualifying the whole class costs nothing real;
+  //   * a `![` still waiting for its `)` on an EARLIER line, because the
+  //     streaming half-image guard in images() cuts back to the LAST `![` and
+  //     would otherwise reach into text this pass has already settled;
+  //   * the final line of the body, which is mid-write by definition.
+  //
+  // The first of those was found by a fuzz over a line grammar that included
+  // image-bearing headings and bullets. 2.2M deltas of generated markdown had
+  // not found it, because not one of those bodies had an image on a block line:
+  // the diversity of the input is what caught it, not the volume.
+  //
+  // The cache is dropped whenever the row is not simply GROWING. `calls` is
+  // compared by identity -- PiSession rebuilds toolLog by assignment, never in
+  // place, so a new call, a resume, a steer or a rehydrate all hand over a
+  // different array. That is the one thing here that depends on a file this one
+  // does not own: a PiSession that ever mutated a logged call IN PLACE, `at`
+  // above all, would leave this cache stale with nothing to notice it. The
+  // settled text is compared in full as well, so a prefix
+  // that was replaced rather than appended to (rehydrate, re-wrap) recomputes
+  // instead of being trusted. That compare is a memcmp over the settled prefix,
+  // ~1µs at 20k against the ~1ms it guards.
+  //
+  // What is left is not free and is not meant to look it: every delta still
+  // copies the settled piece list and compares the settled text, both linear in
+  // the answer. They cost 0.06ms per delta at 20k. And an answer with NO block
+  // lines in it at all -- one long run of prose, no heading, no bullet, no fence
+  // -- has no boundary to settle on and gains only what the tool calls in it
+  // give (measured: 470ms -> 131ms at 20k with three calls, and nothing without
+  // them). That is push()'s segmentation, not this cache's: fixing it would mean
+  // ending a piece at a blank line, which changes what the panel draws.
+  //
+  // A BOX that is never reassigned, holding a record that moves. Assigning the
+  // record to the property itself is what the obvious version does and it costs
+  // exactly what this saves: splitCached() is called from a binding, so the
+  // property it reads is captured as a dependency of that binding and the
+  // property it writes re-triggers it. Measured on the live panel -- "QML
+  // TurnDelegate: Binding loop detected for property pieces", once per token.
+  // Nothing notifies on a var property's CONTENTS, so mutating the box is
+  // invisible to the binding, which is the point.
+  // `calls: null` is the empty state -- splitCached() never has a null list, so
+  // no live cache can look empty.
+  readonly property var cache: ({ calls: null, at: 0, text: "", pieces: null })
 
-    // An answer with no text at all still needs one piece, or the turn has
-    // nothing to give it height and the list jumps on the first token.
+  function splitCached(body, streaming, calls) {
+    var src = String(body || "")
+    var list = calls || []
+    var c = fmt.cache
+
+    // A call whose offset is PAST the end of the body is clamped to the length
+    // by tools(), so its cut moves forward as the answer grows -- the one way a
+    // piece before the tail can change without the text before it changing.
+    // Both paths that write `at` stamp it off the row's own text -- the live one
+    // at onActiveToolChanged, and rehydrate() at PiSession.qml:1747, off the
+    // text it has folded in so far -- so an offset is always within the row and
+    // this is a guard against a malformed log rather than a case in the wild. It
+    // costs a walk of a list that is a handful of entries long.
+    for (var i = 0; i < list.length; i++) {
+      if ((Number(list[i].at) || 0) > src.length) {
+        c.calls = null
+        return split(body, streaming, list)
+      }
+    }
+
+    var out, from
+    // lastIndexOf(needle, 0) tries position 0 and nothing else: one compare of
+    // the settled prefix, no slice allocated.
+    if (c.calls === list && src.lastIndexOf(c.text, 0) === 0) {
+      out = c.pieces.slice()
+      from = c.at
+    } else {
+      out = []
+      from = tools(out, src, list)
+      c.calls = null
+    }
+
+    var b = settleTo(src, from)
+    if (b > from) {
+      scan(out, src.slice(from, b), false)
+      from = b
+    }
+    // Rewritten when the settled prefix GREW, and once on the cold pass so the
+    // tool batches are not replayed on every delta of the answer after them.
+    if (c.calls === null || c.at !== from) {
+      c.calls = list
+      c.at = from
+      c.text = src.slice(0, from)
+      c.pieces = out.slice()
+    }
+
+    scan(out, src.slice(from), streaming)
     if (out.length === 0) out.push({ image: false, text: rich(src) })
-
-    // No `aside` marking any more. Everything up to the last tool call used to
-    // be flagged as preamble so the delegate could grey it out and then fold it
-    // away; the panel folds nothing now, and prose the agent wrote between two
-    // commands is prose, not a footnote to itself.
+    // A NEW array every time, deliberately: the delegate's Repeater and its `m`
+    // bindings are driven off this identity, and handing back the same array
+    // would leave a settled piece showing the text it had one delta ago.
     return out
   }
+
+  // The last offset in src that can be cut without changing a single piece --
+  // see the block above for what qualifies. Never below `from`, and it walks
+  // only what arrived since `from`, so this pass is bounded by the unsettled
+  // tail rather than by the answer.
+  function settleTo(src, from) {
+    var b = from
+    var fenced = false   // an odd number of ``` seen since `from`
+    var dangling = false // a `![` still waiting for its `)`
+    var i = from
+    while (i < src.length) {
+      var e = src.indexOf("\n", i)
+      if (e < 0) break   // the last line is still being typed into
+      var line = src.slice(i, e)
+
+      var marks = 0, last = -1, p = line.indexOf("```")
+      while (p >= 0) { marks++; last = p; p = line.indexOf("```", p + 3) }
+      var inside = marks % 2 === 1 ? !fenced : fenced   // after this line
+
+      if (dangling && line.indexOf(")") >= 0) dangling = false
+      var img = line.lastIndexOf("![")
+      if (img >= 0) dangling = line.indexOf(")", img) < 0
+
+      // `img < 0`: a line carrying an image is not a boundary even when it is a
+      // perfectly good bullet -- images() has already cut it in half by the time
+      // push() decides anything. See the block above.
+      if (!inside && !dangling && img < 0) {
+        if (marks > 0) {
+          // A fence closing at the END of its line, exactly. Anything after the
+          // backticks -- even one space -- opens the next prose part with it,
+          // and push() trims leading NEWLINES only, so that space survives into
+          // the piece and a cut here would drop it (measured: ref " <br><br>ta"
+          // against a cut "ta").
+          if (last + 3 === line.length) b = e + 1
+        } else if (!fenced && (headMatch(line) || bulletMatch(line))) {
+          b = e + 1
+        }
+      }
+      fenced = inside
+      i = e + 1
+    }
+    return b
+  }
+
+  // The two block regexes push() decides with, named so settleTo() can ask the
+  // same question and cannot drift from the answer.
+  function headMatch(l) { return l.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/) }
+  function bulletMatch(l) { return l.match(/^(\s*)(?:([-*+])|(\d+)[.)])\s+(.+)$/) }
 
   // One stretch of the answer, cut into pieces. Fences FIRST, because a fenced
   // block leaves the prose entirely: odd indices are inside a block, even ones
@@ -197,8 +384,8 @@ QtObject {
     for (var i = 0; i < lines.length; i++) {
       var l = lines[i]
       // A closing run of hashes is optional in markdown and never content.
-      var h = l.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/)
-      var b = l.match(/^(\s*)(?:([-*+])|(\d+)[.)])\s+(.+)$/)
+      var h = headMatch(l)
+      var b = bulletMatch(l)
       // A GFM table, before the pipe row is mistaken for a paragraph. A table
       // is only ever the shape the models write: a pipe row, then a separator
       // row, then pipe rows. The separator is what separates a table from a

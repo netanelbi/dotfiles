@@ -31,9 +31,18 @@ Item {
   readonly property var cost: PiSession.turnCost[row] || null
 
   // The turn, as an ordered run of pieces (Fmt.split).
-  // Rebuilt per token while the answer streams, which is affordable because it
-  // always was: the single Text this replaced re-laid out the whole answer too.
-  readonly property var pieces: fmt.split(bodyText, pending, calls)
+  //
+  // splitCached, not split: this binding re-runs on EVERY delta and `bodyText`
+  // is the whole answer, so the plain pass re-derived the entire turn per token.
+  // Measured offscreen on Qt 6.11.2's V4, streaming one answer in 20-char
+  // deltas: 2k chars 10ms, 10k 253ms, 20k 660ms -- 1.15ms of a 16.7ms frame per
+  // token at 20k, and more than four times the total for twice the words.
+  // splitCached keeps the settled prefix and re-splits only what arrived since,
+  // giving 2ms / 12ms / 54ms for the same three answers, and it returns the
+  // same pieces (checked delta by delta against split() over 2.2M deltas of
+  // generated markdown -- see the notes on the cache in Fmt.qml). `fmt` is this
+  // delegate's own instance, so the cache belongs to this turn and no other.
+  readonly property var pieces: fmt.splitCached(bodyText, pending, calls)
   // NOTHING IS FOLDED ANY MORE.
   //
   // A settled turn used to roll everything up to its last tool call into one
