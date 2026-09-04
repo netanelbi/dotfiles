@@ -154,7 +154,36 @@ Scope {
       // firstEnd/lastEnd are read straight off the built delegates, so "is the
       // view at the bottom" can be asked without trusting contentHeight,
       // originY or the cache: contentY + height >= lastEnd - slack.
-      out.push("  firstY=" + lo.toFixed(1) + "  lastEnd=" + hi.toFixed(1)
+      // `newestEnd` is index 0 SPECIFICALLY -- under BottomToTop that is the
+      // newest turn, and it is the only honest ceiling reference.
+      //
+      // `lastEnd` is a MAX over every built delegate, and delegates can
+      // OVERLAP: caught live with 187/187 built, index 2 measuring
+      // y=-1597.8 h=1731.5 end=+133.7 while index 0 ended at 0.0 -- an
+      // overgrown row reaching 133.7px past the newest turn. Aiming the view
+      // at `lastEnd` would therefore park it past the end of the conversation.
+      // Same failure as taking originY off contentItem.children: a max over
+      // items that may overlap is not the extent of anything.
+      var newest = l.itemAtIndex(0)
+      var newestEnd = newest ? (newest.y + newest.height) : NaN
+
+      // Overlap is worth reporting on its own -- two rows drawn on top of each
+      // other is a layout bug, and it also makes `gap` read high at rest for a
+      // reason that has nothing to do with scrolling.
+      var spans = []
+      for (var si = 0; si < kids.length; si++)
+        if (kids[si].height > 0) spans.push([kids[si].y, kids[si].y + kids[si].height])
+      spans.sort(function (a, b) { return a[0] - b[0] })
+      var overlap = 0
+      for (var oi = 1; oi < spans.length; oi++)
+        if (spans[oi][0] < spans[oi - 1][1])
+          overlap += spans[oi - 1][1] - spans[oi][0]
+
+      out.push("  firstY=" + lo.toFixed(1)
+        + "  newestEnd=" + (isNaN(newestEnd) ? "n/a" : newestEnd.toFixed(1))
+        + "  lastEnd=" + hi.toFixed(1)
+        + (hi - newestEnd > 1 ? " (OVERSHOOTS newest by "
+            + (hi - newestEnd).toFixed(1) + ")" : "")
         + "  extent=" + (hi - lo).toFixed(1)
         + "  ghost=" + (l.contentHeight - (hi - lo)).toFixed(1))
 
@@ -200,7 +229,8 @@ Scope {
       if (cursor < vBot) biggest = Math.max(biggest, vBot - cursor)
       out.push("  viewport=[" + vTop.toFixed(1) + " .. " + vBot.toFixed(1) + "]"
         + "  uncovered=" + (l.height - covered).toFixed(1)
-        + "  gap=" + biggest.toFixed(1))
+        + "  gap=" + biggest.toFixed(1)
+        + "  overlap=" + overlap.toFixed(1))
       return out.join("\n")
     }
 
