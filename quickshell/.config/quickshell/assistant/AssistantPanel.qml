@@ -681,19 +681,109 @@ PanelWindow {
       // accumulates while the wheel keeps turning, so a fast run composes
       // into one longer move rather than machine-gun restarts.
       //
-      // Direction and range are MEASURED, not assumed: under BottomToTop the
-      // newest message rests at contentY == -height and the oldest at
-      // contentY == -contentHeight (both collapse to -height when the content
-      // fits) -- the [-(contentHeight - height), 0] range one would port from
-      // a TopToBottom list is wrong here. So wheel-up, toward older, drives
-      // contentY MORE NEGATIVE, and this list's own stick logic below works
-      // off visibleArea, which is direction-independent and stayed correct.
+      // Direction is MEASURED, not assumed: under BottomToTop the newest
+      // message rests at the LEAST negative contentY and the oldest at the most
+      // negative -- the [-(contentHeight - height), 0] range one would port
+      // from a TopToBottom list is wrong here. So wheel-up, toward older,
+      // drives contentY MORE NEGATIVE, and this list's own stick logic below
+      // works off visibleArea, which is direction-independent and stayed
+      // correct.
       readonly property real wheelStep: 110
       property real wheelTargetY: 0
 
+      // The newest end of the range, i.e. the bottom of the conversation.
+      // Every "snap to the bottom" write in this file aims here.
+      //
+      // Read off the NEWEST DELEGATE, not off contentHeight. Under BottomToTop
+      // index 0 is the newest turn, so the end of the content is its bottom
+      // edge and "at the bottom" means contentY + height == item0.y +
+      // item0.height. contentHeight cannot answer that: it is an extrapolation
+      // from whichever delegates happen to be built, and when it drifts
+      // (ghost < 0) `originY + contentHeight - height` disagrees with it by
+      // hundreds of pixels. Measured at rest, three seconds after a turn
+      // settled:
+      //
+      //   ghost=+349.8   ceil(delegate)=-505.0   ceil(contentHeight)=-155.2
+      //   at rest and after a notch re-stick: contentY=-505.0, stuck=true,
+      //   contentY + height == newestEnd exactly
+      //
+      // So the delegate ceiling was load-bearing by 349.8px, and the view
+      // landed on the newest turn rather than 349.8px above it. Nothing looks
+      // blank in that state; the end of the answer is simply cut off with no
+      // way to reach it.
+      //
+      // DO NOT justify this by "the two go-to-bottom paths disagree". That
+      // reasoning was tried and withdrawn: toBottom() lands via
+      // positionViewAtBeginning(), which is item-based but then gets CAPPED by
+      // Flickable's own extent, which comes from contentHeight -- so it agrees
+      // with whichever ceiling is lower at that instant, not with the delegate
+      // one. Measured landing 26.0px and 11.3px short of newestEnd in two of
+      // three runs. It is not a trustworthy delegate-derived reference here or
+      // anywhere else in this file.
+      //
+      // The acceptance test is contentY + height == newestEnd AT REST, where
+      // newestEnd is itemAtIndex(0). Not lastEnd: that is a max over every
+      // built delegate and was measured overshooting newestEnd by 343.3px and
+      // 135.4px, because delegates can overlap (see the overlap note in the
+      // `ori scroll` probe).
+      //
+      // The asymmetry with the floor -- which stays on originY -- is
+      // principled, not a hack. The ceiling needs only the NEWEST delegate, and
+      // the view lives at the newest end, so it is essentially always built.
+      // The floor would need the OLDEST, which does not exist until you have
+      // scrolled to it; there originY is the only answer available.
+      //
+      // A function, not a property binding: itemAtIndex() is a call, not a
+      // notifying property, so a binding on it would latch whatever it saw the
+      // first time and never update again -- silently, which is the worst
+      // failure mode on offer.
+      function bottomY() {
+        var newest = itemAtIndex(0)
+        // Null whenever that delegate is not built -- a cold list, or the view
+        // parked far enough away that the newest turn is outside the cache.
+        // Fall back to the contentHeight expression, which is exactly right
+        // whenever nothing has drifted (measured: across 42 fully-built
+        // samples the two agree to 0.00px). Never fall back to a constant.
+        //
+        // THE FALLBACK DEPENDS ON cacheBuffer KEEPING THE WHOLE TRANSCRIPT
+        // INSTANTIATED. It is safe today only because the two bad conditions
+        // cannot co-occur: drift needs built delegates, and in the first frames
+        // of a cold open where index 0 is null, originY ~= -contentHeight and
+        // the newest turn ends at ~0, so this expression is exactly right. Cap
+        // the buffer -- which was tried and reverted once already, and is
+        // queued again -- and "drifted while delegate 0 is unbuilt" becomes
+        // reachable, at which point the ceiling silently reverts to the old bug
+        // with no error and no warning. Re-check this line if cacheBuffer moves.
+        if (!newest) return originY + contentHeight - height
+        return newest.y + newest.height - height
+      }
+
+      // The range is Qt's, and it has to be READ rather than assumed. Under
+      // BottomToTop every append is a PREPEND in list terms, and Qt answers a
+      // prepend by MOVING originY -- so the content does not stay at
+      // [-contentHeight, 0]. Measured on a 43-turn transcript scrolled to the
+      // top with all delegates built, stable across four reads:
+      //     contentY=-32889.6 height=487.0 contentHeight=32889.6 yPos=-0.029
+      //     originY=-31971.0  real=[-31971.0 .. 431.6]
+      //                       assumed=[-32889.6 .. -487.0]
+      // The old constants let contentY sit 918.6px BELOW the real floor: the
+      // viewport parked in blank space above the oldest turn, yPos went
+      // negative and STAYED negative, and further wheel-up did nothing. That is
+      // one fault, not two -- the blank gap and "only ctrl+down gets me back"
+      // are the same clamp.
+      //
+      // originY must be READ off the list. It cannot be inferred from delegate
+      // `y` values: contentItem.children mixes positioned items with POOLED
+      // ones whose stale y lands anywhere. Two reviewers got that wrong.
+      //
+      // These are a generalisation, not a new rule: with nothing prepended
+      // (originY === -contentHeight) they reduce to the old -contentHeight and
+      // -height exactly, collapse included. belowBottom and toBottom() above
+      // were already origin-independent; this is the same insight, applied here
+      // at last.
       function clampScrollY(y) {
-        var oldest = -contentHeight
-        var newest = -height
+        var oldest = originY
+        var newest = bottomY()
         if (oldest > newest) oldest = newest
         return Math.max(oldest, Math.min(newest, y))
       }
@@ -725,8 +815,9 @@ PanelWindow {
         // for good -- the newest turn kept streaming in unwatched, and only
         // the ctrl+down chord got the bottom back. Scrolling down is wanting
         // the bottom; arriving near it is arriving.
-        if (n < 0 && -height - wheelTargetY <= stickSlack) {
-          wheelTargetY = -height
+        var newest = bottomY()
+        if (n < 0 && newest - wheelTargetY <= stickSlack) {
+          wheelTargetY = newest
           stuck = true
         }
         wheelAnim.to = wheelTargetY
@@ -771,7 +862,7 @@ PanelWindow {
           downAcc += dy
           if (downAcc >= downIntentPx) {
             downAcc = 0
-            contentY = -height
+            contentY = bottomY()
             stuck = true
           }
         } else {
@@ -785,6 +876,91 @@ PanelWindow {
         property: "contentY"
         duration: 180
         easing.type: Easing.OutCubic
+      }
+
+      // The floor MOVES, and a scroll already in flight was aimed at where it
+      // used to be. clampScrollY reads the bounds at the instant a gesture is
+      // issued; when the first delegates of a cold open finish building, Qt
+      // re-measures and originY walks up by the estimate error -- so an aim
+      // that was legal a frame ago is now below the floor. Measured on a cold
+      // open, four times out of four -- BY A REVIEWER, not by this harness.
+      //
+      // Why it resists being forced, which is the useful part: originY only
+      // swings during a COLD BUILD. On a warm list under active streaming a
+      // reviewer measured 145 samples with ONE distinct originY and a 0px
+      // swing, while cold opens swung 77,901px and 95,679px. So this handler is
+      // dormant exactly where the reverted 17,215px regression used to live.
+      // Fifteen controls run here never reproduced it because they were not
+      // cold in the right way.
+      //
+      //   t=1.03  contentY=-49198.8  originY=-52638.6  children=62  gap=0
+      //             <- four delegates build; originY rises by 2085.8
+      //   t=1.08  contentY=-50765.1  originY=-50552.8  children=66  gap=212
+      //   t=1.24  contentY=-52638.6  originY=-50552.8  below=2085.8 gap=487
+      //   t=1.54  contentY=-50552.8  originY=-50552.8  below=0.0    gap=0
+      //
+      // contentY lands on -52638.6, the OLD originY, to the decimal: the glide
+      // kept driving to its stale target, so the overshoot GREW to 2085.8px
+      // and the viewport was entirely blank (gap=487, the full height) for
+      // ~370ms of a ~460ms excursion. Flickable's own returnToBounds() does
+      // clean it up, but only afterwards and over ~140ms more.
+      //
+      // WHAT THIS FIXES, AND WHAT IT DOES NOT. It is a ~13x improvement, not a
+      // cure, and the next person must not take zero as the baseline. After the
+      // fix, 10 of 10 cold opens STILL show a floor excursion: peak 303.4px,
+      // duration 0-127ms -- 303px of blank in a 487px viewport. Down from
+      // 2,085.8-4,570.6px over 430-460ms, so it is worth having, but "0.0px /
+      // 0ms / 0 blanks" is not reproducible and was never true.
+      // The residue is most likely itemAtIndex(0) holding a mid-relayout
+      // position at the instant this handler fires, leaving the range it clamps
+      // against one frame stale. Deliberately NOT chased -- the remaining
+      // window is a fraction of a frame's worth of blank and the fix for it
+      // lives in delegate sizing, not here.
+      //
+      // Guarded on the stick because every queued correction in this file is:
+      // while stuck, toBottom() and the pin own contentY and a second writer
+      // would fight them. `dragging` is excluded for the same reason -- a
+      // finger on the surface owns the view, and Flickable does its own
+      // bounds handling with overshoot while it is down.
+      //
+      // This is NOT the reverted clamp. That one shifted the reading anchor on
+      // every contentHeight change, unconditionally, against a floor that was
+      // wrong -- and threw the view ~17,000px backward mid-answer. This fires
+      // only when contentY is genuinely outside the range, and the range is
+      // now read from originY. Writing contentY here can move originY again,
+      // which re-enters this handler; it terminates because the second pass
+      // finds the value already in bounds and writes nothing.
+      onOriginYChanged: {
+        if (transcript.stuck || transcript.dragging) return
+        // Re-aim an in-flight glide. Setting `to` on a running NumberAnimation
+        // does not move a target Qt has already latched, so it has to be
+        // restarted -- from wherever the view is now, which keeps the
+        // correction a continuation of the same movement rather than a jump.
+        //
+        // Only an aim that has fallen OUTSIDE the range is corrected. A stale
+        // aim left INSIDE it is deliberately left alone, and that is a decision
+        // rather than an oversight: measured 4/4 with this handler off, a glide
+        // aimed at the floor as it stood when the notch was issued landed at
+        // -34004.1 and stopped 11,177.7px short of the floor as it ended up.
+        // Tempting to "fix" -- but a notch means "move N x 110px", not "travel
+        // to the end", and re-extending it would silently turn the user's input
+        // into a gesture they did not make. Stopping short costs another notch;
+        // overshooting past the newest turn is not recoverable at all. Leave it.
+        var aim = transcript.clampScrollY(transcript.wheelTargetY)
+        if (aim !== transcript.wheelTargetY) {
+          transcript.wheelTargetY = aim
+          if (wheelAnim.running) {
+            wheelAnim.to = aim
+            wheelAnim.restart()
+          }
+        }
+        // The pixel path writes contentY directly and has no target to re-aim,
+        // so a position that was legal when written is simply left outside the
+        // new range -- same blank viewport, no animation involved. Correcting
+        // contentY covers that path, the notched one, and goTop(), which
+        // unsticks and then positions with no correction of its own.
+        var fixed = transcript.clampScrollY(transcript.contentY)
+        if (fixed !== transcript.contentY) transcript.contentY = fixed
       }
 
       // Corrected every frame the content changes, NOT animated. An animation
