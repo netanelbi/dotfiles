@@ -39,12 +39,30 @@ CONTROL FRAMES
 --------------
 panel -> here (anything else is forwarded to pi):
 
-  __hello    {}                     ask for the state of the world
+  __hello    {channel}             ask for the state of the world. The channel
+                                    is the panel's identity for its ACTIVE
+                                    session, stable across shell reloads; a
+                                    known channel ADOPTS the existing session
+                                    (child, cfg, turn buffer) instead of
+                                    starting a new one. Absent/unknown channel:
+                                    a fresh session -- how parked sessions
+                                    connect, anonymously.
   __config   {provider, model,      what the NEXT spawn should be. Held, not
               effort, session}      acted on; see "spawning" below
   __spawn    {}                     bring pi up if it is down
   __replay   {}                     dump the current turn and go live
   __kill     {}                     drop pi now (reclaim the ~200MB)
+  __detach   {graceMs}              tell the bash calls in flight to wrap up
+                                    within graceMs or hand back a PID. Sent
+                                    beside a steer, because pi holds a steer
+                                    until the tool call in flight RETURNS --
+                                    so a ten-minute command means a ten-minute
+                                    wait. Written to this session's
+                                    ORI_DETACH_PATH file, which is a side
+                                    channel on purpose: a call already running
+                                    cannot be reached through pi's stdin,
+                                    which is the whole problem. See
+                                    Session.detach().
 
 here -> panel (anything else is pi's stdout):
 
@@ -238,6 +256,11 @@ EXTENSIONS = [
     # context, asked for properly at 60%. Compaction keeps the note and the
     # recent turns and drops the rest -- no summariser call, no cold re-read.
     "~/Development/Personal/my-pi/extensions/session-note.ts",
+
+    # Text-to-speech. kokoro-npu streams to the speakers itself; the tool just
+    # spawns it detached and returns the pid, so a spoken reply never blocks
+    # the turn.
+    "~/Development/Personal/my-pi/extensions/speak.ts",
 ]
 
 # Kill the child after this much silence. Long enough to cover a
@@ -246,9 +269,14 @@ EXTENSIONS = [
 IDLE_KILL = 10 * 60.0
 HOLD_TIMEOUT = 5.0
 
-SOCKET_PATH = os.path.join(
-    os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid(),
-    "ori-agent.sock",
+# ORI_AGENT_SOCK moves the socket wholesale. Nothing on this machine sets it
+# -- the systemd unit inherits none -- so it exists only so a second broker can
+# run beside the live one for testing multi-session without ever touching the
+# real socket the panel is connected to.
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+
+SOCKET_PATH = os.environ.get("ORI_AGENT_SOCK") or os.path.join(
+    RUNTIME_DIR, "ori-agent.sock",
 )
 
 # A `get_entries` on a long conversation is megabytes on one line, and an
@@ -267,7 +295,7 @@ def log(*a):
     print("[ori-agent]", *a, file=sys.stderr, flush=True)
 
 
-def build_command(cfg):
+def build_command(cfg, detach_path=""):
     """The old PiSession.buildCommand(), unchanged in every part that was a
     decision. Only the four values the panel switches at runtime come from
     `cfg`: provider, model, thinking level, session path.
@@ -335,6 +363,11 @@ def build_command(cfg):
     finds one."""
     parts = [
         "SHIM_URL=" + SHIM_URL,
+        # The file a bash call in flight watches for "wrap up now" -- read by
+        # tool-descriptions.ts, which arms nothing at all when the variable is
+        # absent. So `pi` in a terminal is untouched, and so is a spawn whose
+        # file could not be created.
+        *(["ORI_DETACH_PATH=" + shlex.quote(detach_path)] if detach_path else []),
         "exec " + BINARY,
         "--mode rpc",
         "-ne",
@@ -368,11 +401,42 @@ def build_command(cfg):
     return "cd " + WORKDIR + " && " + " ".join(parts)
 
 
-class Broker:
+# ------------------------------------------------------------ multi-session
+# One Session per client connection, each with its own pi child, its own cfg,
+# its own turn buffer and its own idle clock. That is what lets the panel park
+# a conversation and start another while the parked one is still answering:
+# the parked client keeps its connection, and each connection keeps its child.
+#
+# Sessions register under a CHANNEL. The panel's active session re-sends the
+# same channel after every shell reload (it persists in the panel's state
+# dir), and __hello with a known channel ADOPTS the existing session instead
+# of building a new one -- which is the whole reattach handshake from RECONNECT
+# below, unchanged, now keyed by channel rather than by "the only client".
+# Parked sessions connect anonymously: nothing ever adopts them, and when
+# their panel side dies the orphan is bounded by ORPHAN_GRACE (idle) and the
+# idle kill (busy) rather than living forever.
+SESSIONS = {}            # channel -> Session
+_conn_seq = [0]
+_spawn_seq = [0]         # names each child's detach file; see Session.detach
+
+# An orphan -- a session whose client went away and never came back -- is
+# killed this long after the disconnect, unless a turn is still running. A
+# reload re-hellos within a second or two, so this never fires for a live
+# panel; it only bounds the lifetime of sessions nobody can adopt any more.
+ORPHAN_GRACE = 90.0
+
+# A detach request is written as ONE fixed-width record, space-padded. Both
+# halves of that matter and both were bought with a bug; see Session.detach().
+DETACH_RECORD = 96
+
+
+class Session:
     def __init__(self):
+        self.channel = ""
+        self.conn_token = -1
         self.pi = None
         self.pi_task = None
-        self.client = None          # StreamWriter, or None
+        self.writer = None           # StreamWriter, or None
         self.cfg = {}
         # The current turn: every event pi has emitted since the prompt that
         # opened it, in order, as raw lines. Reset by the next prompt and not
@@ -384,13 +448,18 @@ class Broker:
         self.idle_timer = None
         self.starting = None        # asyncio.Event while a spawn is in flight
         self.queue = []             # frames that arrived during a spawn
+        self.grace_timer = None
+        # The current child's detach file, and the counter that makes a
+        # request in it distinguishable from the one before. See detach().
+        self.detach_path = None
+        self.detach_seq = 0
 
     # ------------------------------------------------------------- plumbing
     def to_client(self, line):
-        if self.client is None:
+        if self.writer is None:
             return
         try:
-            self.client.write((line if line.endswith("\n") else line + "\n").encode())
+            self.writer.write((line if line.endswith("\n") else line + "\n").encode())
         except Exception as e:
             # Logged rather than swallowed. It was swallowed for one round of
             # this, and a StreamWriter refusing a str instead of bytes then
@@ -401,6 +470,66 @@ class Broker:
 
     def control(self, obj):
         self.to_client(json.dumps(obj))
+
+    # --------------------------------------------------------------- orphan
+    # Lifecycle of a session whose client went away. Busy orphans are the case
+    # RECONNECT is for: keep the child, keep buffering, wait for an adopt.
+    # Idle orphans are worth nothing to anyone -- no client can ever replay
+    # them -- so a short grace clock kills the child instead of letting the
+    # ten-minute idle clock hold 200MB for a panel that is never coming back.
+    def cancel_grace(self):
+        if self.grace_timer:
+            self.grace_timer.cancel()
+            self.grace_timer = None
+
+    def on_client_gone(self, token):
+        # A displaced or adopted session's old read loop still runs its finally
+        # block. The token says whether this disconnect is OURS or one that was
+        # already superseded: clearing the writer of an adopted session would
+        # orphan the live client that just claimed it.
+        if self.conn_token != token:
+            return
+        self.writer = None
+        self.release()
+        self.check_orphan()
+
+    def check_orphan(self):
+        """Start the grace clock if nobody is attached any more.
+
+        Called on the disconnect itself and again at the two moments the
+        disconnect could not answer the question: a busy session has to keep
+        its child and its buffer for the adopt, and a spawning one has no child
+        to reason about yet. Both of those end in an EVENT -- agent_settled and
+        the end of spawn() -- and each calls back here. Without that the clock
+        simply never armed in either case and the child fell through to the
+        ten-minute idle kill, seven times the grace this promises; a spawn that
+        failed outright had no idle timer at all and the session stayed in
+        SESSIONS for good.
+        """
+        if self.writer is not None or self.busy:
+            return
+        if self.pi is None:
+            if self.starting is None:
+                self.prune()
+            return
+        if self.grace_timer is not None and not self.grace_timer.done():
+            return                       # already counting down
+        self.cancel_grace()
+        self.grace_timer = asyncio.ensure_future(self._grace())
+
+    async def _grace(self):
+        try:
+            await asyncio.sleep(ORPHAN_GRACE)
+        except asyncio.CancelledError:
+            return
+        if self.writer is None and not self.busy:
+            log("orphan channel %s idle %.0fs -- dropping pi" % (self.channel, ORPHAN_GRACE))
+            self.kill_pi()
+
+    def prune(self):
+        """Nothing to serve and nothing to attach to: forget the session."""
+        if self.writer is None and self.pi is None and self.starting is None:
+            SESSIONS.pop(self.channel, None)
 
     # ----------------------------------------------------------------- idle
     def touch_idle(self):
@@ -433,6 +562,100 @@ class Broker:
         except Exception:
             pass
 
+    # ------------------------------------------------------------- detaching
+    def open_detach(self):
+        """Make this child's detach file and hand back its path.
+
+        Created HERE, before the child exists, because fs.watch() on a missing
+        path throws -- the extension attaches its watcher once, at load, and
+        there is no second chance. Seeded with seq 0 so the extension has a
+        baseline to compare the first real request against.
+
+        One file PER CHILD, not one per broker: this process runs a session
+        per connection, and a shared path would detach the call in flight in
+        every session at once -- a steer in the conversation you are looking
+        at would background a build in the one you parked.
+
+        Best effort. No file means no env var, which means the extension never
+        arms and every bash call behaves exactly as it did before any of this
+        existed.
+        """
+        _spawn_seq[0] += 1
+        path = os.path.join(RUNTIME_DIR, "ori-detach-%d-%d" % (os.getpid(), _spawn_seq[0]))
+        try:
+            with open(path, "wb") as f:
+                # Full width from the start, so every later write is an
+                # overwrite of the same bytes and never a grow. See detach().
+                f.write(b'{"seq": 0}'.ljust(DETACH_RECORD))
+        except Exception as e:
+            log("detach file unavailable, steer-detach is off for this child:", e)
+            return None
+        self.detach_seq = 0
+        return path
+
+    def detach(self, grace_ms):
+        """Ask this child's in-flight bash calls to re-arm their auto-background
+        timer to `grace_ms`.
+
+        Rewritten IN PLACE and never renamed into position: an inotify watch
+        follows the inode, so a rename would leave the extension watching a
+        file nobody writes to again -- silently, and only from the second
+        request onward, which is the worst shape a bug can have.
+
+        `seq` is what makes yesterday's request harmless. fs.watch fires on any
+        touch of the file, so the request has to carry something the reader can
+        compare; a counter that only ever goes up means a re-read of unchanged
+        content, or a stray touch, detaches nothing.
+
+        `pid` is what stops a steer aimed at Ori from backgrounding a
+        SUBAGENT's work. Subagents are child pi processes and they inherit this
+        env var, and they load the same extension, so they watch this very
+        file: with no pid in the record, one steer detached a subagent's build
+        three levels down that nobody had steered. `exec` in build_command()
+        means the pi process is the pid recorded here, so the extension can
+        compare it against its own process.pid and a grandchild is inert.
+
+        WRITTEN AS ONE FIXED-WIDTH RECORD, and that is not tidiness:
+
+          * `open(path, "w")` TRUNCATES and then writes, and on bun fs.watch
+            delivers ONE event per write, not two. Measured: 12 writes -> 12
+            fires, 6 of which read an empty file, and the fire that lands on
+            the truncate is the only one there is. 21 of 30 detach requests
+            were lost that way -- the failure is invisible, because the call
+            just runs its normal timeout.
+          * so O_WRONLY with no O_TRUNC and a single os.write: the file is
+            never empty and never short, and the reader sees either the old
+            record or the new one.
+          * padding is what makes "the same width" true when the seq gains a
+            digit. Without it a shorter record leaves the tail of the longer
+            one behind and the JSON does not parse.
+        """
+        if not self.detach_path or self.pi is None:
+            return
+        self.detach_seq += 1
+        rec = json.dumps({"seq": self.detach_seq, "graceMs": grace_ms,
+                          "pid": self.pi.pid}).encode()
+        if len(rec) > DETACH_RECORD:
+            log("detach record over %d bytes, dropped" % DETACH_RECORD)
+            return
+        try:
+            fd = os.open(self.detach_path, os.O_WRONLY)
+            try:
+                os.write(fd, rec.ljust(DETACH_RECORD))
+            finally:
+                os.close(fd)
+        except OSError as e:
+            log("detach write failed:", e)
+
+    def close_detach(self):
+        if not self.detach_path:
+            return
+        try:
+            os.unlink(self.detach_path)
+        except OSError:
+            pass
+        self.detach_path = None
+
     async def spawn(self):
         """Bring a child up, or wait for the one already coming up."""
         if self.pi is not None:
@@ -441,7 +664,8 @@ class Broker:
             await self.starting.wait()
             return
         self.starting = asyncio.Event()
-        cmd = build_command(self.cfg)
+        self.detach_path = self.open_detach()
+        cmd = build_command(self.cfg, self.detach_path or "")
         log("spawn:", cmd)
         try:
             self.pi = await asyncio.create_subprocess_exec(
@@ -453,8 +677,10 @@ class Broker:
         except Exception as e:
             log("spawn failed:", e)
             self.pi = None
+            self.close_detach()
             ev, self.starting = self.starting, None
             ev.set()
+            self.check_orphan()
             return
         self.pi_task = asyncio.ensure_future(self.pump_pi(self.pi))
         ev, self.starting = self.starting, None
@@ -469,6 +695,8 @@ class Broker:
         pending, self.queue = self.queue, []
         for frame in pending:
             self.to_pi(frame)
+        # The client may have gone while this was coming up -- see check_orphan.
+        self.check_orphan()
 
     def to_pi(self, line):
         if self.pi is None or self.pi.stdin is None:
@@ -538,13 +766,21 @@ class Broker:
             if not self.held:
                 self.to_client(line)
 
+            if kind == "agent_settled":
+                # The turn that was holding an orphan open just ended, and the
+                # disconnect that made it an orphan is long past -- this is the
+                # only place left that can start its clock. See check_orphan.
+                self.check_orphan()
+
         code = proc.returncode if proc.returncode is not None else -1
         log("pi exited", code)
         if self.pi is proc:
             self.pi = None
             self.busy = False
             self.buf = []
+            self.close_detach()
             self.control({"type": "__pi_exited", "code": code})
+            self.prune()
 
     # ------------------------------------------------------------- the hold
     def release(self):
@@ -616,66 +852,72 @@ class Broker:
         self.release()
 
     # --------------------------------------------------------------- client
-    async def serve(self, reader, writer):
-        if self.client is not None:
-            # A reload leaves the old socket to be reaped whenever the kernel
-            # gets round to it. The new panel is the real one; the old one
-            # goes now rather than racing it for the stream.
-            log("displacing previous client")
-            try:
-                self.client.close()
-            except Exception:
-                pass
-        self.client = writer
-        log("client connected")
-        try:
-            while True:
-                raw = await reader.readline()
-                if not raw:
-                    break
-                line = raw.decode("utf-8", "replace").rstrip("\n")
-                if not line.strip():
-                    continue
-                await self.on_frame(line)
-        except Exception as e:
-            log("client read failed:", e)
-        finally:
-            log("client gone")
-            if self.client is writer:
-                self.client = None
-                # A disconnect mid-turn is the case this whole thing is for.
-                # Keep buffering: the buffer is what the next panel replays.
-                self.release()
-            try:
-                writer.close()
-            except Exception:
-                pass
+    def _hello(self):
+        self.control({"type": "__welcome",
+                      "warm": self.pi is not None,
+                      "busy": self.busy,
+                      "workdir": WORKDIR})
+        if self.busy:
+            self.held = True
+            if self.hold_timer:
+                self.hold_timer.cancel()
+            self.hold_timer = asyncio.ensure_future(self._hold_expiry())
+        return self
 
-    async def on_frame(self, line):
+    async def on_frame(self, line, writer, token):
+        """Handle one frame. Returns the session that owns this connection
+        from here on -- a different object only when __hello adopted one."""
         try:
             frame = json.loads(line)
         except Exception:
             log("unparseable frame from client, dropped")
-            return
+            return None
         kind = frame.get("type", "")
 
         if kind == "__hello":
-            self.control({"type": "__welcome",
-                          "warm": self.pi is not None,
-                          "busy": self.busy,
-                          "workdir": WORKDIR})
-            if self.busy:
-                self.held = True
-                if self.hold_timer:
-                    self.hold_timer.cancel()
-                self.hold_timer = asyncio.ensure_future(self._hold_expiry())
-            return
+            channel = str(frame.get("channel") or "")
+            # A second __hello on this connection re-registers it. Drop the key
+            # it is under first, or the old entry keeps this session -- and its
+            # child -- alive under a name no client will ever say again, past
+            # every reaper: prune() only ever pops the CURRENT channel.
+            if self.channel and SESSIONS.get(self.channel) is self:
+                del SESSIONS[self.channel]
+                self.channel = ""
+            if channel:
+                old = SESSIONS.get(channel)
+                if old is not None and old is not self:
+                    # Same channel coming back: a shell reload. Adopt the
+                    # existing session -- its child, its cfg and its turn
+                    # buffer -- and displace whatever loop still served it.
+                    if old.writer is not None:
+                        log("displacing previous client on channel", channel)
+                        w, old.writer = old.writer, None
+                        try:
+                            w.close()
+                        except Exception:
+                            pass
+                    old.cancel_grace()
+                    old.writer = writer
+                    old.conn_token = token
+                    log("adopting channel", channel,
+                        "warm=%s busy=%s" % (old.pi is not None, old.busy))
+                    return old._hello()
+                self.channel = channel
+                SESSIONS[channel] = self
+            else:
+                # Anonymous: a parked session. Nothing can ever adopt it; it
+                # is registered only so its child is reachable for reaping.
+                _conn_seq[0] += 1
+                self.channel = "anon-%d" % _conn_seq[0]
+                SESSIONS[self.channel] = self
+            self.conn_token = token
+            return self._hello()
 
         if kind == "__config":
             for k in ("provider", "model", "effort", "session"):
                 if k in frame:
                     self.cfg[k] = frame[k] or ""
-            return
+            return None
 
         if kind == "__spawn":
             await self.spawn()
@@ -687,6 +929,10 @@ class Broker:
 
         if kind == "__kill":
             self.kill_pi()
+            return
+
+        if kind == "__detach":
+            self.detach(frame.get("graceMs"))
             return
 
         # Anything else is pi's own protocol.
@@ -723,8 +969,46 @@ class Broker:
         self.to_pi(line)
 
 
+async def serve(reader, writer):
+    """One connection, one Session. A __hello with a known channel swaps the
+    loop over to the adopted session -- see on_frame."""
+    _conn_seq[0] += 1
+    token = _conn_seq[0]
+    sess = Session()
+    sess.conn_token = token
+    # Set HERE rather than in the hello branch, so that it covers the session
+    # that keeps its own connection as well as the one an adopt hands over. It
+    # only lived on the adopt path for a while, and a first-ever client then
+    # said hello into a session whose writer was still None: to_client dropped
+    # __welcome, __pi_started and every line pi produced, and the panel waited
+    # for a reply that was never written.
+    sess.writer = writer
+    log("client connected")
+    try:
+        while True:
+            raw = await reader.readline()
+            if not raw:
+                break
+            line = raw.decode("utf-8", "replace").rstrip("\n")
+            if not line.strip():
+                continue
+            adopted = await sess.on_frame(line, writer, token)
+            if adopted is not None:
+                sess = adopted
+    except Exception as e:
+        log("client read failed:", e)
+    finally:
+        log("client gone")
+        sess.on_client_gone(token)
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+
 async def main():
-    broker = Broker()
+    # The half of the old Broker() constructor that described the LISTENER
+    # rather than a conversation. Everything else lives per Session now.
 
     # Socket activation, when systemd handed us a listening fd. The unit is
     # .socket-activated so that the socket exists from login while nothing is
@@ -734,7 +1018,7 @@ async def main():
     listen_fds = int(os.environ.get("LISTEN_FDS", "0") or "0")
     if listen_fds > 0 and os.environ.get("LISTEN_PID") == str(os.getpid()):
         sock = socket.socket(fileno=3)
-        server = await asyncio.start_unix_server(broker.serve, sock=sock,
+        server = await asyncio.start_unix_server(serve, sock=sock,
                                                  limit=LINE_LIMIT)
         log("listening on the socket systemd passed us")
     else:
@@ -743,7 +1027,7 @@ async def main():
             os.unlink(SOCKET_PATH)
         except FileNotFoundError:
             pass
-        server = await asyncio.start_unix_server(broker.serve, path=SOCKET_PATH,
+        server = await asyncio.start_unix_server(serve, path=SOCKET_PATH,
                                                  limit=LINE_LIMIT)
         os.chmod(SOCKET_PATH, 0o600)
         log("listening on", SOCKET_PATH)

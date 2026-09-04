@@ -76,6 +76,46 @@ Scope {
            + (PiSession.error === "" ? "" : " error=\"" + PiSession.error + "\"")
     }
 
+    // The transcript list's live scroll geometry: what the view thinks the
+    // content is, where it sits, and what the delegates themselves occupy.
+    // The point of the per-child walk is to catch a LYING contentHeight --
+    // the difference between it and the true delegate extent is exactly the
+    // blank a scroll can wander into.
+    function scroll(): string {
+      var l = ScrollProbe.list
+      if (!l) return "no transcript registered"
+      var out = ["contentY=" + l.contentY.toFixed(1)
+        + " height=" + l.height.toFixed(1)
+        + " contentHeight=" + l.contentHeight.toFixed(1)
+        + " count=" + l.count
+        + " stuck=" + l.stuck
+        + " yPos=" + l.visibleArea.yPosition.toFixed(3)
+        + " hRatio=" + l.visibleArea.heightRatio.toFixed(3)]
+      var kids = l.contentItem.children
+      // Seeded from the FIRST measured child rather than from 0, because this
+      // list is BottomToTop: its delegates sit at NEGATIVE y. Bounds seeded at
+      // 0 therefore pin `hi` to at least 0, which overstates the extent by the
+      // whole distance from the newest delegate up to the origin -- and an
+      // overstated extent understates `ghost`, which is the one number this
+      // probe exists to report.
+      var lo = NaN, hi = NaN
+      for (var i = 0; i < kids.length; i++) {
+        var c = kids[i]
+        if (!c.height || c.height === undefined) continue
+        lo = isNaN(lo) ? c.y : Math.min(lo, c.y)
+        hi = isNaN(hi) ? c.y + c.height : Math.max(hi, c.y + c.height)
+        out.push("  [" + i + "] y=" + c.y.toFixed(1) + " h=" + c.height.toFixed(1)
+          + "  " + String(c.objectName || "").substring(0, 40))
+      }
+      if (isNaN(lo)) {
+        out.push("  extent=none  (no measured delegates)")
+        return out.join("\n")
+      }
+      out.push("  extent=" + (hi - lo).toFixed(1)
+        + "  ghost=" + (l.contentHeight - (hi - lo)).toFixed(1))
+      return out.join("\n")
+    }
+
     // The turn model as text, which is the only way to see from a script that a
     // resume actually repopulated it.
     function transcript(): string {

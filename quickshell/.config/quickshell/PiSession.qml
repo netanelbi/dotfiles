@@ -484,7 +484,17 @@ Singleton {
   //            kind with a `name`, and so the only one whose row can be joined
   //            to agentActivity and say what it is doing.
   property var bgJobs: ({})
-  readonly property int bgCount: Object.keys(root.bgJobs).length
+
+  // How many of those the chrome should react to -- the bar count, the busy
+  // accent, the breathing. Speech is excluded for the reason spelled out at
+  // speakJob: it has its own strip, and counting it here made the bar say "×1"
+  // and the panel look busy while the tray below it was empty.
+  readonly property int bgCount: {
+    var n = 0
+    for (var k in root.bgJobs)
+      if (String(root.bgJobs[k].kind) !== "speak") n += 1
+    return n
+  }
 
   readonly property var bgKindNoun: ({ job: "task", monitor: "monitor", agent: "agent" })
   readonly property var bgKindOrder: ["job", "monitor", "agent"]
@@ -513,6 +523,18 @@ Singleton {
       parts.push(n + " " + noun + (n === 1 ? "" : "s"))
     }
     return parts.join(" · ")
+  }
+
+  // The speech job, if any. Speech is rendered by its own strip rather than
+  // the generic tray -- "you are being spoken to" is a different sentence
+  // from "something is working", and both can be true at once. So it is
+  // deliberately invisible to bgCount and bgSummary: those answer what the
+  // agent is waiting on, and speech is not that. (bgKinds does carry a `speak`
+  // tally, but nothing reads it -- bgSummary only walks bgKindOrder.)
+  readonly property var speakJob: {
+    for (var k in root.bgJobs)
+      if (String(root.bgJobs[k].kind) === "speak") return root.bgJobs[k]
+    return null
   }
 
   // handle -> the one line the delegate wrote about what it is doing now.
@@ -909,6 +931,18 @@ Singleton {
       var steer = { type: "steer", message: msg }
       if (imgs.length > 0) steer.images = imgs
       send(steer)
+
+      // ...and tell whatever bash call is blocking to wrap up. pi holds the
+      // steer above until the tool call in flight RETURNS, so a `sleep 600`
+      // means the message sits on one tick for ten minutes -- sent, shown,
+      // and answered by nothing. The broker writes this into the child's
+      // ORI_DETACH_PATH; the call re-arms its own auto-background timer to
+      // the grace, and only if it is STILL running when that expires does it
+      // detach and hand back a PID. Finish inside the grace and this costs
+      // nothing at all: no log file, no PID, the steer delivers as before.
+      // Steer branch only -- a question asked while nothing is running has
+      // nothing to detach.
+      control({ type: "__detach", graceMs: 300 })
 
       // The stream always writes to lastAssistant(), so the ROW ORDER is the
       // whole problem here. Appending only the question put it BELOW the row
@@ -2907,7 +2941,13 @@ Singleton {
         retry.stop()
         // Ask what the world looks like BEFORE assuming anything about it.
         // Everything the boot path does hangs off the answer -- see onWelcome.
-        root.control({ type: "__hello" })
+        //
+        // The channel is what makes a reload REATTACH rather than start over:
+        // the broker adopts the session already registered under it, with its
+        // warm child and its mid-turn buffer. A constant is the whole identity
+        // needed, because only the active panel session is adoptable -- parked
+        // ones connect without a channel, by design, so nothing claims them.
+        root.control({ type: "__hello", channel: "panel" })
         return
       }
       // The broker is a systemd unit with Restart=on-failure, so a drop is a

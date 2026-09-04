@@ -40,14 +40,19 @@ Item {
 
   readonly property var ids: {
     var out = []
-    for (var k in PiSession.bgJobs) out.push(k)
+    for (var k in PiSession.bgJobs)
+      // Speech renders in its own strip; this tray is about work the agent
+      // is waiting on.
+      if (String(PiSession.bgJobs[k].kind) !== "speak") out.push(k)
     out.sort()
     return out
   }
 
+  readonly property int count: ids.length
+
   property bool open: false
 
-  implicitHeight: PiSession.bgCount > 0
+  implicitHeight: count > 0
     ? head.height + (open ? rows.implicitHeight + 4 : 0) : 0
   height: implicitHeight
   clip: true
@@ -64,6 +69,7 @@ Item {
   readonly property real oldestMs: {
     var t = 0
     for (var k in PiSession.bgJobs) {
+      if (String(PiSession.bgJobs[k].kind) === "speak") continue
       var age = tray.nowMs - PiSession.bgJobs[k].since
       if (age > t) t = age
     }
@@ -74,7 +80,7 @@ Item {
   Item {
     id: head
     anchors { left: parent.left; right: parent.right; top: parent.top }
-    height: PiSession.bgCount > 0 ? 24 : 0
+    height: count > 0 ? 24 : 0
 
     Rectangle {
       anchors.fill: parent

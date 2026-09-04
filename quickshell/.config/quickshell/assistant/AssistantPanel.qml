@@ -54,6 +54,14 @@ import ".."
 PanelWindow {
   id: panel
 
+  // Hand the transcript to the script surface's probe (OriIpc `scroll`). The
+  // list's scroll state exists only in here, and a panel is not a thing a
+  // shell command can read -- this is how it becomes one.
+  Component.onCompleted: {
+    ScrollProbe.list = transcript
+    ScrollProbe.panel = panel
+  }
+
   property bool opened: false
 
   // NOTE these three are no longer the way in. `opened` is a binding onto
@@ -212,21 +220,36 @@ PanelWindow {
   // thing on this surface that has to move by itself.
   property real nowMs: 0
 
+  // "IS ANYTHING ON THIS SURFACE STILL MOVING?" -- which is a different
+  // question from "what is the agent waiting on", and the two must not be
+  // confused again. The clock and the breath below both ask the first one;
+  // `PiSession.bgCount` answers the second, and deliberately EXCLUDES speech,
+  // because counting a speak job there made the bar cell show a phantom `x1`
+  // and put the panel in busy chrome over an empty tray. Both things are
+  // right, and speech is exactly where they part: nothing is waiting on it,
+  // and it is plainly moving -- it has a strip of its own whose comment
+  // promises "yellow, breathing, gone the moment it ends", and that promise is
+  // kept from here. Named once rather than spelled out twice, because it was
+  // spelled out twice that a change to bgCount silently froze the strip.
+  readonly property bool inMotion:
+    PiSession.busy || PiSession.bgCount > 0 || PiSession.speakJob !== null
+
   FrameAnimation {
     id: clock
     // Background jobs keep it running. A backgrounded command is the one kind
     // of activity that outlives the turn that started it, so a clock that stops
     // at `agent_settled` leaves every moving thing on the card frozen while
     // work is still going on -- the rail's scan mid-track, the tool rows at
-    // whatever opacity the last frame gave them.
-    running: panel.opened && (PiSession.busy || PiSession.bgCount > 0)
+    // whatever opacity the last frame gave them, the speak strip's age stuck on
+    // the second the answer ended.
+    running: panel.opened && panel.inMotion
     onTriggered: panel.nowMs = Date.now()
   }
 
   // The panel's one breath, so everything alive on this surface rises and falls
   // together rather than each running a loop of its own. Collapses to a
   // constant when the clock stops, so nothing is stranded mid-cycle.
-  readonly property real breath: (PiSession.busy || PiSession.bgCount > 0)
+  readonly property real breath: panel.inMotion
     ? 0.65 + 0.35 * Math.cos(2 * Math.PI * panel.nowMs / Style.ori.breathMs)
     : 1
 
@@ -403,7 +426,7 @@ PanelWindow {
         top: header.bottom
         left: parent.left
         right: parent.right
-        bottom: tray.top
+        bottom: speakStrip.top
         leftMargin: 10
         rightMargin: 10
         topMargin: 10
@@ -432,12 +455,93 @@ PanelWindow {
       // the hitch that made wheel scrolling feel broken: the list stopped, a
       // screenful built, then it moved. Prebuilding one screen and a half of
       // runway amortises that build off the critical path.
-      cacheBuffer: 600
+      //
+      // BUT a floor alone was measured to freeze the wheel after a resume:
+      // the view only knows the heights of delegates it has BUILT, and pinned
+      // to the bottom it builds only the newest screen and a half -- the
+      // older turns are guessed from the ones beside them. Guess short (a
+      // session that ends in short exchanges but has long turns above) and
+      // contentHeight under-reports, the scroll range collapses, and every
+      // wheel notch clamps to a no-op -- the older turns never instantiate
+      // because you cannot scroll to them. So the buffer is bound to the
+      // content: a bigger measured content builds more of it, whose real
+      // heights grow contentHeight again, and the cascade converges on the
+      // whole transcript within a few frames. The cold-build hitch moves
+      // from mid-scroll to open time, where it belongs.
+      //
+      // A CAP WAS TRIED HERE AND IS WRONG. Converging on the whole transcript
+      // means the view recycles nothing, so bounding the buffer -- four
+      // viewports each way -- looks like the obvious economy. Measured on a
+      // harness of 150 turns of 90-700px, it costs more than it saves:
+      //
+      //   * Qt keeps re-guessing the heights of the turns it did not build, so
+      //     contentHeight moves DURING a scroll. onContentHeightChanged below
+      //     cannot tell that from text arriving, so it applies its reading-view
+      //     shift and throws the view away: an 8,400px scroll up landed at
+      //     -43,003 in 11 jumps, the worst of them 19,651px, and an extreme
+      //     transcript jumped 167,406px to a viewport with nothing in it. The
+      //     `!moving && !wheelAnim.running` guard does not catch it, because
+      //     wheelPixels writes contentY directly and raises neither.
+      //   * The same guessing over-shoots at the far end and left 25,000 to
+      //     40,000px of blank above the oldest turn -- which is the "large
+      //     blank gaps while scrolling" this was supposed to fix.
+      //
+      // Uncapped, the same harness gives exact contentHeight, a scroll that
+      // lands where it was aimed, and zero blank. And the cap did not even buy
+      // the thing it was for: it bounds PIXELS, not delegates, and still left
+      // ~48 of them live in a 400px view. The per-frame cost that motivated it
+      // is dealt with at its root instead -- see the delegate below.
+      cacheBuffer: Math.max(600, contentHeight * 2)
 
       // `nowMs` is the panel's own frame clock, handed to the delegates so the
       // live tool batch can count its elapsed time off the same tick as the
       // rail -- and stop dead with it when the turn settles.
-      delegate: TurnDelegate { accent: panel.accent; nowMs: panel.nowMs }
+      //
+      // HANDED TO THE LIVE TURN ONLY. The condition says exactly the two
+      // states in which a turn has anything left that moves: it is being
+      // written (`pending`), or it is a question whose delivery has not been
+      // acknowledged yet (`!landed`, the pill that breathes until the agent
+      // produces its first token). A settled turn's elapsed time was stamped
+      // when it settled and cannot change again, so it has no business holding
+      // a subscription to a clock. Everything else gets a constant: its
+      // `nowMs` never changes and nothing downstream of it is re-evaluated.
+      // Normally that is one delegate on the clock, briefly two while a
+      // question waits above the answer to it.
+      //
+      // SIZE THIS HONESTLY, because the buffer above means every turn in the
+      // transcript holds a delegate and it looks like it ought to be
+      // expensive. It is not: measured at 50 built delegates over 6000 ticks,
+      // the old shape cost 121 MICROSECONDS per tick -- 0.7% of a 16.6ms
+      // frame, about 7ms of CPU per second of a running turn. It is cheap for
+      // the same reason it looks costly: every readout that reads `breath` is
+      // already gated behind `pending` or `landed`, so a settled turn
+      // recomputed the cosine and threw it away without touching the scene.
+      // And `receiptText` -> `batchMs` only reaches `nowMs` for a call with
+      // `ms === 0 && t0 > 0`, a branch a settled turn never takes, so it
+      // captured no dependency on the clock at all.
+      //
+      // SO THIS DOES NOT FIX THE COMPOSER LAG, and must not be read as having
+      // done. The clock only runs while the panel is open and something on it
+      // is moving (`panel.inMotion`) -- it is STOPPED while you type between
+      // turns, so the work removed here was not even running at the moment the
+      // lag is felt. That is its own open question.
+      //
+      // The constant is 0, and freezing at 0 was audited against all four
+      // consumers of this property: TurnDelegate's `breath` and `batchMs`, and
+      // the two ToolLines it hands down to. None can print anything wrong --
+      // both subtractions are wrapped in Math.max(0, ...) and Fmt.duration
+      // returns "" at or below 0. One behaviour does change, knowingly: a
+      // finished turn that handed a command off to the background stops
+      // PULSING that row inside its unrolled tally. The row stays fully
+      // visible (breath at 0 is exactly 1.0), it is not drawn at all unless
+      // you click the tally open, and the tray above the composer is what owns
+      // "still running" -- TurnDelegate says as much where it deleted that
+      // row's live copy.
+      delegate: TurnDelegate {
+        id: turnCell
+        accent: panel.accent
+        nowMs: (turnCell.pending || !turnCell.landed) ? panel.nowMs : 0
+      }
 
       // --------------------------------------------------------- sticking
       // BottomToTop pins the view to the newest token for free WHILE THE
@@ -604,6 +708,13 @@ PanelWindow {
         if (!wheelAnim.running) wheelTargetY = contentY
         wheelTargetY = clampScrollY(wheelTargetY - n * wheelStep)
         if (wheelTargetY === contentY) return
+        // An upward run is a user gesture that owns the view, exactly like the
+        // pixel path's dy < 0: release the stick HERE or the next
+        // contentHeight change -- a token landing, or the tool batch folding
+        // its tallies after the turn settles -- yanks the view straight back
+        // to the bottom mid-read. The pixel path always did this; the notch
+        // path never did, and `stuck` outlived the scroll-up.
+        if (n > 0) stuck = false
         // A wheel move is a user gesture: it takes the view, so the pin
         // window opened by an append is cancelled rather than fought over.
         pinFrames = 0
@@ -629,6 +740,16 @@ PanelWindow {
       // angle deltas by 120) was the first attempt here and turned a
       // two-finger drag into a crawl that could not cross a screen, let alone
       // reach the bottom.
+      //
+      // The downward re-stick below needs downward INTENT, not one stray
+      // event: touchpad gestures jitter in both directions, and on a short
+      // conversation the whole scroll range sits within the stick slack of
+      // the bottom -- a single +2px event in the middle of an upward scroll
+      // re-stuck the view and snapped it to the bottom, mid-gesture. So the
+      // downward pixels ACCUMULATE, and an upward tick resets the count.
+      readonly property real downIntentPx: 16
+      property real downAcc: 0
+
       function wheelPixels(dy) {
         if (wheelAnim.running) wheelAnim.stop()
         pinFrames = 0
@@ -644,10 +765,17 @@ PanelWindow {
         // view parked at the bottom (a short up-scroll clamped back) must
         // still re-engage on the next downward tick.
         if (dy < 0) {
+          downAcc = 0
           stuck = false
         } else if (visibleArea.heightRatio > 0.01 && belowBottom <= stickSlack) {
-          contentY = -height
-          stuck = true
+          downAcc += dy
+          if (downAcc >= downIntentPx) {
+            downAcc = 0
+            contentY = -height
+            stuck = true
+          }
+        } else {
+          downAcc = 0
         }
       }
 
@@ -937,6 +1065,55 @@ PanelWindow {
       height: implicitHeight
       accent: panel.accent
       entry: entry
+    }
+
+    // ------------------------------------------------------------------ speak
+    // Speech gets its own strip, separate from the tray: "you are being
+    // spoken to" is a different sentence from "a task is running", and both
+    // can be true at once. Yellow, breathing, gone the moment it ends.
+    Rectangle {
+      id: speakStrip
+      anchors { left: parent.left; right: parent.right; bottom: tray.top
+                leftMargin: 10; rightMargin: 10; bottomMargin: 4 }
+      height: PiSession.speakJob ? 24 : 0
+      visible: height > 0
+      color: Theme.alpha(Theme.yellow, 0.10)
+      radius: 6
+      clip: true
+
+      Behavior on height {
+        NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
+      }
+
+      Text {
+        id: speakMark
+        anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
+        text: "🔈"
+        opacity: panel.breath
+        font.pixelSize: Style.font.panelMeta
+        renderType: Text.QtRendering
+      }
+
+      Text {
+        anchors { left: speakMark.right; leftMargin: 8; right: speakAge.left; rightMargin: 8
+                  verticalCenter: parent.verticalCenter }
+        text: String(PiSession.speakJob ? PiSession.speakJob.label || "speaking" : "")
+        color: Theme.subtext0
+        elide: Text.ElideRight
+        font.family: Style.font.panelMono
+        font.pixelSize: Style.font.panelMeta
+        renderType: Text.QtRendering
+      }
+
+      Text {
+        id: speakAge
+        anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+        text: PiSession.speakJob ? fmt.duration(panel.nowMs - PiSession.speakJob.since) : ""
+        color: Theme.overlay0
+        font.family: Style.font.panelMono
+        font.pixelSize: Style.font.panelMeta
+        renderType: Text.QtRendering
+      }
     }
 
     // ------------------------------------------------------------------ tray
