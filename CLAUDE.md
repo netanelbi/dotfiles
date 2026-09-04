@@ -67,12 +67,13 @@ stow -D package_name
 | `SUPER + Return` | Terminal (kitty) |
 | `CTRL + ALT + T` | Terminal (alternative) |
 | `CTRL + ALT + W` | Terminal in ~/Work |
-| `SUPER + D` | Launcher (rofi) |
-| `SUPER + Q` | Close window |
+| `SUPER + D` | Launcher (quickshell) |
+| `SUPER + A` | Toggle the assistant panel (Ori) |
+| `SUPER + Q` | Close the assistant panel if it is up, else close the window |
 | `SUPER + SHIFT + Q` | Exit Hyprland |
 | `SUPER + F` | Toggle floating |
 | `SUPER + SHIFT + F` | Fullscreen |
-| `SUPER + V` | Clipboard history (rofi) |
+| `SUPER + V` | Clipboard history (quickshell) |
 | `SUPER + L` | Lock screen |
 | `SUPER + E` | File manager (Thunar) |
 | `SUPER + ~` | Toggle scratchpad |
@@ -88,12 +89,37 @@ stow -D package_name
 | `SUPER + Print` | Screenshot selection to file |
 | `Print` | Screenshot selection to clipboard |
 | `SHIFT + Print` | Screenshot full screen |
-| `SUPER + K` | Calculator (rofi) |
+| `SUPER + K` | Calculator (quickshell) |
 | `SUPER + R` | Resize window (cycle ratios) |
 | `SUPER + Escape` | Power menu |
 | `SUPER + . / ,` | Next/previous workspace |
 | `SUPER + 1-0` | Switch workspace |
 | `SUPER + SHIFT + 1-0` | Move window to workspace |
+
+### Inside the assistant panel
+
+Verified against `assistant/AssistantPanel.qml` and `assistant/CommandBar.qml`.
+They were undocumented anywhere, and the panel's own on-screen hint is gated on
+an EMPTY transcript — which the boot-time session restore means you essentially
+never see again after the first run. So this table is the only place they exist.
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Send |
+| `Shift + Enter` | Newline |
+| `Ctrl + C` | Abort the running turn |
+| `Ctrl + N` | New conversation |
+| `Ctrl + R` | Session history picker |
+| `Ctrl + V` | Attach an image from the clipboard |
+| `Shift + Tab` | Cycle the thinking level (arrives as `Key_Backtab`) |
+| `Ctrl + ↓` | Jump to the newest turn, and stick there |
+| `Ctrl + ↑` | Jump to the oldest turn |
+| `Esc` | Close the panel / dismiss the completion popup |
+| `/` | Slash-command completion (`Tab`/`↑`/`↓` to pick) |
+
+Panel-owned commands, which never reach the model: `/model` `/effort` `/new`
+`/compact` `/name` `/export` `/restart`. See `runPanelCommand` in
+`PiSession.qml`.
 
 ## Useful Commands
 
