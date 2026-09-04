@@ -126,7 +126,19 @@ Scope {
         out.push("  extent=none  (no measured delegates)")
         return out.join("\n")
       }
-      out.push("  extent=" + (hi - lo).toFixed(1)
+      // The delegate edges, raw. `yPos`/`visibleArea` must NOT be asserted on:
+      // it is a CACHED value refreshed by updateVisible(), not computed on
+      // read, so in one atomic sample it can be stale against the contentY and
+      // originY printed beside it. Measured reporting 0.985 -- exactly
+      // 1-hRatio, i.e. "at the end" -- while contentY was 918.6px short of the
+      // real end. It fails clean AND dirty, so a check on it gives false passes
+      // and false alarms with no way to tell them apart.
+      //
+      // firstEnd/lastEnd are read straight off the built delegates, so "is the
+      // view at the bottom" can be asked without trusting contentHeight,
+      // originY or the cache: contentY + height >= lastEnd - slack.
+      out.push("  firstY=" + lo.toFixed(1) + "  lastEnd=" + hi.toFixed(1)
+        + "  extent=" + (hi - lo).toFixed(1)
         + "  ghost=" + (l.contentHeight - (hi - lo)).toFixed(1))
 
       // IS THE VIEWPORT ACTUALLY COVERED BY BUILT DELEGATES.
