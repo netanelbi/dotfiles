@@ -315,6 +315,31 @@ Quickshell re-acquires the name on its own the moment a squatter exits -- it
 logs "Registration will be attempted again if the active service is
 unregistered" and means it.
 
+### QML errors are NOT invisible — read `qs log` first
+The folklore in this repo said quickshell's output goes to /dev/null so runtime
+QML errors cannot be seen, and that panel code must be checked with `qmllint`
+and never with logs. That is wrong, and believing it cost real debugging time.
+
+Only **stdout/stderr** go to /dev/null. Quickshell keeps its **own** log, and
+binding failures land in it with file and line:
+
+```bash
+qs -p ~/.config/quickshell log            # whole log
+qs -p ~/.config/quickshell log -t 50      # last 50 lines
+qs -p ~/.config/quickshell log -f         # follow (prints the backlog first)
+qs -p ~/.config/quickshell log -r <rules> # QT_LOGGING_RULES filter
+```
+
+That is how `WARN scene: @widgets/Windows.qml[434:11]: Unable to assign
+[undefined] to bool` was found — a Repeater sets a delegate's `index` to -1
+while the item is being removed, so a guard with an upper bound and no lower
+one read `visibleFlags[-1]`. It had been warning on every window close.
+
+Signal is high: the entire log held **two** distinct QML complaints, one of
+them a file already deleted. Anything in there is worth reading. Use `qmllint`
+for syntax and `qs log` for runtime — they catch different things, and neither
+substitutes for the other.
+
 ### Layer-shell windows must not resize while animating
 A layer surface that changes size has to wait for a compositor configure/ack
 round trip before it may commit, so a `PanelWindow` whose `implicitHeight` is

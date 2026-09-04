@@ -110,8 +110,21 @@ ScriptWidget {
   property var visibleFlags: []
   property int overflowCount: 0
 
+  // Total on purpose: it is read from a BINDING, and a binding that evaluates
+  // to undefined is a silent hole rather than a failure.
+  //
+  // The lower bound is the one that was missing, and -1 is not hypothetical:
+  // a Repeater sets a delegate's `index` to -1 while the item is being
+  // removed, so `listed` re-evaluated during a window closing asked for
+  // visibleFlags[-1]. That is undefined, `-1 < length` is true so the upper
+  // guard let it through, and the log said so on every window close:
+  //
+  //   WARN scene: @widgets/Windows.qml[434:11]: Unable to assign [undefined] to bool
+  //
+  // `=== true` rather than a truthiness cast, so a flags array that ever holds
+  // something other than a bool reads as false here instead of propagating it.
   function isShown(i) {
-    return i < visibleFlags.length ? visibleFlags[i] : true
+    return (i >= 0 && i < visibleFlags.length) ? visibleFlags[i] === true : true
   }
   // The separator owned by entry i: drawn iff some earlier entry survives.
   // Trimmed entries leave holes; the separator must skip over them.
