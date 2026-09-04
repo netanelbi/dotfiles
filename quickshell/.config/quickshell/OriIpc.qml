@@ -94,7 +94,15 @@ Scope {
         + " hRatio=" + l.visibleArea.heightRatio.toFixed(3),
         "cacheBuffer=" + l.cacheBuffer
         + " children=" + kids.length
-        + " avgBuilt=" + (l.count > 0 ? (l.contentHeight / l.count).toFixed(1) : "-")]
+        + " avgBuilt=" + (l.count > 0 ? (l.contentHeight / l.count).toFixed(1) : "-"),
+        // originY is the REAL floor. clampScrollY assumes it is 0 and clamps to
+        // -contentHeight instead, which is only the same thing while nothing has
+        // been prepended -- and a BottomToTop list prepends on every append.
+        "originY=" + l.originY.toFixed(1)
+        + "  realRange=[" + l.originY.toFixed(1) + " .. "
+        + (l.originY + l.contentHeight - l.height).toFixed(1) + "]"
+        + "  assumedRange=[" + (-l.contentHeight).toFixed(1)
+        + " .. " + (-l.height).toFixed(1) + "]"]
       // Seeded from the FIRST measured child rather than from 0, because this
       // list is BottomToTop: its delegates sit at NEGATIVE y. Bounds seeded at
       // 0 therefore pin `hi` to at least 0, which overstates the extent by the

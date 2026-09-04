@@ -315,6 +315,18 @@ Quickshell re-acquires the name on its own the moment a squatter exits -- it
 logs "Registration will be attempted again if the active service is
 unregistered" and means it.
 
+### A scroll/layout measurement taken with the display asleep proves nothing
+Qt renders no frames while the output is in DPMS off, so a ListView never
+relayouts: delegates are not built, `contentHeight` never moves, and any
+assertion over it passes for free. A "520 samples, 0 violations" run was
+produced this way and was worthless — the tell was **one distinct
+`contentHeight` for the whole run**. Awake, the same harness saw 36 distinct
+values swinging 501,733 → 56,196.
+
+Check `hyprctl monitors -j` for `dpmsStatus` before trusting any layout
+measurement, and record how many distinct `contentHeight` values a run saw. One
+value means the code under test never executed.
+
 ### QML errors are NOT invisible — read `qs log` first
 The folklore in this repo said quickshell's output goes to /dev/null so runtime
 QML errors cannot be seen, and that panel code must be checked with `qmllint`
