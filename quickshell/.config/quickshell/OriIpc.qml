@@ -128,6 +128,50 @@ Scope {
       }
       out.push("  extent=" + (hi - lo).toFixed(1)
         + "  ghost=" + (l.contentHeight - (hi - lo)).toFixed(1))
+
+      // IS THE VIEWPORT ACTUALLY COVERED BY BUILT DELEGATES.
+      //
+      // This is the check that survives when the others do not. Bounds
+      // assertions trust contentHeight and originY; both can be wrong at once,
+      // and then a view parked legally still shows blank -- measured, a range
+      // ending 936.6px past the last delegate with every bound satisfied. This
+      // asks the question in the units the user experiences instead: how much
+      // of what you are looking at has nothing drawn in it.
+      //
+      // Intervals are MERGED first because contentItem.children mixes
+      // positioned and pooled items, so they overlap and repeat; summing them
+      // naively over-reports coverage.
+      //
+      // `gap` is the number to judge, not `uncovered`. The list has 12px of
+      // spacing between rows, so a viewport spanning several turns is legally
+      // uncovered by a few tens of pixels. One CONTIGUOUS run much larger than
+      // that is a blank band, which is the bug.
+      var iv = []
+      for (var j = 0; j < kids.length; j++) {
+        var k = kids[j]
+        if (!k.height || k.height <= 0) continue
+        iv.push([k.y, k.y + k.height])
+      }
+      iv.sort(function (a, b) { return a[0] - b[0] })
+      var merged = []
+      for (var m = 0; m < iv.length; m++) {
+        if (merged.length > 0 && iv[m][0] <= merged[merged.length - 1][1])
+          merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], iv[m][1])
+        else merged.push([iv[m][0], iv[m][1]])
+      }
+      var vTop = l.contentY, vBot = l.contentY + l.height
+      var covered = 0, biggest = 0, cursor = vTop
+      for (var p = 0; p < merged.length; p++) {
+        var s = Math.max(merged[p][0], vTop), e = Math.min(merged[p][1], vBot)
+        if (e <= s) continue
+        if (s > cursor) biggest = Math.max(biggest, s - cursor)
+        covered += e - s
+        cursor = Math.max(cursor, e)
+      }
+      if (cursor < vBot) biggest = Math.max(biggest, vBot - cursor)
+      out.push("  viewport=[" + vTop.toFixed(1) + " .. " + vBot.toFixed(1) + "]"
+        + "  uncovered=" + (l.height - covered).toFixed(1)
+        + "  gap=" + biggest.toFixed(1))
       return out.join("\n")
     }
 
