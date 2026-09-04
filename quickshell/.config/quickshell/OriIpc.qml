@@ -84,7 +84,24 @@ Scope {
     function scroll(): string {
       var l = ScrollProbe.list
       if (!l) return "no transcript registered"
-      var kids = l.contentItem.children
+      // itemAtIndex(), NOT contentItem.children.
+      //
+      // `children` mixes POSITIONED delegates with POOLED ones the view is
+      // holding for reuse, and a pooled item keeps whatever `y` it last had.
+      // That contamination is not theoretical and it fooled this probe's own
+      // consumers: `lastEnd` came back as +2686.7 while the newest turn ended
+      // at -18.0 in every other sample, and one read reported height=-137.0.
+      // Two reviewers were ALSO fooled by it earlier tonight, inferring originY
+      // off the same array and reporting a divergence that did not exist.
+      //
+      // itemAtIndex(i) returns the delegate for a model index or null when it
+      // has not been created, so the walk sees exactly the live ones. It is
+      // O(count) per call; this is a diagnostic and count is in the hundreds.
+      var kids = []
+      for (var q = 0; q < l.count; q++) {
+        var it = l.itemAtIndex(q)
+        if (it) kids.push(it)
+      }
       var out = ["contentY=" + l.contentY.toFixed(1)
         + " height=" + l.height.toFixed(1)
         + " contentHeight=" + l.contentHeight.toFixed(1)
