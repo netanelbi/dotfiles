@@ -20,6 +20,8 @@ if [ "$was_visible" == "false" ]; then
 
     # Only show notification if empty
     if [ "$count" -eq 0 ]; then
-        notify-send -t 1500 -u low "󰝖 Scratchpad" "Scratchpad is empty"
+        # -a names the app so the notification daemon's block list
+        # (prefix match on app-name) catches it; the icon-only summary does not.
+        notify-send -a "Scratchpad" -t 1500 -u low "󰝖 Scratchpad" "Scratchpad is empty"
     fi
 fi
