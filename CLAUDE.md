@@ -369,16 +369,32 @@ ori scroll` reports exactly that (`gap`), and judging it needs `ghost >= 0`,
 `children ≈ count + 1`, and the view at rest.
 
 ### A scroll/layout measurement taken with the display asleep proves nothing
-Qt renders no frames while the output is in DPMS off, so a ListView never
-relayouts: delegates are not built, `contentHeight` never moves, and any
-assertion over it passes for free. A "520 samples, 0 violations" run was
-produced this way and was worthless — the tell was **one distinct
-`contentHeight` for the whole run**. Awake, the same harness saw 36 distinct
-values swinging 501,733 → 56,196.
+**Check `hyprctl monitors -j` for `dpmsStatus` before trusting ANY layout
+measurement, and record how many distinct `contentHeight` values the run saw.
+One value means the code under test never executed.**
 
-Check `hyprctl monitors -j` for `dpmsStatus` before trusting any layout
-measurement, and record how many distinct `contentHeight` values a run saw. One
-value means the code under test never executed.
+The mechanism, measured: `QQuickListView`'s layout is a POLISH PASS driven by
+the render loop, so with no frames it never runs — but delegate `height`
+bindings are ordinary synchronous JS and keep firing as text lays out. So
+**heights grow while `y` stays where the last layout put it.** Nothing heals
+without a frame, which is why the damage looks permanent and why re-opening the
+panel "fixes" it (re-exposing the surface forces one frame).
+
+This has produced four separate false conclusions in one evening, so treat any
+of the following as a dpms check rather than a finding:
+
+* A "520 samples, 0 violations" proof — worthless; the tell was one distinct
+  `contentHeight` for the whole run. Awake, the same harness saw 36 values
+  swinging 501,733 → 56,196.
+* "Delegates overlap each other by 2,397px and it never self-heals." Asleep:
+  `overlap = 3147.7`. `hyprctl dispatch dpms on` and nothing else: `overlap =
+  0.0`, with 997px of queued relayout flushing on the first frame. Reverse test:
+  dpms off → ask → wait 15s → `overlap = 29,681.9`; wake → `0.0`.
+* `lastEnd` overshooting `newestEnd`, and `ghost` going negative — both are the
+  same frozen-`y`/grown-`height` artefact.
+
+Corollary nobody has tested yet: a panel HIDDEN while the display is awake
+should freeze the same way, since it also stops getting frames.
 
 ### QML errors are NOT invisible — read `qs log` first
 The folklore in this repo said quickshell's output goes to /dev/null so runtime
