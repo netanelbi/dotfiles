@@ -371,6 +371,7 @@ Singleton {
     // usage numbers describe, so those go with it.
     onCountChanged: {
       if (count > 0) return
+      root.streamRow = -1
       root.toolLog = ({})
       root.turnCost = ({})
       root.usageInput = 0
@@ -392,10 +393,35 @@ Singleton {
   // bar indicator cannot disagree about them, and because a readout that
   // survives the window being closed has to outlive the window.
 
-  // The row currently being written. `count` is notifiable so this re-binds on
-  // append, and the row object it hands back notifies on setProperty, so a
-  // binding through it follows the stream token by token.
-  readonly property var liveTurn: turnModel.count > 0 ? turnModel.get(turnModel.count - 1) : null
+  // ------------------------------------------------------- the streaming sink
+  // WHICH ROW THE ANSWER IN FLIGHT IS BEING WRITTEN INTO, -1 for none.
+  //
+  // This used to be "the last assistant row", derived on every delta by
+  // lastAssistant(). That works only while the newest assistant row and the row
+  // that OWNS the answer are the same row, and a steer is exactly the case where
+  // they are not: the question goes in under the answer still being written, so
+  // the newest rows are [answer][question] and the deltas still belong to the
+  // one above. Deriving the sink put the redirected answer under the old
+  // question and welded it onto the old text with no break; the version that
+  // split the rows up front put the OLD answer under the new question instead.
+  // Neither can be right, because the fault is the derivation.
+  //
+  // So it is explicit and it is the ONE key: the text sink, the tool log
+  // (onActiveToolChanged) and the cost receipt (recordCost) all address this row
+  // and therefore cannot disagree about which turn they are describing. That
+  // agreement used to be luck -- both of those keyed off turnModel.count - 1,
+  // which after a steer is a USER row, so every tool call and the whole `◇ 42s ·
+  // 900 tok` receipt were written onto a row TurnDelegate never draws.
+  //
+  // Set at the three places a row is opened for streaming: startTurn, the seam
+  // (splitAtSeam), and grow's own "a turn the panel did not open".
+  property int streamRow: -1
+
+  // The row currently being written. Reads `streamRow` and `count` so it
+  // re-binds when either moves, and the row object it hands back notifies on
+  // setProperty, so a binding through it follows the stream token by token.
+  readonly property var liveTurn: (root.streamRow >= 0 && root.streamRow < turnModel.count)
+    ? turnModel.get(root.streamRow) : null
 
   // The tool in flight right now, "" when none. Gated on `pending` so a settled
   // turn cannot report a tool that ingest() has already cleared.
@@ -416,11 +442,35 @@ Singleton {
       root.outputBase = root.usageOutput
       return
     }
+    root.recordCost(root.streamRow)
+  }
+
+  // The receipt for one ANSWER, which is not the same as one request. `busy`
+  // spans a steer -- agent_settled fires once, after both turns -- so paying
+  // only on the busy edge would leave the interrupted answer with no `◇ 42s ·
+  // 900 tok` line at all. splitAtSeam() calls this for the row it is closing and
+  // then restarts the clock, so each answer is billed for its own half.
+  //
+  // Addressed by ROW rather than by turnModel.count - 1, which was only ever the
+  // right row by coincidence: after a steer the last row is the question.
+  function recordCost(row) {
+    if (row < 0 || row >= turnModel.count) return
     if (root.turnStartedAt <= 0) return
+    // A row with nothing in it gets no receipt. `receiptText` is non-empty as
+    // soon as a cost exists, so billing an empty row draws a bare `◇ 0.4s`
+    // floating between two turns -- the artefact TurnDelegate's receiptText
+    // comment records hunting once already, whose fix assumed `cost` was null
+    // for exactly this shape. The seam makes it reachable twice as often: it
+    // opens a second row per request, and a redirect that is aborted or errors
+    // before its first token never fills it.
+    //
+    // rowHasContent and not a test of its own, because a test of its own is how
+    // reasoning got left out of `written` the first time -- and a 117-second
+    // think before the first token is a row that has plainly earned its `◇`.
+    if (!root.rowHasContent(row)) return
     var next = {}
     for (var k in root.turnCost) next[k] = root.turnCost[k]
-    next[turnModel.count - 1] = { ms: Date.now() - root.turnStartedAt,
-                                  tokens: root.turnOutput() }
+    next[row] = { ms: Date.now() - root.turnStartedAt, tokens: root.turnOutput() }
     root.turnCost = next
   }
 
@@ -567,8 +617,10 @@ Singleton {
   }
 
   onActiveToolChanged: {
-    var row = turnModel.count - 1
-    if (row < 0) return
+    // The row the answer is going into, NOT the last row -- after a steer those
+    // are different, and the last one is the question. See `streamRow`.
+    var row = root.streamRow
+    if (row < 0 || row >= turnModel.count) return
 
     var list = (root.toolLog[row] || []).slice()
     if (root.activeTool !== "") {
@@ -779,9 +831,9 @@ Singleton {
     // That stopped being true the moment the agent could be woken by something
     // other than the user. The bash tool backgrounds a long command and wakes
     // the agent when it finishes (sendMessage with triggerTurn), and the first
-    // delta of THAT turn arrived with no pending row -- so lastAssistant()
-    // handed back the answer that had already settled, and the new turn was
-    // appended to the end of its last sentence:
+    // delta of THAT turn arrived with no pending row -- so the sink handed back
+    // the answer that had already settled, and the new turn was appended to the
+    // end of its last sentence:
     //
     //   ...ticking away in the background as PID 305128.BACKGROUNDED — done, exit 0.
     //
@@ -789,10 +841,18 @@ Singleton {
     // its own. Opening a row when there is no pending one is the whole fix, and
     // it is general: any turn the agent starts by itself lands correctly now,
     // not just this one.
-    var i = lastAssistant()
-    if (i < 0 || !turnModel.get(i).pending) {
+    //
+    // The test is unchanged in meaning and only in its subject: `streamRow`
+    // rather than lastAssistant(). A settled row is still not a sink, an
+    // out-of-range one never was, and a wake with no open turn still opens its
+    // own row -- it just says so about the row that owns the answer instead of
+    // about whichever assistant row happens to be last.
+    var i = root.streamRow
+    if (i < 0 || i >= turnModel.count || turnModel.get(i).role !== "assistant"
+        || !turnModel.get(i).pending) {
       appendTurn("assistant", "", "", "", true, "")
       i = turnModel.count - 1
+      root.streamRow = i
       // The agent is demonstrably working -- it is mid-sentence. Nothing else
       // is going to set this, because nothing here asked it a question.
       root.busy = true
@@ -829,8 +889,21 @@ Singleton {
     // 2 is the resting value -- see `sentState` in TurnDelegate; the two paths
     // that actually have something to report (ask/steer) knock it down to 0
     // straight after appending.
-    turnModel.append({ role: role, text: text, thinking: thinking,
-                       tool: tool, pending: pending, images: images, sent: 2 })
+    turnModel.append(turnRow(role, text, thinking, tool, pending, images))
+  }
+
+  // The row itself, so that appending and inserting cannot drift apart -- the
+  // role set has to be identical, for the reason given above.
+  function turnRow(role, text, thinking, tool, pending, images) {
+    return { role: role, text: text, thinking: thinking,
+             tool: tool, pending: pending, images: images, sent: 2 }
+  }
+
+  // Only the seam uses this, and only to put a redirect's answer under its own
+  // question when a later steer is already sitting below it. Every caller must
+  // fix the row-keyed maps first -- see shiftRowKeys.
+  function insertTurn(at, role, text, thinking, tool, pending, images) {
+    turnModel.insert(at, turnRow(role, text, thinking, tool, pending, images))
   }
 
   // ----------------------------------------------------- delivery receipts
@@ -944,23 +1017,36 @@ Singleton {
       // nothing to detach.
       control({ type: "__detach", graceMs: 300 })
 
-      // The stream always writes to lastAssistant(), so the ROW ORDER is the
-      // whole problem here. Appending only the question put it BELOW the row
-      // the redirected answer then streamed into -- the reply appeared above
-      // the message it was replying to, and the message it answered sat at the
-      // bottom of the panel with nothing under it.
+      // ONLY THE QUESTION IS APPENDED HERE. The assistant row is not touched
+      // and no new one is opened, because at this instant nothing has changed
+      // about the answer in flight: pi has taken the steer and is still writing
+      // the OLD one, into the row that already owns it.
       //
-      // So the turn in flight is closed where it stands, the question goes
-      // after it, and a fresh assistant row opens for what comes back. Three
-      // appends, no insert: toolLog is keyed by row index, and inserting would
-      // shift every call already logged onto the wrong turn. A pre-steer row
-      // with no text is not wasted -- its tool calls are still logged against
-      // it, so it settles into the receipt for the work you interrupted.
-      var cur = lastAssistant()
-      if (cur >= 0) {
-        turnModel.setProperty(cur, "pending", false)
-        turnModel.setProperty(cur, "tool", "")
-      }
+      // Both earlier attempts guessed at the boundary from here and both were
+      // wrong in opposite directions -- splitting up front put the old answer
+      // under the new question, and not splitting welded the new answer onto the
+      // end of the old one under the old question. There is nothing to guess:
+      // the boundary is on the wire. Captured live across a mid-turn steer,
+      // seconds from the connect:
+      //
+      //   10.73 >> steer                       (accepted immediately)
+      //   ...   8.2s of deltas, ALL of them the OLD answer ...
+      //   18.92 << message_end role=assistant   the interrupted answer, complete
+      //   18.92 << turn_end
+      //   18.92 << turn_start                   pi opens a NEW TURN
+      //   18.92 << message_end role=user        pi echoes the steer back
+      //   18.92 << message_start                the redirected answer begins
+      //   20.24 << turn_end / agent_end / agent_settled   ONCE, across both
+      //
+      // pi merges nothing: it finishes the answer, ends the turn and opens
+      // another, and its own session file records the same four entries in the
+      // same order, so this is not an artefact of the stream. The `message_end
+      // role=user` line is the one the panel keys on, matched against the text
+      // stashed below -- see splitAtSeam for why the echo and not the turn_start
+      // just above it.
+      var queued = root.steerQueue.slice()
+      queued.push(msg)
+      root.steerQueue = queued
       appendTurn("user", msg, "", "", false, labels.join("\n"))
       // Already on the wire -- but pi holds a steer until the tool call in
       // flight returns and only then delivers it, so "sent" is the whole truth
@@ -969,7 +1055,6 @@ Singleton {
       // used to look like nothing happening.
       markSent(1)
       root.awaitingRead = true
-      appendTurn("assistant", "", "", "", true, "")
       root.appended()
       root.asked()
       return true
@@ -979,10 +1064,192 @@ Singleton {
     return true
   }
 
+  // EVERY steer that has gone out and not yet been echoed back, in the order it
+  // was sent. A list and not a single slot, which is what this was first, and
+  // the single slot restored the original welding bug in full:
+  //
+  //   [88] user      write exactly 900 words ... the anchor
+  //   [89] assistant ...anchors have always held everything.FIRSTSTEER
+  //   [90] user      STOP. forget the anchor. reply FIRSTSTEER   <- nothing under it
+  //   [91] user      no, ignore that. reply SECONDSTEER
+  //   [92] assistant SECONDSTEER
+  //
+  // Two steers 1.5s apart, five rows, ONE seam. The second overwrote the slot,
+  // pi echoed the first, the match failed, and the first redirect welded onto
+  // the tail of the essay under the anchor question -- character for character
+  // the bug this whole rework exists to kill. Not contrived either: steer, see
+  // nothing for eight seconds because the model is still reasoning, steer again.
+  //
+  // Matching by value against a LIST is what makes that safe, and it keeps the
+  // property the single slot had -- an ordinary turn echoes its own question,
+  // which is in no one's queue, so a stale entry cannot split anything.
+  property var steerQueue: []
+
+  // The text of a message pi echoed back, as one string. Same walk rehydrate()
+  // does over a session entry, because it is the same shape -- content is either
+  // a bare string or a block list, and only the text blocks are the message.
+  function echoedText(m) {
+    var c = m ? m.content : null
+    if (typeof c === "string") return c
+    var out = ""
+    for (var i = 0; i < (c || []).length; i++)
+      if (c[i] && c[i].type === "text") out += c[i].text
+    return out
+  }
+
+  // Match an echo against the outstanding steers, consume it, and split. Removed
+  // BY POSITION rather than popped from the head: pi delivers in the order it
+  // received them, so the head is what normally matches, but a queue that
+  // assumed it would desync permanently the first time that ever failed to hold.
+  // Returns whether this echo was a seam at all.
+  function takeSteer(text) {
+    for (var i = 0; i < root.steerQueue.length; i++) {
+      if (root.steerQueue[i] !== text) continue
+      var q = root.steerQueue.slice()
+      q.splice(i, 1)
+      root.steerQueue = q
+      root.splitAtSeam(text)
+      return true
+    }
+    return false
+  }
+
+  // Whether a row is worth drawing: the answer, the work, or the reasoning. The
+  // one predicate for "this row has something on it", so the two places that ask
+  // -- recordCost and the seam's drop -- cannot answer differently.
+  //
+  // `thinking` is in it because leaving it out is a mistake this file has now
+  // made twice. The original `written` gate tested text and tool calls only and
+  // missed a nine-second reasoning turn; a capture since has measured 117
+  // SECONDS of thinking_delta before the first text_delta on a "900 words"
+  // prompt. A steer landing in that window closes a row carrying nothing but
+  // reasoning -- which the delegate's head slot does draw, and which then earns
+  // the `◇` that slot turns into when the turn settles.
+  function rowHasContent(row) {
+    if (row < 0 || row >= turnModel.count) return false
+    var r = turnModel.get(row)
+    return String(r.text) !== "" || String(r.thinking) !== ""
+        || (root.toolLog[row] || []).length > 0
+  }
+
+  // The seam. Everything before it belongs to the answer that was interrupted;
+  // everything after it is the reply to the steer.
+  //
+  // Keyed on pi ECHOING THE STEER BACK -- `message_end` with role "user" and the
+  // text we sent -- and not on the `turn_start` just before it, which is
+  // where this first landed and which worked. The difference is what the frame
+  // MEANS. `turn_start` is per LLM round, not per request: measured, an ordinary
+  // tool-using request emits two and one with a background job emits three. The
+  // first one after a steer is the seam only because pi drains its queue at
+  // every turn boundary -- true, undocumented, and a scheduler detail rather
+  // than a statement. The echo is the statement: the message has left the queue
+  // and entered the conversation.
+  //
+  // Counted over three captures: seven turn_start frames, five user echoes, and
+  // the two without one are exactly the two non-seams (the round after a tool
+  // call, and a background-job wake). An echo never arrives without a
+  // turn_start, so this can only fire where the old gate fired, and it declines
+  // precisely the frames that were being declined by the flag alone.
+  //
+  // Matched EXACTLY, not trimmed. What was sent is `msg`, already trimmed by
+  // ask(), and pi echoes what it received -- so trimming this end could only
+  // hide a genuine mismatch, and a mismatch has to fall through rather than
+  // split at the wrong place.
+  //
+  // Ordering is not a hazard: between the turn boundary and this echo there is
+  // only queue_update and the user message's own message_start, so no assistant
+  // delta can land in the gap and find the old row.
+  function splitAtSeam(text) {
+    // Close the interrupted answer where pi ended it, and pay it. `busy` spans
+    // both turns, so onBusyChanged will only ever bill the second one -- without
+    // this the answer you interrupted loses its `◇ 42s · 900 tok` line.
+    //
+    // Unless it produced NOTHING, in which case it is dropped rather than
+    // closed. The steer branch's argument for keeping a text-empty row -- it is
+    // still the receipt for the work you interrupted -- rests entirely on that
+    // work existing, and rowHasContent is what asks. A row that owns CALLS is
+    // kept and is not blank: Fmt.tools() emits a tool piece for a logged call
+    // whether or not there is text around it, so the row renders its ToolLine.
+    // Same for reasoning, which the delegate's head slot draws. Only a row with
+    // none of the three draws as the blank band TurnDelegate's receiptText
+    // comment records hunting once already.
+    //
+    // Safe to remove by index: nothing below the interrupted answer is anything
+    // but a steer's question, and neither map holds a key on a user row.
+    if (root.streamRow >= 0 && root.streamRow < turnModel.count) {
+      if (!root.rowHasContent(root.streamRow)) {
+        turnModel.remove(root.streamRow)
+      } else {
+        root.recordCost(root.streamRow)
+        turnModel.setProperty(root.streamRow, "pending", false)
+        turnModel.setProperty(root.streamRow, "tool", "")
+      }
+    }
+    // The clock and the token baseline restart with the answer they describe,
+    // so the second receipt measures the redirect and not the whole request.
+    root.turnStartedAt = Date.now()
+    root.outputBase = root.usageOutput
+    root.genMs = 0
+    root.lastAppendAt = Date.now()
+
+    // UNDER ITS OWN QUESTION, which with two steers outstanding is not the end
+    // of the list. pi answers them one at a time, so at the first seam the rows
+    // already read [answer][steer 1][steer 2] and appending would file steer 1's
+    // reply under steer 2 -- the same misattribution by a different route.
+    //
+    // Found by searching for the question rather than by remembering where it
+    // was put: an index stashed at send time goes stale the moment the branch
+    // above drops a row, and the search cannot be wrong in a way that matters.
+    // From the END, so a text sent twice resolves to the most recent copy.
+    //
+    // This is the insert the steer branch's "three appends, no insert" note
+    // warns off, and the warning is about direction: that note is protecting
+    // rows ALREADY LOGGED against being shifted out from under their tool calls.
+    // Those all sit above this point. shiftRowKeys enforces it rather than
+    // leaving it argued.
+    var into = turnModel.count
+    for (var i = turnModel.count - 1; i >= 0; i--) {
+      if (turnModel.get(i).role !== "user") continue
+      if (String(turnModel.get(i).text) !== text) continue
+      into = i + 1
+      break
+    }
+    if (into >= turnModel.count) {
+      appendTurn("assistant", "", "", "", true, "")
+    } else {
+      root.shiftRowKeys(into)
+      insertTurn(into, "assistant", "", "", "", true, "")
+    }
+    root.streamRow = into
+    root.appended()
+  }
+
+  // Move every row-keyed entry at or above `from` up by one, so the maps survive
+  // an insert. In practice this moves nothing -- both maps only ever hold
+  // assistant rows, and the only rows below an inserted seam row are the later
+  // steers' questions -- but a key left behind would silently reattribute a tool
+  // call to the wrong turn, which is not a failure anyone would trace.
+  function shiftRowKeys(from) {
+    var tl = {}, tc = {}
+    for (var a in root.toolLog)
+      tl[Number(a) >= from ? Number(a) + 1 : Number(a)] = root.toolLog[a]
+    for (var b in root.turnCost)
+      tc[Number(b) >= from ? Number(b) + 1 : Number(b)] = root.turnCost[b]
+    root.toolLog = tl
+    root.turnCost = tc
+  }
+
   // Open a turn: the user's question, an empty assistant row to stream into,
   // and the question queued for the agent. Shared by ask() and the steer path,
   // which defers here until the aborted turn settles.
   function startTurn(msg, blocks, labels) {
+    // The head of a request is the catch-all for a steer that outlived its turn:
+    // abort() clears `busy` and deliberately returns WITHOUT settleTurn, so
+    // ctrl+C on a steered turn used to leave the entry queued, and the next
+    // request's first boundary split it into [question][empty answer][answer]
+    // with a receipt billed on the aborted turn's clock. Every user-initiated
+    // request passes through here, which is why it belongs here.
+    root.steerQueue = []
     root.busy = true
     root.settledAtMs = 0
     // A turn opens at full flow, so the first seconds -- before a single token
@@ -999,6 +1266,7 @@ Singleton {
     // The assistant's turn exists before a single token arrives, so the view has
     // a row to stream into and the conversation never visibly jumps.
     appendTurn("assistant", "", "", "", true, "")
+    root.streamRow = turnModel.count - 1
     root.appended()
     root.asked()
 
@@ -1019,6 +1287,7 @@ Singleton {
     if (root.warm) flush()
     else control({ type: "__spawn" })
   }
+
 
   // -------------------------------------------------------------- clipboard
   // Pasting an image. Wayland has no "give me the clipboard as bytes" call in
@@ -1237,8 +1506,62 @@ Singleton {
     }
   }
 
+  // Cold, with a question waiting for a child that is still being spawned.
+  // There is nothing to send `abort` to -- pi does not exist yet -- and this
+  // used to return on that fact and do nothing at all. But `busy` is already
+  // true, the composer's placeholder says "ctrl+c to stop", and the composer
+  // ACCEPTS the key (event.accepted = true), so the one moment a stop is most
+  // wanted -- the 6-7s cold spawn -- was the one moment the key vanished.
+  //
+  // Cancelling the QUEUE is the whole of it: flush() is what would have sent
+  // the question, and dropping `pending` leaves it nothing to send. The spawn
+  // itself is deliberately left running -- it is seconds from up, the next
+  // question wants it warm, and killing it would make a cancel cost more than
+  // the thing cancelled.
+  function cancelQueued() {
+    root.pending = ""
+    root.pendingImages = []
+    root.awaitingRead = false
+    root.steerQueue = []
+    // Nothing ran, so there is nothing to bill -- and the clock is what decides
+    // that. `busy` going false is what makes onBusyChanged write a turnCost
+    // entry, and it has to go false BEFORE the row is removed, or the entry
+    // lands on an index that no longer means what it meant and is inherited by
+    // whichever row takes it next. Zeroing the clock is the cleaner half of the
+    // same fix: recordCost declines outright.
+    root.turnStartedAt = 0
+    root.busy = false
+    // The empty assistant row startTurn() opened has nothing to become: no
+    // text, no tool calls, and now no answer coming. Left behind it is the
+    // stray blank band with a `◇` receipt on it that TurnDelegate warns
+    // about. It is the LAST row, so dropping it shifts no index toolLog is
+    // keyed by.
+    var i = turnModel.count - 1
+    if (i >= 0 && turnModel.get(i).role === "assistant"
+        && turnModel.get(i).text === "" && turnModel.get(i).pending) {
+      turnModel.remove(i)
+      root.streamRow = -1
+    }
+    // 2 in the ticks' own vocabulary, which the delegate reads as "there is
+    // nothing left to wait for" -- and there is not. Left at 0 the question's
+    // rail would breathe forever, still waiting on a send that is never coming.
+    // The notice is what says which of the two it was.
+    markSent(2)
+    root.notice = "cancelled -- that question was never sent"
+  }
+
+
   function abort() {
-    if (!root.warm) return
+    // Here as well as in startTurn, because the settle paths that would
+    // otherwise clear the queue -- onPiExited, onWelcome's write-off, the retry
+    // promotion -- all reach settleTurn() only while `busy` is true, and the
+    // line below has already cleared it. Silent on purpose: stopping the turn
+    // yourself is not a steer going missing.
+    root.steerQueue = []
+    if (!root.warm) {
+      if (root.pending !== "" || root.busy) cancelQueued()
+      return
+    }
     send({ type: "abort" })
     root.busy = false
     root.aborting = root.warm
@@ -1535,6 +1858,10 @@ Singleton {
     }
     root.toolLog = log
     root.busy = false
+    // Nothing is streaming into a transcript read off disk. openReplayTurn()
+    // points this at the one row that IS, on the reattach path.
+    root.streamRow = -1
+    root.steerQueue = []
     root.settledAtMs = 0
     root.turnStartedAt = 0
     // `appended` (pin the view to the bottom) but deliberately NOT `settled`:
@@ -2441,6 +2768,13 @@ Singleton {
       appendTurn("user", String(d.message || ""), "", "", false,
                  Number(d.images) > 0 ? "(" + d.images + " attached)" : "")
       appendTurn("assistant", "", "", "", true, "")
+      // The row this path opened is the one the replay streams into. Without
+      // this it is opened and then orphaned: rehydrate() has just set the target
+      // to -1 on the only path that reaches here (a get_entries that failed), so
+      // the first delta takes grow()'s "a turn the panel did not open" branch and
+      // opens a THIRD row, leaving this one permanently empty and sending the
+      // text, the tool log and the receipt somewhere else.
+      root.streamRow = turnModel.count - 1
       root.busy = true
       root.appended()
       break
@@ -2777,6 +3111,12 @@ Singleton {
         if (bd && bd.pid) root.dropBgJob(Number(bd.pid))
         break
       }
+      // THE SEAM. pi echoing a user message back is it saying "I have taken
+      // this off the queue and put it in the conversation", which is exactly
+      // the moment the answer below stops being the old one. See splitAtSeam
+      // for why the echo rather than the `turn_start` just before it.
+      if (d.message && d.message.role === "user" && root.steerQueue.length > 0
+          && root.takeSteer(root.echoedText(d.message))) break
       if (d.message && d.message.stopReason === "error") {
         var why = String(d.message.errorMessage || "the model returned an error")
         root.error = why.split(";")[0].split("\n")[0]
@@ -2838,9 +3178,11 @@ Singleton {
     }
   }
 
+  // The tool label rides the same row the text does, so a call made after a
+  // steer but before the seam is still attributed to the answer that made it.
   function setTurn(field, value) {
-    var i = lastAssistant()
-    if (i >= 0) turnModel.setProperty(i, field, value)
+    var i = root.streamRow
+    if (i >= 0 && i < turnModel.count) turnModel.setProperty(i, field, value)
   }
 
   // Close out the open turn: no tool in flight, no longer growing. The thinking
@@ -2850,8 +3192,35 @@ Singleton {
     // Any settle is proof the abort went through the ordinary path; the
     // watchdog has nothing left to guard against.
     root.aborting = false
+    // A steer that never reached its boundary -- the turn ended first, was
+    // aborted, or the child died under it -- must not split the next question's
+    // turn instead. But it must not vanish in silence either: that row is a
+    // message the user sent that got no answer and no explanation, and the only
+    // tell was a question with nothing under it.
+    //
+    // "never answered" rather than "never delivered", which is the stronger
+    // claim and not one this can make: an entry is still here either because pi
+    // never echoed it or because an echo arrived that did not match. Those are
+    // told apart by watching for an unmatched echo, and that watch has a false
+    // positive with teeth -- steer inside the first second of a turn and the
+    // ORIGINAL question's echo arrives with the steer already queued, matching
+    // nothing. A count and an honest verb beat a diagnosis that can be wrong.
+    //
+    // Left alone when something already went wrong: onPiExited, onWelcome's
+    // write-off and the retry promotion all land here having set an error that
+    // says more than this would.
+    if (root.steerQueue.length > 0) {
+      var lost = root.steerQueue.length
+      if (root.error === "")
+        root.notice = (lost === 1 ? "that steer" : lost + " steers")
+          + " never got an answer -- the turn ended first"
+      root.steerQueue = []
+    }
     if (root.settledAtMs === 0 || root.busy) root.settledAtMs = Date.now()
-    var i = lastAssistant()
+    // lastAssistant() only as a fallback: a transcript restored from disk has
+    // rows but no streaming target, and settling it is still the right thing.
+    var i = (root.streamRow >= 0 && root.streamRow < turnModel.count)
+      ? root.streamRow : lastAssistant()
     if (i < 0) return
     turnModel.setProperty(i, "tool", "")
     turnModel.setProperty(i, "pending", false)
@@ -2947,22 +3316,111 @@ Singleton {
         // warm child and its mid-turn buffer. A constant is the whole identity
         // needed, because only the active panel session is adoptable -- parked
         // ones connect without a channel, by design, so nothing claims them.
+        root.retries = 0
+        root.awaitingWelcome = true
         root.control({ type: "__hello", channel: "panel" })
+        helloWatchdog.restart()
         return
       }
       // The broker is a systemd unit with Restart=on-failure, so a drop is a
       // restart in progress far more often than it is a machine without one.
       // Reconnecting is what makes the panel pick the agent back up by itself.
       root.warm = false
+      root.awaitingWelcome = false
+      helloWatchdog.stop()
+      // A DROP MID-TURN USED TO BE INVISIBLE. Nothing here touched `busy` and
+      // nothing set an error, so the rail went on saying "thinking", the spine
+      // went on breathing and the elapsed clock went on counting for as long as
+      // the broker was down. That is the worst failure this panel has: it looks
+      // exactly like working. Say it while there is still reason to hope, and
+      // let `retry` promote it to an error when there is not.
+      if (root.busy) root.notice = root.agentLostNotice
       retry.start()
     }
   }
+
+  // How many reconnects have gone unanswered on this outage, reset by the
+  // connect above. `retry` is where the promotion lives because it is the only
+  // thing that knows how long the outage has lasted -- onConnectionStateChanged
+  // fires once and then never again while the socket stays down.
+  property int retries: 0
+  // Five seconds. A broker restarting under systemd is back inside one or two,
+  // and the socket is activation-listening the whole time, so five ticks with
+  // no connection is not a restart in progress any more.
+  readonly property int retriesBeforeError: 5
+
+  // Both failures below say the same thing to the user -- ori-agent is not
+  // answering -- so they say it in the same words, and onWelcome can clear the
+  // message on recovery by recognising it without clobbering an unrelated error.
+  readonly property string agentDownError:
+    "no answer from the agent -- systemctl --user status ori-agent"
+  readonly property string agentLostNotice: "lost the agent -- reconnecting"
 
   Timer {
     id: retry
     interval: 1000
     repeat: true
-    onTriggered: if (!sock.connected) sock.connected = true
+    onTriggered: {
+      // Connected and still mute: helloWatchdog owns that case and drops the
+      // socket itself, so there is nothing to do but wait for it.
+      if (sock.connected) return
+      root.retries += 1
+      if (root.retries >= root.retriesBeforeError) {
+        if (root.error === "") root.error = root.agentDownError
+        // A panel that is still claiming to think over a broker that has been
+        // gone for five seconds is lying. The turn is written off either way --
+        // the answer died with the process that was producing it.
+        if (root.busy) {
+          if (root.notice === root.agentLostNotice) root.notice = ""
+          root.busy = false
+          root.awaitingRead = false
+          root.settleTurn()
+        }
+      }
+      sock.connected = true
+    }
+  }
+
+  // THE SOCKET CAN BE UP WITH NOTHING BEHIND IT.
+  //
+  // The path is a systemd .socket listening from login, so connect() succeeds at
+  // the kernel whether or not ori-agent.service is healthy. That is deliberate
+  // and it kills a startup race (see the comment on `path`) -- but it kills the
+  // error with it: `sock.connected` is true, `retry` is stopped, `__hello` goes
+  // out, and if no `__welcome` ever comes back `booted` stays false forever with
+  // nothing watching. ask()'s error cannot cover this -- it is gated on
+  // !sock.connected, and it only runs once the user has already sent something.
+  //
+  // So the round trip gets a deadline, the same shape abortWatchdog gives
+  // abort -> settle: armed by the event, disarmed by the answer, and it says so
+  // out loud if neither comes.
+  //
+  // 8000ms. The round trip itself is the broker reading one line and writing one
+  // back, but the connect may be what STARTS the broker -- systemd is exec'ing
+  // it while this timer runs -- so the budget has to cover a process start
+  // rather than a reply. It does NOT have to cover a pi spawn: `__welcome` is
+  // the broker's own answer and does not wait for a child, which is the 6-7s
+  // number and would make any honest deadline useless.
+  property bool awaitingWelcome: false
+
+  Timer {
+    id: helloWatchdog
+    interval: 8000
+    onTriggered: {
+      if (!root.awaitingWelcome) return
+      root.awaitingWelcome = false
+      console.log("no __welcome in " + interval + "ms -- the socket is up with nothing behind it")
+      root.error = root.agentDownError
+      // Connected but mute IS down, whatever the kernel says. Dropping the
+      // socket is what puts it back under `retry`, which was stopped on connect
+      // -- and a reconnect is a clean re-handshake, where re-sending `__hello`
+      // down the same socket would risk a second adoption of the same channel
+      // if the broker were merely slow rather than wedged. Started here as well
+      // as in the disconnect branch, so this does not depend on writing
+      // `connected` raising the signal that would otherwise start it.
+      retry.start()
+      sock.connected = false
+    }
   }
 
   // --------------------------------------------------------------- boot
@@ -2982,6 +3440,17 @@ Singleton {
   property bool booted: false
 
   function onWelcome(d) {
+    // The answer helloWatchdog was waiting for. Disarmed here and nowhere else,
+    // for the same reason settleTurn disarms abortWatchdog: this is the one
+    // event that proves the round trip closed.
+    root.awaitingWelcome = false
+    helloWatchdog.stop()
+    root.retries = 0
+    // The broker is back, so the messages that said it was gone are stale.
+    // Matched by value rather than blanked, so an unrelated error survives.
+    if (root.error === root.agentDownError) root.error = ""
+    if (root.notice === root.agentLostNotice) root.notice = ""
+
     root.warm = !!d.warm
     if (d.workdir) root.workdir = String(d.workdir)
     root.welcomed = true
@@ -3060,6 +3529,7 @@ Singleton {
   function openReplayTurn() {
     root.replayPending = false
     appendTurn("assistant", "", "", "", true, "")
+    root.streamRow = turnModel.count - 1
     root.error = ""
     // Restarts the turn clock, so the duration readout measures from the
     // reattach rather than from the question. Nothing in the protocol

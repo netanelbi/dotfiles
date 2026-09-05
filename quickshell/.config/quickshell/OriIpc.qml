@@ -258,7 +258,17 @@ Scope {
       var out = []
       for (var i = 0; i < PiSession.turns.count; i++) {
         var r = PiSession.turns.get(i)
-        var line = "[" + i + "] " + r.role + ": " + String(r.text).replace(/\s+/g, " ")
+        // Text is CAPPED. A settled transcript here reaches 122 rows of
+        // multi-thousand-character answers, and the whole reply crossed what
+        // the IPC will carry -- `ori transcript` failed with
+        // `QLocalSocket::PeerClosedError` while `state` and `sessions` on the
+        // same target still answered, which is what "the response is too big"
+        // looks like from the outside. This function exists to show SHAPE --
+        // which row holds what, in what order -- and shape survives truncation.
+        // Read the full text from the session file if you need it.
+        var body = String(r.text).replace(/\s+/g, " ")
+        if (body.length > 160) body = body.substring(0, 160) + "…(" + body.length + " chars)"
+        var line = "[" + i + "] " + r.role + ": " + body
         if (String(r.images) !== "") line += "  {img: " + String(r.images).replace(/\n/g, ", ") + "}"
         // The TOOL CALLS, because a row can be entirely made of them and
         // printing `text` alone then reads as an empty row that the panel is
