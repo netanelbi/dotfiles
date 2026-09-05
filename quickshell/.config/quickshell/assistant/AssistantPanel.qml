@@ -491,7 +491,31 @@ PanelWindow {
       // the thing it was for: it bounds PIXELS, not delegates, and still left
       // ~48 of them live in a 400px view. The per-frame cost that motivated it
       // is dealt with at its root instead -- see the delegate below.
-      cacheBuffer: Math.max(600, contentHeight * 2)
+      //
+      // BOUND TO `count`, NOT TO `contentHeight`, AND THAT IS THE WHOLE POINT.
+      // The previous expression was `contentHeight * 2`, and it is a closed
+      // loop with no damping: contentHeight is Qt's EXTRAPOLATION from
+      // whichever delegates were built, and cacheBuffer is what decides which
+      // get built. Measured oscillating on a real transcript --
+      //   143,628 -> 84,094 -> 65,614 -> 76,953 -> 41,294 -> 41,308
+      // and 297,771 -> 201,584 -> 221,017 -> 215,113 half a second apart while
+      // streaming. Everything downstream reads that number (belowBottom,
+      // heightRatio, the reading-view shift), so the instability was the root
+      // of the scroll drift fixed above it.
+      //
+      // `count` is the model's row count. The buffer cannot influence it, so
+      // the loop is broken by construction rather than by tuning.
+      //
+      // 1500 IS MEASURED, not picked. True average height once built, across
+      // six real transcripts: 160, 766, 528, 536, 535, 544 px/turn. Worst case
+      // 766, so this is ~2x headroom and it still builds every delegate --
+      // verified `children == count` on this list before and after the change.
+      // Cost of building everything was measured at 140ms CPU and +13.5MB RSS
+      // for 142 turns, against a ~300MB shell. If the coefficient is ever too
+      // small the failure is soft and familiar: some delegates stay unbuilt and
+      // contentHeight goes back to being an extrapolation -- i.e. exactly the
+      // behaviour this replaces, not something worse.
+      cacheBuffer: Math.max(600, transcript.count * 1500)
 
       // `nowMs` is the panel's own frame clock, handed to the delegates so the
       // live tool batch can count its elapsed time off the same tick as the
@@ -588,6 +612,31 @@ PanelWindow {
       // panelMeta -- near enough that you plainly meant to be at the bottom,
       // far enough that a re-wrap or a rounding error cannot cross it.
       readonly property int stickSlack: 24
+
+      // "The list has laid something out." Every stick decision below is
+      // guarded on this, and it used to be spelled `visibleArea.heightRatio >
+      // 0.01` -- which is a BUG, because heightRatio is height/contentHeight.
+      // It says nothing about whether the geometry is trustworthy; it says how
+      // LONG the conversation is. On a real 122-turn transcript it reads
+      // 0.004-0.009, permanently below the threshold, so the guard silently
+      // meant "only short conversations may re-stick".
+      //
+      // What that cost, measured at the identical pixel position:
+      //   notch (mouse) : contentY=-505.0  gap=0.0  stuck=TRUE
+      //   touchpad      : contentY=-505.0  gap=0.0  stuck=FALSE
+      // 36,000px of downward touchpad scrolling could not re-engage the stick.
+      // The mouse path never had the guard (see wheelNotches) so it was fine,
+      // and this is a laptop -- the touchpad is the primary input.
+      //
+      // The guard was written for a real hazard: mid-settle after an append the
+      // viewport can sit outside the laid-out region, visibleArea collapses and
+      // belowBottom lies. But the collapse it was catching was contentHeight
+      // SWINGING, and that came from the cacheBuffer feedback loop fixed above;
+      // with the buffer bound to `count`, contentHeight no longer moves on its
+      // own. So the test is restored to its stated intent -- a real viewport
+      // always has height, a lie does not -- expressed scale-free, so it can
+      // never again quietly become "the transcript is short".
+      readonly property bool laidOut: count > 0 && contentHeight > 0
 
       function toBottom() {
         // A pin takes the view; a glide it left running would keep writing
@@ -858,7 +907,7 @@ PanelWindow {
         if (dy < 0) {
           downAcc = 0
           stuck = false
-        } else if (visibleArea.heightRatio > 0.01 && belowBottom <= stickSlack) {
+        } else if (laidOut && belowBottom <= stickSlack) {
           downAcc += dy
           if (downAcc >= downIntentPx) {
             downAcc = 0
@@ -999,7 +1048,7 @@ PanelWindow {
           // position put. Skipped mid-gesture (a drag or a glide owns
           // contentY then) and caught up on the next change.
           if (grew !== 0 && !transcript.moving && !wheelAnim.running
-              && transcript.visibleArea.heightRatio > 0.01)
+              && transcript.laidOut)
             transcript.contentY = transcript.clampScrollY(transcript.contentY - grew)
           return
         }
@@ -1045,19 +1094,20 @@ PanelWindow {
       // view far from the bottom. Recomputing `stuck` from that figure unstuck
       // the pin exactly during the frames it was correcting for, and the
       // settle then finished under a view left parked on an older message.
-      // A real viewport always has height; a lie does not.
+      // A real viewport always has height; a lie does not -- `laidOut` above
+      // is that test, and records why it is no longer spelled in heightRatio.
       onMovingChanged: {
         if (transcript.moving) {
           // The user has taken the view: release at once. The first pixels
           // of a scroll up must not sit inside the slack getting yanked
           // back by the next token.
           wheelAnim.stop()
-          if (transcript.visibleArea.heightRatio > 0.01) transcript.stuck = false
+          if (transcript.laidOut) transcript.stuck = false
           return
         }
         // The gesture settled. Within the slack of the bottom means wanting
         // the bottom: snap exactly and re-engage the stick.
-        if (transcript.visibleArea.heightRatio < 0.01) return
+        if (!transcript.laidOut) return
         if (transcript.belowBottom <= transcript.stickSlack) {
           transcript.stuck = true
           transcript.toBottom()
@@ -1072,7 +1122,7 @@ PanelWindow {
       onContentYChanged: {
         var engaged = transcript.moving
           || (wheelAnim.running && transcript.wheelingDown)
-        if (!engaged || transcript.visibleArea.heightRatio < 0.01) return
+        if (!engaged || !transcript.laidOut) return
         if (transcript.belowBottom <= transcript.stickSlack) transcript.stuck = true
       }
     }
@@ -1214,7 +1264,26 @@ PanelWindow {
       Text {
         anchors.horizontalCenter: parent.horizontalCenter
         horizontalAlignment: Text.AlignHCenter
-        text: "enter send · shift+enter newline\nctrl+n new · ctrl+c stop · esc close"
+        // The FULL key list, not a sample of it. This used to name five keys
+        // and omit the four with anything to discover -- ctrl+r (history),
+        // shift+tab (thinking level), ctrl+up/down (both ends of the
+        // transcript) and ctrl+v (attach an image). A hint that lists only the
+        // keys you would have guessed teaches nothing.
+        //
+        // It stays HERE, on the empty state, and nowhere else. The panel is
+        // 460px wide, so permanent chrome would cost a line of conversation
+        // forever; this is the one surface with space going spare. That does
+        // leave it nearly unseen once a session is restored on boot -- the
+        // durable answer is a `/keys` entry beside the other panel commands,
+        // which lives in CommandBar/PiSession, not in this file. The verified
+        // list is also in CLAUDE.md, "Inside the assistant panel".
+        //
+        // Widest line is 40 chars; at panelMeta 512px fits 58, and this column
+        // is transcript.width - 40, so nothing wraps.
+        text: "enter send · shift+enter newline\n"
+            + "ctrl+r history · shift+tab thinking\n"
+            + "ctrl+↑↓ ends · ctrl+v image · ctrl+n new\n"
+            + "ctrl+c stop · esc close · / commands"
         color: Theme.alpha(Theme.overlay0, 0.75)
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
@@ -1592,7 +1661,12 @@ PanelWindow {
             // have it, so only one of the two may be up at a time.
             if (event.modifiers & Qt.ControlModifier) {
               commands.close()
-              picker.open()
+              // open() returns false when the index is empty, and that return
+              // used to be discarded -- so on a fresh machine the panel's only
+              // history key did nothing at all: no list, no message, no way to
+              // tell it apart from a dead binding. Say so instead.
+              if (!picker.open())
+                PiSession.notice = "no saved conversations yet"
               event.accepted = true
             }
             return
