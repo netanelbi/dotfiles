@@ -130,10 +130,29 @@ class Agent implements PoolConv {
     // The panel's footer names a directory, and it must be the one the child
     // will actually run in -- known before any child exists, because argv.ts is
     // a pure function of the config.
+    //
+    // THE MODEL AND EFFORT ARE KNOWN THE SAME WAY, and leaving them blank until
+    // a child answered `get_state` was a lie, not merely a gap: #cfg() builds
+    // the next spawn's argv from exactly these catalogue values, so a new
+    // conversation showing model "" and effort "off" was contradicting what it
+    // was about to do. It also broke the controls -- `levels` arrived empty, so
+    // /effort had nothing to validate against and Shift+Tab had nothing to
+    // cycle through, which is "the thinking level doesn't work on a new
+    // session".
+    //
+    // pi still overwrites all of it the moment it answers, and pi remains the
+    // authority: this is the honest prediction, not a competing opinion.
+    const cfg = this.#cfg();
     this.conv.patchState({
       sessionId: spec.sessionId,
       sessionFile: spec.sessionFile,
-      workdir: buildWorkdir(this.#cfg()),
+      workdir: buildWorkdir(cfg),
+      provider: cfg.provider,
+      model: cfg.model,
+      effort: cfg.effort,
+      // Not thinkingLevel: that is pi's EFFECTIVE reading after its own
+      // clamping, and only get_state or thinking_level_changed may set it.
+      levels: env.catalog.effortScale(),
     });
   }
 
