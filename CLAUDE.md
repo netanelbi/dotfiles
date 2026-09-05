@@ -396,6 +396,29 @@ of the following as a dpms check rather than a finding:
 Corollary nobody has tested yet: a panel HIDDEN while the display is awake
 should freeze the same way, since it also stops getting frames.
 
+### What `qmllint` does NOT check, and when "clean" means "aborted"
+`qmllint` is necessary and nowhere near sufficient. Two measured limits:
+
+* **It does not member-check locally-defined types.** Rename a property to a
+  bogus name and reference it — `SessionManager.active.noSuchThing` — and
+  qmllint still exits 0. So "lint clean" says nothing about whether a rewrite
+  across your own components actually resolves. A hand-written member check
+  (walk the references, resolve each against the type's declared properties) is
+  the only thing that catches it.
+* **`readonly property list<Foo>` makes qmllint exit 255 printing NOTHING.**
+  Reproduced in two files. A wrapper that only tests for empty output will call
+  that a pass — one previous "clean" result was the linter aborting. **Always
+  check the exit code, not just the output.**
+
+Prove the gate itself before trusting it: plant a syntax error and confirm the
+run fails. A gate nobody has seen fail is not a gate. The same applies to
+`qmltestrunner` suites — reintroduce the bug and confirm the test goes red.
+
+And neither tool sees runtime binding failures at all; those only appear in
+`qs log` (below). Tonight a binding loop, a `read-only property` burst and a
+`Cannot assign to non-existent property` all passed qmllint and were caught
+there.
+
 ### QML errors are NOT invisible — read `qs log` first
 The folklore in this repo said quickshell's output goes to /dev/null so runtime
 QML errors cannot be seen, and that panel code must be checked with `qmllint`
