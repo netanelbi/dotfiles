@@ -262,6 +262,37 @@ describe("backpressure", () => {
     expect(writes).toBe(0);
     expect(conn.alive).toBe(false);
   });
+
+  test("displace() silences the writer itself, not by way of the close event", () => {
+    // The socket-level displacement test below cannot prove this. There, end()
+    // makes Bun run the close handler, markClosed() gets there first, and
+    // deleting stopWriting() from displace() leaves EVERY transport test green
+    // -- measured, all 19 of them. A fake socket has no close event, so this is
+    // the only assertion that depends on displace() doing the silencing.
+    let writes = 0;
+    let accept = 4; // short writes, so there is a backlog to discard
+    const conn = new Conn(4, {
+      write: (d) => {
+        writes++;
+        return Math.min(accept, d.length);
+      },
+      end: () => 0,
+    });
+    conn.channel = "panel";
+    conn.send({ t: "notice", text: "queued behind a wedged socket" });
+    expect(conn.pending).toBeGreaterThan(0);
+    const before = writes;
+
+    conn.displace();
+
+    expect(conn.alive).toBe(false);
+    expect(conn.channel).toBe("");
+    expect(conn.pending).toBe(0); // the backlog goes with it
+    accept = Infinity;
+    conn.send({ t: "notice", text: "from the ghost" });
+    conn.drain();
+    expect(writes).toBe(before);
+  });
 });
 
 /* ------------------------------------------------------------------ *

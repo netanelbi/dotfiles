@@ -13,7 +13,8 @@
  *     transcript survive; a later ask cold-spawns.
  *   - 90 s after the last client disconnects -> kill children (ori-agent:426).
  *     A BUSY conversation is spared, exactly as the broker spared a busy orphan,
- *     because that is the case reconnect exists for.
+ *     because that is the case reconnect exists for -- and, as in the broker,
+ *     only ITSELF: the clock is per conversation (ori-agent:496).
  *
  * Both clocks are timers reset by events, never polls.
  *
@@ -130,6 +131,10 @@ interface Slot {
    *  the truth about its own clock. */
   lastActive: number;
   idle: TimerHandle | null;
+  /** PER-SESSION, exactly as ori-agent:496 had it (`Session.grace_timer`). One
+   *  pool-wide clock meant a single long turn anywhere kept every other
+   *  conversation's child alive indefinitely past the 90 s grace. */
+  grace: TimerHandle | null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -140,7 +145,6 @@ export class Pool {
   #slots = new Map<string, Slot>();
   #activeId = "";
   #clients = 0;
-  #grace: TimerHandle | null = null;
 
   #store: SessionIndex;
   #factory: ConvFactory;
@@ -238,7 +242,7 @@ export class Pool {
       onSettled: () => this.#settled(spec.convId),
       onChildExit: () => this.#childExit(spec.convId),
     });
-    this.#slots.set(spec.convId, { conv, lastActive: this.#clock.now(), idle: null });
+    this.#slots.set(spec.convId, { conv, lastActive: this.#clock.now(), idle: null, grace: null });
     this.#touch(spec.convId);
     return conv;
   }
@@ -284,9 +288,16 @@ export class Pool {
     // Flush the row first: after this it exists on disk only, and the picker
     // has to be able to resume it -- at its real recency, not at eviction time.
     this.#record(slot.conv, slot.lastActive);
-    if (slot.idle !== null) this.#clock.clearTimeout(slot.idle);
+    this.#clearTimers(slot);
     this.#slots.delete(slot.conv.id);
     slot.conv.dispose();
+  }
+
+  #clearTimers(slot: Slot): void {
+    if (slot.idle !== null) this.#clock.clearTimeout(slot.idle);
+    slot.idle = null;
+    if (slot.grace !== null) this.#clock.clearTimeout(slot.grace);
+    slot.grace = null;
   }
 
   /* ------------------------------------------------------------- clocks */
@@ -318,10 +329,15 @@ export class Pool {
     const slot = this.#slots.get(convId);
     if (!slot) return;
     this.#record(slot.conv, this.#clock.now());
+    // The cap refuses to evict a busy conversation, so a pool that overflowed
+    // while every parked one was mid-turn can only come back under it when one
+    // of them stops. #makeActive is the only other caller and may not run again
+    // for hours -- until then the pool holds more children than the cap allows.
+    this.#enforceCap();
     this.#emitSessions();
-    // A busy orphan could not arm the grace clock when its client left. It can
-    // now (ori-agent.check_orphan).
-    this.#checkOrphan();
+    // A busy orphan could not arm its own grace clock when its client left. It
+    // can now (ori-agent.check_orphan).
+    if (this.#slots.has(convId)) this.#checkOrphanFor(slot);
   }
 
   #childExit(convId: string): void {
@@ -333,11 +349,19 @@ export class Pool {
     // that dies must show as failed, never silently dropped
     // (docs/specs/multi-session.md).
     if (convId !== this.#activeId && slot.conv.busy) {
-      slot.conv.failTurn("pi exited while this conversation was parked");
+      const why = "pi exited while this conversation was parked";
+      slot.conv.failTurn(why);
+      // Addressed to the conversation it happened in. failTurn marks the turn,
+      // which the panel sees on its next snapshot -- i.e. only if the user
+      // happens to switch back. This is the part that arrives now, and it can
+      // only be routed because `error` carries an optional convId (protocol.ts).
+      this.#emit({ t: "error", convId, text: why });
     }
+    // Same reason as #settled: the exit is what made this one evictable.
+    this.#enforceCap();
     this.#emitSessions();
-    // Its turn is over one way or the other, so an orphan clock may now be due.
-    this.#checkOrphan();
+    // Its turn is over one way or the other, so its orphan clock may now be due.
+    if (this.#slots.has(convId)) this.#checkOrphanFor(slot);
   }
 
   /* -------------------------------------------------------- client count */
@@ -357,27 +381,48 @@ export class Pool {
   }
 
   #checkOrphan(): void {
+    for (const slot of this.#slots.values()) this.#checkOrphanFor(slot);
+  }
+
+  /**
+   * Arm ONE conversation's grace clock, gated on ITS OWN busy flag.
+   *
+   * ori-agent held `grace_timer` on the Session, not on the broker, and that
+   * distinction is the whole bug this shape fixes: a pool-wide clock that
+   * refused to arm while any conversation was busy let a single half-hour turn
+   * keep every other orphaned child resident for the length of it, seven times
+   * over the ten-minute idle kill that was supposed to be the backstop.
+   *
+   * A busy conversation is still spared -- that is what reconnect is for -- but
+   * only its own; its settle calls back in here (ori-agent.check_orphan).
+   */
+  #checkOrphanFor(slot: Slot): void {
     if (this.#clients > 0) return;
-    // Busy conversations are what reconnect is for: keep the child, keep
-    // ingesting, wait to be adopted. Their settle calls back in here.
-    for (const slot of this.#slots.values()) if (slot.conv.busy) return;
-    if (this.#grace !== null) return; // already counting down
-    this.#grace = this.#clock.setTimeout(() => this.#reap(), this.#graceMs);
+    if (slot.conv.busy) return;
+    // Nothing to reap. ori-agent's check_orphan returns here too (`if self.pi is
+    // None`), and without it every reap re-armed a second clock through the
+    // onChildExit its own kill produced.
+    if (!slot.conv.childAlive) return;
+    if (slot.grace !== null) return; // already counting down
+    const convId = slot.conv.id;
+    slot.grace = this.#clock.setTimeout(() => this.#reap(convId), this.#graceMs);
   }
 
   #cancelGrace(): void {
-    if (this.#grace === null) return;
-    this.#clock.clearTimeout(this.#grace);
-    this.#grace = null;
+    for (const slot of this.#slots.values()) {
+      if (slot.grace === null) continue;
+      this.#clock.clearTimeout(slot.grace);
+      slot.grace = null;
+    }
   }
 
-  #reap(): void {
-    this.#grace = null;
+  #reap(convId: string): void {
+    const slot = this.#slots.get(convId);
+    if (!slot) return;
+    slot.grace = null;
     if (this.#clients > 0) return;
-    for (const slot of this.#slots.values()) {
-      if (slot.conv.busy) continue; // never interrupt a turn
-      if (slot.conv.childAlive) slot.conv.killChild("orphan grace");
-    }
+    if (slot.conv.busy) return; // never interrupt a turn
+    if (slot.conv.childAlive) slot.conv.killChild("orphan grace");
   }
 
   /* ------------------------------------------------------------- index */
@@ -473,9 +518,8 @@ export class Pool {
   /* ----------------------------------------------------------- shutdown */
 
   shutdown(): void {
-    this.#cancelGrace();
     for (const slot of this.#slots.values()) {
-      if (slot.idle !== null) this.#clock.clearTimeout(slot.idle);
+      this.#clearTimers(slot);
       this.#record(slot.conv, slot.lastActive);
       slot.conv.dispose();
     }

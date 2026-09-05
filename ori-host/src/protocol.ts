@@ -205,9 +205,15 @@ export type HostEvent =
 
   /** Transient success/progress text. Distinct from `error`, which pins the
    *  panel border to the busy accent -- writing a success message into `error`
-   *  was a real bug. */
-  | { t: "notice"; text: string }
-  | { t: "error"; text: string }
+   *  was a real bug.
+   *
+   *  `convId` is OPTIONAL, and its absence means "the active conversation" --
+   *  that is what a host-level message (a bad /model line, a resume that found
+   *  no such session) is. A message that belongs to a NAMED conversation carries
+   *  the id, so the host can route it instead of dropping it: without the field
+   *  a parked conversation's failure had nowhere to go at all. */
+  | { t: "notice"; convId?: string; text: string }
+  | { t: "error"; convId?: string; text: string }
 
   /** An image was captured from the clipboard and is ready to attach. `n` is
    *  the 1-based marker index the composer inserts as `[Image n]`. */

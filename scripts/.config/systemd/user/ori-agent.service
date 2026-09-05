@@ -35,6 +35,11 @@ Type=simple
 # This is why there is no EnvironmentFile= and no Environment=OLLAMA_API_KEY=
 # here: the key stays in the one file it was already in, and never reaches a
 # unit file, a command line or the journal.
+#
+# The binary is NOT stowed and is not in the repo: `bun build --compile` gives
+# ~80 MB, so it is built per machine by `bun run scripts/install.ts` in
+# ori-host/, which is what puts it at the path below. Everything else in this
+# package is a symlink; this one file is a copy.
 ExecStart=/usr/bin/fish -lc 'exec %h/.local/bin/ori-host'
 Restart=on-failure
 RestartSec=2

@@ -39,11 +39,22 @@ const ANSWER = "Hello there";
  *
  * `printf` per line: bash's builtin flushes, and a partially buffered frame
  * would deadlock the test rather than fail it.
+ *
+ * It also APPENDS the exchange to a real pi-shaped session JSONL, because that
+ * file is the only thing a conversation evicted to disk can be rebuilt from --
+ * the whole point of the rehydrate test below. The user entry carries the text
+ * that was actually prompted, so the restored transcript is derived rather than
+ * canned.
  */
-const FAKE_PI = `#!/bin/sh
+const fakePi = (sessionFile: string): string => `#!/bin/sh
+S='${sessionFile}'
 while IFS= read -r line; do
   case "$line" in
     *'"type":"prompt"'*)
+      msg=$(printf '%s' "$line" | sed -n 's/.*"message":"\\([^"]*\\)".*/\\1/p')
+      [ -f "$S" ] || printf '%s\\n' '{"type":"session","version":3,"id":"fake-session","timestamp":"2026-09-05T10:00:00.000Z","cwd":"/tmp"}' > "$S"
+      printf '%s\\n' '{"type":"message","id":"u1","parentId":null,"timestamp":"2026-09-05T10:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"'"$msg"'"}]}}' >> "$S"
+      printf '%s\\n' '{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-09-05T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"${ANSWER}"}],"stopReason":"stop"}}' >> "$S"
       printf '%s\\n' '{"type":"response","command":"prompt","success":true}'
       printf '%s\\n' '{"type":"message_start","message":{"role":"assistant"}}'
       printf '%s\\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hello"}}'
@@ -53,7 +64,7 @@ while IFS= read -r line; do
       printf '%s\\n' '{"type":"agent_settled"}'
       ;;
     *'"type":"get_session_stats"'*)
-      printf '%s\\n' '{"type":"response","command":"get_session_stats","success":true,"data":{"sessionFile":"/fake/session.jsonl","sessionId":"fake-session","contextUsage":{"tokens":14,"contextWindow":9999}}}'
+      printf '%s\\n' '{"type":"response","command":"get_session_stats","success":true,"data":{"sessionFile":"'"$S"'","sessionId":"fake-session","contextUsage":{"tokens":14,"contextWindow":9999}}}'
       ;;
     *'"type":"get_state"'*)
       printf '%s\\n' '{"type":"response","command":"get_state","success":true,"data":{"model":{"provider":"fake","id":"fake-model"},"thinkingLevel":"medium","sessionId":"fake-session"}}'
@@ -143,6 +154,9 @@ class TestClient {
 let dir = "";
 let host: Host;
 let socket = "";
+/** The JSONL the fake pi writes, and the only thing an evicted conversation can
+ *  be restored from. */
+let sessionFile = "";
 
 /** No key, so `OllamaUsage` never reaches the network from a test. */
 const offlineUsage: UsageIo = {
@@ -156,8 +170,9 @@ beforeAll(async () => {
   const cfgDir = join(dir, "cfg");
   mkdirSync(cfgDir, { recursive: true });
 
+  sessionFile = join(dir, "fake-session.jsonl");
   const fake = join(dir, "fake-pi");
-  writeFileSync(fake, FAKE_PI);
+  writeFileSync(fake, fakePi(sessionFile));
   chmodSync(fake, 0o755);
 
   const paths: CatalogPaths = {
@@ -287,6 +302,75 @@ test("hello, snapshot, a full turn, and a reconnect that adopts it", async () =>
   expect(adopted.convId).toBe(first.convId);
   expect(adopted).toEqual(resync);
   again.close();
+}, 30_000);
+
+/**
+ * THE BLOCKER FOR MULTI-SESSION, end to end: a conversation that has left memory
+ * entirely still comes back with its transcript.
+ *
+ * Eviction is provoked rather than simulated -- the pool caps parked
+ * conversations at 4 (docs/specs/multi-session.md), so five Ctrl+Ns push the
+ * conversation from the test above off the end, `dispose()` takes its child with
+ * it, and the only trace left is the index row and the JSONL. Resuming it then
+ * has exactly one place to read from.
+ */
+test("a conversation evicted to disk comes back with its turns", async () => {
+  const client = await TestClient.connect(socket);
+  client.send({ t: "hello", channel: "e2e-restore", version: 1 });
+
+  const live = await client.waitFor(
+    (e): e is Extract<HostEvent, { t: "snapshot" }> => e.t === "snapshot",
+  );
+  // Still the conversation the first test asked in, in memory, with its turns.
+  expect(live.turns.length).toBe(2);
+  expect(turnOf(live.turns, "user").text).toBe("hi");
+  expect(turnOf(live.turns, "assistant").text).toBe(ANSWER);
+
+  const listed = await client.waitFor(
+    (e): e is Extract<HostEvent, { t: "sessions" }> => e.t === "sessions",
+  );
+  const sessionId = listed.activeId;
+  expect(sessionId).not.toBe("");
+
+  // ---- push it out of memory ----
+  for (let i = 0; i < 5; i++) {
+    client.send({ t: "new", id: `n${i}` });
+    await client.waitFor((e) => e.t === "ack" && e.id === `n${i}`);
+  }
+  const gone = await client.waitFor(
+    (e): e is Extract<HostEvent, { t: "sessions" }> =>
+      e.t === "sessions" && e.entries.some((s) => s.id === sessionId && !s.live),
+  );
+  // On disk only: the picker still offers it, with the label and turn count the
+  // index kept.
+  const row = gone.entries.find((s) => s.id === sessionId)!;
+  expect(row.live).toBe(false);
+  expect(row.file).toBe(sessionFile);
+  expect(row.label).toBe("hi");
+
+  // ---- and back ----
+  const mark = client.events.length;
+  client.send({ t: "resume", id: "back", sessionId });
+
+  const restored = await client.waitFor(
+    (e): e is Extract<HostEvent, { t: "snapshot" }> =>
+      e.t === "snapshot" && e.turns.length > 0 && client.events.indexOf(e) >= mark,
+  );
+
+  // A different conversation object -- the old one was disposed -- holding the
+  // same exchange, read back off the JSONL.
+  expect(restored.convId).not.toBe(live.convId);
+  expect(restored.turns.map((t) => t.role)).toEqual(["user", "assistant"]);
+  expect(turnOf(restored.turns, "user").text).toBe("hi");
+  expect(turnOf(restored.turns, "assistant").text).toBe(ANSWER);
+  // Nothing read off a file is in flight.
+  expect(restored.turns.every((t) => t.pending === false)).toBe(true);
+  expect(restored.turns.every((t) => (t.settledAt ?? 0) > 0)).toBe(true);
+  expect(restored.state.busy).toBe(false);
+  // Cold: the restore cost no child at all.
+  expect(restored.state.warm).toBe(false);
+
+  client.close();
 }, 30_000);
 
 function turnOf(turns: Turn[], role: Turn["role"]): Turn {

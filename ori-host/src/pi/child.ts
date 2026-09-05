@@ -21,9 +21,14 @@ import { isRpcResponse, type PiFrame, type RpcCommand, type RpcResponse } from "
  * The injected process surface -- the subset of Bun.spawn we actually use
  * ------------------------------------------------------------------ */
 
-/** Bun's stdin FileSink. `flush()` is what actually pushes the bytes. */
+/** Bun's stdin FileSink. `flush()` is what actually pushes the bytes.
+ *
+ *  `write` has three return shapes, all measured on Bun 1.4.0: `true` for a
+ *  write the sink buffered (including into a pipe whose child is already
+ *  reaped), a `Promise<number>` for anything past the sink's buffer (~512KB --
+ *  an attached image is exactly this), and a number for a partial take. */
 export interface ChildStdin {
-  write(chunk: string): number;
+  write(chunk: string): number | boolean | Promise<number>;
   flush(): number | Promise<number>;
   end(): void;
 }
@@ -139,15 +144,76 @@ export class PiChild {
     void this.watchExit(this.proc);
   }
 
-  /** Fire and forget. Throws if the child is gone -- queueing is the pool's job,
-   *  and a silent drop here would look like pi ignoring a prompt. */
+  /**
+   * Fire and forget. Throws if the child is gone -- queueing is the pool's job,
+   * and a silent drop here would look like pi ignoring a prompt.
+   *
+   * The `exit` guard above is not enough on its own. `exit` is set by watchExit,
+   * i.e. only once `await proc.exited` resolves, and a write into the window
+   * before that is SWALLOWED by Bun -- which is precisely the silent drop the
+   * guard claims to prevent. `write`'s return value cannot tell that apart on
+   * its own (a dead pipe answers `true`, same as a healthy buffered write), so
+   * each of its three shapes is handled separately below. A big write and a
+   * flush are both potentially asynchronous, so those halves cannot throw from
+   * here; they reject the correlated request instead, and say so on the log
+   * either way.
+   */
   send(cmd: RpcCommand): void {
     const proc = this.proc;
     if (!proc || this.exit !== null) throw new Error("pi child is not running");
-    proc.stdin.write(JSON.stringify(cmd) + "\n");
-    // A FileSink buffers; without this the command sits in userspace and pi
-    // waits for a prompt that was, as far as the panel is concerned, sent.
-    void proc.stdin.flush();
+
+    const line = JSON.stringify(cmd) + "\n";
+    const want = Buffer.byteLength(line);
+    let took: number | boolean | Promise<number>;
+    try {
+      took = proc.stdin.write(line);
+    } catch (e) {
+      throw new Error(`pi stdin write failed: ${String(e)}`);
+    }
+    if (took instanceof Promise) {
+      // Too big for the sink's buffer, so the write is still in flight and its
+      // rejection is the only report there will ever be.
+      void took.catch((e: unknown) => this.failSend(cmd.id, "write", e));
+    } else if (took === false) {
+      throw new Error(`pi stdin refused ${want} bytes`);
+    } else if (took === true) {
+      // Buffered -- by a live sink or by one whose child is already reaped, and
+      // the return value does not distinguish them. The process does:
+      // `proc.exitCode` is set when Bun reaps, one microtask AHEAD of the
+      // watchExit continuation that sets `this.exit`, so this covers the window
+      // the guard above cannot. (A child that has died but not yet been reaped
+      // is invisible to both; nothing synchronous can see it.)
+      if (proc.exitCode !== null || proc.signalCode !== null)
+        throw new Error(`pi stdin took ${want} bytes into a dead pipe`);
+    } else if (took < want) {
+      throw new Error(`pi stdin took ${took} of ${want} bytes`);
+    }
+
+    // Without the flush the command sits in userspace and pi waits for a prompt
+    // that was, as far as the panel is concerned, sent.
+    let flushed: number | Promise<number>;
+    try {
+      flushed = proc.stdin.flush();
+    } catch (e) {
+      throw new Error(`pi stdin flush failed: ${String(e)}`);
+    }
+    if (flushed instanceof Promise) {
+      void flushed.catch((e: unknown) => this.failSend(cmd.id, "flush", e));
+    }
+  }
+
+  /** A write or flush that failed after send() had already returned. Nothing is
+   *  left to throw to, so the correlated request is rejected and the rest is
+   *  logged -- the one outcome that is never acceptable is neither. */
+  private failSend(id: string | undefined, stage: string, e: unknown): void {
+    const err = new Error(`pi stdin ${stage} failed: ${String(e)}`);
+    this.deps.log(err.message);
+    if (id === undefined) return;
+    const reject = this.rejecters.get(id);
+    if (!reject) return;
+    this.pending.delete(id);
+    this.rejecters.delete(id);
+    reject(err);
   }
 
   /**
@@ -205,7 +271,18 @@ export class PiChild {
     let buf = "";
     try {
       for await (const chunk of proc.stdout) {
-        buf += dec.decode(chunk, { stream: true });
+        const text = dec.decode(chunk, { stream: true });
+        // Only the NEW text can hold a record boundary we have not seen: after
+        // every split, `buf` is what came AFTER the last newline, so it has
+        // already been scanned and is known to contain none. Without this the
+        // whole accumulated buffer was re-split on every 64 KB chunk, and one
+        // large frame -- a get_entries answer for a long session is exactly
+        // that -- cost O(n^2) on the host's single thread.
+        if (!text.includes("\n")) {
+          buf += text;
+          continue;
+        }
+        buf += text;
         const { msgs, bad, rest } = decodeLines(buf);
         buf = rest;
         for (const line of bad) {

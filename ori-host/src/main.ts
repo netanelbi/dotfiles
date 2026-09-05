@@ -49,7 +49,8 @@ import {
   type ImageRef,
   type SlashCommand,
 } from "./protocol";
-import { deriveLabel, Store, summarise } from "./store";
+import { rehydrate } from "./rehydrate";
+import { deriveLabel, readTranscript, Store, summarise } from "./store";
 import { serve, socketPath, type Conn, type OriServer } from "./transport";
 import { defaultUsageIo, OllamaUsage, type UsageIo } from "./usage";
 
@@ -514,13 +515,49 @@ export class Host {
    * A resumed session's transcript, straight from pi.
    *
    * It updates the index row so the picker keeps its label and count. It does
-   * NOT rebuild the panel's turn list -- see README, "known gaps".
+   * NOT rebuild the turn list: `#restore` has already done that from the file,
+   * and by the time this answer arrives the child has spawned, which means a
+   * question may well be in flight -- `get_entries` is the FIRST probe of a cold
+   * spawn and `ask()` spawns the child, so rebuilding here would delete the
+   * question the user just asked.
    */
   #onEntries(agent: Agent, entries: unknown[]): void {
     const { label, turns } = summarise(entries);
     if (label === "" || agent.sessionFile === "") return;
     this.store.upsert({ id: agent.sessionId, file: agent.sessionFile, label, at: Date.now(), turns });
     this.broadcast({ t: "sessions", entries: this.pool.list(), activeId: agent.sessionId });
+  }
+
+  /**
+   * Put a conversation that was only on disk back on screen.
+   *
+   * THE BLOCKER FOR MULTI-SESSION: the pool can build a cold `Agent` for a
+   * session it no longer holds, but nothing filled its turn list, so activating
+   * it showed an empty transcript until the next question. Reading the JSONL is
+   * the only source available here -- asking pi would mean spawning a child, and
+   * a session picker that costs a 2.5 s spawn per preview is not one.
+   *
+   * A no-op for anything already in memory, which is the common case: parked
+   * conversations keep their turns and `pool.resume` hands the live one back.
+   */
+  async #restore(agent: Agent | null): Promise<void> {
+    if (!agent || agent.conv.turns.length > 0 || agent.sessionFile === "") return;
+    const file = agent.sessionFile;
+    try {
+      const { entries, torn } = await readTranscript(file);
+      if (torn > 0) log.warn("skipped torn transcript lines", { file, torn });
+      const turns = rehydrate(entries, { now: Date.now, newId: () => crypto.randomUUID() });
+      if (turns.length === 0) return;
+      // Checked again: the read was asynchronous, and a question asked while it
+      // was in flight must not be overwritten by the file it predates.
+      if (agent.conv.turns.length > 0) return;
+      agent.conv.install(turns);
+      log.info("restored transcript", { conv: agent.id, file, turns: turns.length });
+    } catch (e) {
+      // A missing or unreadable session file is a session that cannot be shown,
+      // not a host that stops working.
+      log.warn("transcript restore failed", { file, err: String(e) });
+    }
   }
 
   /* ---------------------------------------------------------- client events */
@@ -587,8 +624,12 @@ export class Host {
 
       case "resume": {
         try {
-          this.pool.resume(cmd.sessionId);
+          const conv = this.pool.resume(cmd.sessionId) as Agent;
           this.#ack(conn, cmd.id, true);
+          // The pool's own snapshot has already gone out and is EMPTY for a
+          // session it had to build cold. The transcript read is asynchronous,
+          // so it lands as a second snapshot a few milliseconds later.
+          void this.#restore(conv);
         } catch (e) {
           this.broadcast({ t: "error", text: String(e) });
           this.#ack(conn, cmd.id, false, String(e));
@@ -599,6 +640,7 @@ export class Host {
       case "activate": {
         const ok = this.pool.activate(cmd.convId);
         if (!ok) this.broadcast({ t: "error", text: `no such conversation: ${cmd.convId}` });
+        else void this.#restore(this.#active());
         this.#ack(conn, cmd.id, ok);
         return;
       }

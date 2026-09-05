@@ -70,14 +70,22 @@ class FakeProc implements ChildProcessLike {
     this.resolveExited = r;
   });
 
+  /** Stand-ins for a pipe the kernel has already torn down. Bun SWALLOWS a
+   *  write to one, so these are how that is reproduced without a real child. */
+  writeResult: ((chunk: string) => number | boolean | Promise<number>) | null = null;
+  flushResult: (() => number | Promise<number>) | null = null;
+
   readonly stdin = {
     write: (chunk: string) => {
       this.writes.push(chunk);
-      return chunk.length;
+      // `true`, which is what Bun 1.4.0's FileSink actually answers for a write
+      // it buffered -- measured, for a live pipe and for a dead one alike. It
+      // returns a Promise<number> only past the buffer (~512KB).
+      return this.writeResult ? this.writeResult(chunk) : true;
     },
     flush: () => {
       this.flushes += 1;
-      return 0;
+      return this.flushResult ? this.flushResult() : 0;
     },
     end: () => {},
   };
@@ -157,6 +165,22 @@ function harness(over: Partial<PiSpawnConfig> = {}, waitImpl?: (ms: number) => P
   };
 
   return { child, proc, frames, logs, exits, spawned, waits, settle };
+}
+
+/**
+ * How a promise ended, as text, with a deadline of its own: `"resolved"`, the
+ * stringified rejection, or `"never settled"`.
+ *
+ * This exists because bun 1.4.0's per-test timeout does NOT cover
+ * `await expect(p).rejects.…` -- against a promise that never settles it spins
+ * the runner at 100% CPU and prints nothing, so a regression that stops a
+ * promise from settling wedges the suite instead of turning it red.
+ */
+async function settledText(p: Promise<unknown>, ms = 1000): Promise<string> {
+  return await Promise.race([
+    p.then(() => "resolved", (e: unknown) => String(e)),
+    Bun.sleep(ms).then(() => "never settled"),
+  ]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -244,6 +268,49 @@ describe("PiChild stdout framing", () => {
     expect((h.frames[0] as unknown as { text: string }).text).toBe("שלום");
   });
 
+  test(
+    "one huge frame is scanned once, not re-split on every chunk",
+    async () => {
+      // A get_entries answer for a long session is exactly this: megabytes in
+      // ONE record, delivered 64 KB at a time. Re-splitting the accumulated
+      // buffer per chunk is O(n^2) on the host's single thread.
+      //
+      // decodeLines() is `buffered.split("\n")`, so the sum of the receiver
+      // lengths of those calls IS the number of characters the parser scanned.
+      // That is measured directly rather than timed, so the bound does not
+      // depend on how loaded the machine is.
+      const CHUNK = 64 * 1024;
+      const body = "x".repeat(CHUNK * 160); // ~10 MB
+      const line = JSON.stringify({ type: "message_end", text: body }) + "\n";
+
+      const proto = String.prototype as unknown as Record<string, unknown>;
+      const realSplit = proto["split"] as (this: string, ...a: unknown[]) => unknown;
+      let scanned = 0;
+      proto["split"] = function (this: string, ...args: unknown[]): unknown {
+        scanned += this.length;
+        return realSplit.apply(this, args);
+      };
+
+      const h = harness();
+      try {
+        for (let i = 0; i < line.length; i += CHUNK) {
+          h.proc.out.push(line.slice(i, i + CHUNK));
+          await h.settle();
+        }
+      } finally {
+        proto["split"] = realSplit;
+      }
+
+      expect(h.frames).toHaveLength(1);
+      expect((h.frames[0] as unknown as { text: string }).text).toBe(body);
+      // Linear scans the record about once. Quadratic scans ~800 MB for this
+      // input, so the 2x bound has two orders of magnitude of headroom and no
+      // sensitivity to how the chunks happen to fall.
+      expect(scanned).toBeLessThan(line.length * 2);
+    },
+    30000,
+  );
+
   test("blank lines are ignored", async () => {
     const h = harness();
     h.proc.out.push("\n\n" + JSON.stringify({ type: "agent_settled" }) + "\n\n");
@@ -313,7 +380,13 @@ describe("PiChild send / request", () => {
     const h = harness();
     const p = h.child.request({ type: "get_state" });
     h.proc.die(1, "SIGSEGV");
-    await expect(p).rejects.toThrow(/pi exited \(code=1 signal=SIGSEGV\)/);
+    // A rejection or a deadline, whichever lands first -- deliberately NOT
+    // `await expect(p).rejects.toThrow(...)`. Measured on bun 1.4.0: against a
+    // promise that never settles, that form ignores the per-test timeout, third
+    // argument and all, and wedges the WHOLE runner at 100% CPU printing
+    // nothing. So with the rejection deleted from watchExit this did not go
+    // red, it hung -- and a gate that hangs instead of failing is not a gate.
+    expect(await settledText(p)).toMatch(/pi exited \(code=1 signal=SIGSEGV\)/);
   });
 
   test("send after exit throws instead of dropping the prompt silently", async () => {
@@ -322,6 +395,75 @@ describe("PiChild send / request", () => {
     await h.proc.exited;
     await h.settle();
     expect(() => h.child.send({ type: "prompt", message: "hi" })).toThrow(/not running/);
+  });
+
+  /* --------------------------------------------------------------------- *
+   * The window the `not running` guard above does NOT cover: `exit` is set by
+   * watchExit, i.e. only once `await proc.exited` resolves. A prompt written
+   * before that lands on a pipe the kernel has already torn down, and Bun
+   * swallows it -- the exact silent drop the guard claims to prevent.
+   * --------------------------------------------------------------------- */
+
+  test("a write into a reaped-but-unnoticed pipe is an error, not a silent drop", () => {
+    const h = harness();
+    // No settle(): the process is reaped (exitCode set) but watchExit has not
+    // run yet, so `this.exit` is still null and the `not running` guard above
+    // does not fire. Bun answers `true` to this write, exactly as it does to a
+    // healthy one -- the process state is the only tell.
+    h.proc.die(0);
+    expect(() => h.child.send({ type: "prompt", message: "hi" })).toThrow(/dead pipe/);
+  });
+
+  test("a refused write is an error", () => {
+    const h = harness();
+    h.proc.writeResult = () => false;
+    expect(() => h.child.send({ type: "prompt", message: "hi" })).toThrow(/refused \d+ bytes/);
+  });
+
+  test("a partial write is an error", () => {
+    // Not a shape Bun 1.4.0 was observed to produce, but the one its own types
+    // declare, and the only one where bytes-taken means anything. BYTES, not
+    // characters: a Hebrew prompt is twice as long in bytes as in chars.
+    const h = harness();
+    h.proc.writeResult = (chunk) => Buffer.byteLength(chunk) - 1;
+    expect(() => h.child.send({ type: "prompt", message: "שלום" })).toThrow(/\d+ of \d+ bytes/);
+  });
+
+  test("an oversized write that fails in flight rejects the request it belonged to", async () => {
+    // Anything past the sink's ~512KB buffer -- an attached image -- is taken
+    // asynchronously, so send() cannot throw for it either.
+    const h = harness();
+    h.proc.writeResult = () => Promise.reject(new Error("EPIPE"));
+    const p = h.child.request({ type: "get_state" });
+    expect(await settledText(p)).toMatch(/write failed.*EPIPE/);
+    expect(h.logs.some((l) => l.includes("write failed"))).toBe(true);
+  });
+
+  test("a write that throws is reported rather than swallowed", () => {
+    const h = harness();
+    h.proc.writeResult = () => {
+      throw new Error("EPIPE");
+    };
+    expect(() => h.child.send({ type: "prompt", message: "hi" })).toThrow(/write failed.*EPIPE/);
+  });
+
+  test("a flush that throws is reported rather than swallowed", () => {
+    const h = harness();
+    h.proc.flushResult = () => {
+      throw new Error("EPIPE");
+    };
+    expect(() => h.child.send({ type: "prompt", message: "hi" })).toThrow(/flush failed.*EPIPE/);
+  });
+
+  test("an async flush failure rejects the request it belonged to", async () => {
+    // A FileSink flush may be asynchronous, so this half cannot throw from
+    // send(). It must still reach somebody: a request whose bytes never left
+    // the process has to fail, not hang. Raced for the same reason as above.
+    const h = harness();
+    h.proc.flushResult = () => Promise.reject(new Error("EPIPE"));
+    const p = h.child.request({ type: "get_state" });
+    expect(await settledText(p)).toMatch(/flush failed.*EPIPE/);
+    expect(h.logs.some((l) => l.includes("flush failed"))).toBe(true);
   });
 });
 

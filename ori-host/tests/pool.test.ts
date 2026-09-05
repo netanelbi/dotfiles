@@ -436,6 +436,29 @@ describe("parked cap", () => {
     expect(convs.every((c) => c.busy && !c.disposed)).toBe(true);
     expect(h.pool.parkedCount).toBe(5); // over the cap, deliberately
   });
+
+  test("settling brings an overflowed pool back under the cap", () => {
+    // #makeActive used to be the only place the cap was checked, so a pool that
+    // overflowed because everything was busy stayed over it until the user
+    // switched conversations -- which may be never.
+    const h = harness();
+    const convs: FakeConv[] = [];
+    for (let i = 0; i < 5; i++) {
+      const c = h.pool.create() as FakeConv;
+      c.ask(`q${i}`);
+      h.clock.advance(1000); // distinct lastActive, so "oldest idle" is decidable
+      convs.push(c);
+    }
+    h.pool.create();
+    expect(h.pool.parkedCount).toBe(5);
+
+    // The oldest one stops being busy; it is now the only evictable slot.
+    convs[0]!.settle();
+
+    expect(convs[0]!.disposed).toBe(true);
+    expect(h.pool.parkedCount).toBe(MAX_PARKED);
+    expect(convs.slice(1).every((c) => !c.disposed)).toBe(true);
+  });
 });
 
 /* ------------------------------------------------------------------ *
@@ -454,6 +477,13 @@ describe("parked child death", () => {
     expect(a.failed).toHaveLength(1);
     expect(a.failed[0]).toContain("parked");
     expect(a.busy).toBe(false);
+    // And it is REPORTED, addressed to the conversation it happened in. Before
+    // `error` carried an optional convId there was nothing to address it with,
+    // so the host dropped it and the failure surfaced only if the user happened
+    // to switch back to that conversation.
+    const errs = h.events.filter((e) => e.t === "error");
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toMatchObject({ t: "error", convId: a.id });
     // The conversation itself survives -- the panel can still open it.
     expect(a.disposed).toBe(false);
     expect(h.pool.list().find((e) => e.id === a.sessionId)?.live).toBe(true);
@@ -605,7 +635,10 @@ describe("orphan reap (90s)", () => {
     expect(a.killed).toEqual(["orphan grace"]);
   });
 
-  test("the reap spares a busy conversation while killing its idle neighbours", () => {
+  test("one busy conversation does not keep an idle neighbour alive", () => {
+    // ori-agent:496 held grace_timer on the SESSION. A pool-wide clock that
+    // refused to arm while ANY conversation was busy let one long turn keep
+    // every other orphaned child resident for the length of it.
     const h = harness();
     h.pool.clientConnected();
     const busy = h.pool.create() as FakeConv;
@@ -615,14 +648,22 @@ describe("orphan reap (90s)", () => {
     idle.settle();
 
     h.pool.clientDisconnected();
-    // The busy one blocks the clock from arming at all, so nothing dies yet.
-    h.clock.advance(ORPHAN_GRACE_MS * 2);
+    h.clock.advance(ORPHAN_GRACE_MS - 1);
     expect(idle.killed).toEqual([]);
-
-    busy.settle();
-    h.clock.advance(ORPHAN_GRACE_MS);
+    h.clock.advance(1);
     expect(idle.killed).toEqual(["orphan grace"]);
+    // ...and the busy one is untouched: its own clock has not started.
+    expect(busy.killed).toEqual([]);
+    expect(busy.busy).toBe(true);
+
+    // It still gets its full grace, from its own settle.
+    busy.settle();
+    h.clock.advance(ORPHAN_GRACE_MS - 1);
+    expect(busy.killed).toEqual([]);
+    h.clock.advance(1);
     expect(busy.killed).toEqual(["orphan grace"]);
+    // Once each, never twice.
+    expect(idle.killed).toEqual(["orphan grace"]);
   });
 
   test("two clients: the grace only starts when the second one leaves", () => {

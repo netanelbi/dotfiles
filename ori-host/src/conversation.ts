@@ -183,8 +183,10 @@ const GEN_MIN_MS = 400;
 
 /** Tool output is an excerpt in the panel; the full text is in the session file.
  *  The TAIL is kept, because the case that overflows is a streaming bash log and
- *  its newest lines are the ones being watched. */
-const TOOL_RESULT_CAP = 4000;
+ *  its newest lines are the ones being watched. Exported so rehydrate.ts crops a
+ *  restored result to the same size a live one gets -- two rules would mean a
+ *  turn changing length when you reopened it. */
+export const TOOL_RESULT_CAP = 4000;
 
 /* ------------------------------------------------------------------ *
  * injected side effects
@@ -280,7 +282,7 @@ export function flattenContent(content: string | PiContentBlock[] | undefined): 
   return out;
 }
 
-function tail(s: string, cap: number): string {
+export function tail(s: string, cap: number): string {
   return s.length <= cap ? s : "…" + s.slice(s.length - cap);
 }
 
@@ -387,6 +389,44 @@ export class Conversation {
       usage: this.usage,
       bg: this.bg,
     };
+  }
+
+  /**
+   * Replace the whole transcript with one rebuilt from a session file
+   * (rehydrate.ts), and announce it as ONE snapshot.
+   *
+   * Takes ownership of `turns` -- they were just built for this and nothing else
+   * holds them; `snapshot()` clones on the way to the wire.
+   *
+   * The reset is the point. A conversation restored from disk has nothing in
+   * flight, so every piece of live state has to go with the old turn list or the
+   * next question inherits it: a stale `liveId` would send the answer into a row
+   * that no longer exists, a leftover steer would split the wrong turn, and a
+   * `busy` left over from the conversation this object used to be would leave the
+   * composer refusing to send.
+   */
+  install(turns: Turn[]): void {
+    this.turnList.length = 0;
+    this.byId.clear();
+    for (const t of turns) {
+      this.turnList.push(t);
+      this.byId.set(t.id, t);
+    }
+
+    this.liveId = null;
+    this.steerQueue = [];
+    this.openTools.clear();
+    this.awaitingRead = false;
+    this.roundBase = 0;
+    this.turnStartedAt = 0;
+    this.genMs = 0;
+    this.lastAppendAt = 0;
+    // Written straight in rather than through patchState: the snapshot below is
+    // the announcement, and a `state` event carrying the same three fields
+    // immediately before it is noise the panel would have to reconcile.
+    this.st = { ...this.st, busy: false, compacting: false, compactPhase: "" };
+
+    this.emit(this.snapshot());
   }
 
   /* ---------------------------------------------------------------- *

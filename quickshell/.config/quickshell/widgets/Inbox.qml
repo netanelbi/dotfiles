@@ -1,5 +1,6 @@
 import QtQuick
 import "root:/"
+import "../assistant"
 
 // The held batch, in the bar's own strip. Triage's only visible surface.
 //
@@ -149,12 +150,13 @@ BarWidget {
     if (!Triage.worthAsking) return
     var q = Triage.askPrompt()
     if (q === "") return
-    // ask() refuses while a turn is running or the socket is down, and a
-    // gesture that silently does nothing is indistinguishable from a dead
-    // widget. The refusal is written into the tooltip the pointer is already
-    // on rather than raised anywhere.
-    root.askNote = PiSession.ask(q) ? "asked Ori — the mark will fill"
-      : (PiSession.error !== "" ? PiSession.error : "Ori is busy — try again when it settles")
+    // ask() refuses when the agent is unreachable, and a gesture that silently
+    // does nothing is indistinguishable from a dead widget. The refusal is
+    // written into the tooltip the pointer is already on rather than raised
+    // anywhere. A turn already running is NOT a refusal any more -- the host
+    // takes that as a steer.
+    root.askNote = OriClient.ask(q) ? "asked Ori — the mark will fill"
+      : (OriClient.error !== "" ? OriClient.error : "Ori did not take that")
     clearNote.restart()
   }
 

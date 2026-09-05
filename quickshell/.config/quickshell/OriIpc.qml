@@ -1,46 +1,41 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "assistant"
 
-// The engine's own IPC surface, so both new capabilities -- attaching an image
-// to a question, and resuming a past conversation -- are drivable with no
-// window on screen. That is not a convenience: a panel is not a thing a test
-// can read, so anything only reachable through one is untestable.
+// The client's own IPC surface, so resuming a past conversation and reading
+// back what the panel holds are drivable with no window on screen. That is not
+// a convenience: a panel is not a thing a test can read, so anything only
+// reachable through one is untestable.
 //
 // It is a SEPARATE target from `assistant`, for two reasons. That one is the
 // panel's mount point (assistant/Assistant.qml) and is the stable script
 // surface -- ask / answer / status -- which nothing here disturbs. And this one
-// has to live out here at all: an IpcHandler declared inside the PiSession
+// has to live out here at all: an IpcHandler declared inside the OriClient
 // singleton is constructed but never registered (it does not appear in
 // `qs ipc show`), because handlers are collected from the reload tree hanging
 // off ShellRoot, which a singleton is not part of. Hence a Scope, and one line
 // in shell.qml -- the same reason Launchers{} exists.
 //
-//   qs -p ~/.config/quickshell ipc call ori image "what is this?" /tmp/shot.png
 //   qs -p ~/.config/quickshell ipc call ori sessions
 //   qs -p ~/.config/quickshell ipc call ori resume 01a03a7c
 Scope {
   IpcHandler {
     target: "ori"
 
-    // ask() with attachments. `paths` is newline- or comma-separated, so one
-    // call can carry several.
-    function image(question: string, paths: string): string {
-      var list = String(paths || "").split(/[\n,]/)
-      var clean = []
-      for (var i = 0; i < list.length; i++)
-        if (list[i].trim() !== "") clean.push(list[i].trim())
-      if (!PiSession.ask(question, clean))
-        return PiSession.busy ? "busy" : "refused"
-      return PiSession.imageError !== ""
-        ? "asked (" + PiSession.imageError + ")"
-        : "asked with " + clean.length + " image(s)"
-    }
+    // NO `image` FUNCTION any more, and it is not an oversight. It used to hand
+    // ask() a list of file paths. The protocol's `ask.images` is a list of
+    // MARKER INDICES handed out by an `attached` event, and the only thing that
+    // produces one is `attach_clipboard`, which captures from the Wayland
+    // clipboard -- there is no attach-by-path command in ClientCmd at all.
+    // Passing paths would send indices the host cannot resolve. Adding the
+    // capability is a host change; faking it here is exactly the local
+    // state-keeping this rewrite removed.
 
-    // The listing Ctrl+R is a view of, one per line: id, when, message count,
-    // and the opening question as the name.
+    // The listing Ctrl+R is a view of, one per line: id, when, turn count, and
+    // the opening question as the name.
     function sessions(): string {
-      var s = PiSession.sessions
+      var s = OriClient.sessions
       if (s.length === 0) return "(no saved sessions)"
       var out = []
       for (var i = 0; i < s.length; i++) {
@@ -49,31 +44,34 @@ Scope {
         // first eight and the prefix lookup would be ambiguous.
         out.push(String(s[i].id).substring(0, 13)
                + "  " + Qt.formatDateTime(new Date(s[i].at), "yyyy-MM-dd HH:mm")
-               + "  " + String(s[i].count) + " msg"
-               + (s[i].id === PiSession.sessionId ? "  *  " : "     ")
+               + "  " + String(s[i].turns) + " msg"
+               + (s[i].id === OriClient.sessionId ? "  *  " : "     ")
                + s[i].label)
       }
       return out.join("\n")
     }
 
     function sessionsJson(): string {
-      return JSON.stringify(PiSession.sessions)
+      return JSON.stringify(OriClient.sessions)
     }
 
+    // The command goes out and the host answers with a snapshot; there is
+    // nothing synchronous to report but whether the socket took it. Read
+    // `state` afterwards to see where it landed.
     function resume(id: string): string {
-      if (!PiSession.resume(id)) return "error: " + PiSession.error
-      return "resuming " + id + (PiSession.warm ? " (warm)" : " (cold start)")
+      if (!OriClient.resume(id)) return "error: " + OriClient.error
+      return "resuming " + id
     }
 
-    // What the engine currently is, in one line -- the thing to read after a
+    // What the client currently holds, in one line -- the thing to read after a
     // resume to see whether it landed.
     function state(): string {
-      return "warm=" + PiSession.warm
-           + " busy=" + PiSession.busy
-           + " turns=" + PiSession.turns.count
-           + " session=" + (PiSession.sessionId === "" ? "-" : PiSession.sessionId)
-           + " tokens=" + PiSession.usageTotal
-           + (PiSession.error === "" ? "" : " error=\"" + PiSession.error + "\"")
+      return "warm=" + OriClient.warm
+           + " busy=" + OriClient.busy
+           + " turns=" + OriClient.turns.count
+           + " session=" + (OriClient.sessionId === "" ? "-" : OriClient.sessionId)
+           + " tokens=" + OriClient.usageTotal
+           + (OriClient.error === "" ? "" : " error=\"" + OriClient.error + "\"")
     }
 
     // The transcript list's live scroll geometry: what the view thinks the
@@ -256,8 +254,8 @@ Scope {
     // resume actually repopulated it.
     function transcript(): string {
       var out = []
-      for (var i = 0; i < PiSession.turns.count; i++) {
-        var r = PiSession.turns.get(i)
+      for (var i = 0; i < OriClient.turns.count; i++) {
+        var r = OriClient.turns.get(i)
         // Text is CAPPED. A settled transcript here reaches 122 rows of
         // multi-thousand-character answers, and the whole reply crossed what
         // the IPC will carry -- `ori transcript` failed with
@@ -276,16 +274,19 @@ Scope {
         // bug report once already: an interrupted turn holding a `sleep 9`
         // call showed here as `[33] assistant:` and nothing else, and the
         // "stray empty band" it was taken for did not exist on screen.
-        var calls = PiSession.toolLog[i] || []
+        // Keyed by the turn's own id, never by the row: the map survives a
+        // steer inserting a turn above it, and this loop's `i` would not.
+        var calls = OriClient.toolsById[r.tid] || []
         if (calls.length > 0) {
           var names = []
           for (var c = 0; c < calls.length; c++)
             names.push(String(calls[c].name)
-              + (calls[c].ms > 0 ? " " + Math.round(calls[c].ms) + "ms" : " running"))
+              + (calls[c].state === "running" ? " running"
+                                              : " " + Math.round(calls[c].ms) + "ms"))
           line += "  {tools: " + names.join(", ") + "}"
         }
-        var cost = PiSession.turnCost[i]
-        if (cost) line += "  {cost: " + Math.round(cost.ms) + "ms/" + cost.tokens + "tok}"
+        var cost = OriClient.costById[r.tid]
+        if (cost) line += "  {cost: " + cost.seconds.toFixed(1) + "s/" + cost.output + "tok}"
         if (r.pending) line += "  {pending}"
         // Only NOW is a row genuinely empty -- no text, no calls, nothing.
         if (String(r.text) === "" && calls.length === 0) line += "  (EMPTY ROW)"
@@ -297,9 +298,12 @@ Scope {
     // Kill the child without touching the transcript, which is how "the shell
     // restarted" is reproduced on demand. The next ask() re-attaches to the
     // session file, exactly as it would after an idle kill.
+    //
+    // The panel command line, not a call of its own: /restart is one of the
+    // commands the host parses and it must work with no child running, so the
+    // client has nothing to add by having a second way in.
     function restart(): string {
-      PiSession.dropChild()
-      return "child stopped"
+      return OriClient.command("/restart") ? "child stopped" : "error: " + OriClient.error
     }
   }
 }

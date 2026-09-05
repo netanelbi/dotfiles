@@ -11,9 +11,16 @@ import {
 } from "../src/detach";
 
 test("a record is exactly 96 bytes and round-trips", () => {
+  // 96 is HARD-CODED on purpose. The width is a contract with the pi extension
+  // on the other end of the file, which reads a fixed 96 bytes of its own -- so
+  // asserting against DETACH_RECORD would move with the very constant that must
+  // not move, and this test would stay green through the change that breaks
+  // steer-detach in the field. Verified: setting DETACH_RECORD to 112 leaves
+  // the DETACH_RECORD-based version passing.
+  expect(DETACH_RECORD).toBe(96);
   const bytes = encodeRecord({ seq: 7, graceMs: 1500, pid: 424242 });
   expect(bytes).not.toBeNull();
-  expect(bytes!.length).toBe(DETACH_RECORD);
+  expect(bytes!.length).toBe(96);
   expect(decodeRecord(bytes!)).toEqual({ seq: 7, graceMs: 1500, pid: 424242 });
 });
 

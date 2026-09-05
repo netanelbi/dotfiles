@@ -27,17 +27,43 @@ reads both from whatever directory systemd started it in.
 
 ## Install
 
+The compiled binary is ~80 MB, so unlike everything else in this dotfiles tree
+it is **not in the repo and not stowed** — `ori-host/.gitignore` excludes
+`dist/`, and the binary is built per machine and *copied* into place. That is
+the one job of `scripts/install.ts`:
+
 ```bash
-install -Dm755 dist/ori-host ~/.local/bin/ori-host
+cd ori-host
+bun install
+bun run scripts/install.ts            # build, then -> ~/.local/bin/ori-host
+bun run scripts/install.ts --dry-run  # just print where it would go
+```
+
+It runs no `systemctl` of its own — enabling a unit and restarting a daemon you
+may be talking to are yours to decide — so it prints the rest and stops:
+
+```bash
+stow scripts                                     # once, for the unit file
 systemctl --user daemon-reload
-systemctl --user enable --now ori-agent
+systemctl --user disable --now ori-agent.socket  # see below
+systemctl --user enable --now ori-agent.service
 journalctl --user -u ori-agent -f -o cat | jq
 ```
 
-`ori-agent.socket` is **gone**. Bun cannot adopt an fd systemd hands it
-(`new net.Socket(fd)` is write-only in Bun), so the host binds
-`$XDG_RUNTIME_DIR/ori-agent.sock` itself and unlinks a stale file at startup —
-after probing it, so it can never unlink a socket another live host is serving.
+**Upgrading** is the same script again, then `systemctl --user restart
+ori-agent`. The install writes to `ori-host.new` and renames it over the target,
+because writing into a running executable's inode is `ETXTBSY`; the running host
+keeps its old inode until you restart it.
+
+`ori-agent.socket` must be **disabled**, and the unit is gone from this repo.
+Bun cannot adopt an fd systemd hands it (`new net.Socket(fd)` is write-only in
+Bun), so a socket-activated host could answer nobody. Left enabled, that unit
+would keep owning `$XDG_RUNTIME_DIR/ori-agent.sock` and the panel would connect
+to a listener with nothing behind it — the exact failure `PiSession`'s 8-second
+hello watchdog existed for. The host binds the path itself now and unlinks a
+stale file at startup, after probing it, so it can never unlink a socket another
+live host is serving.
+
 `ExecStart` still goes through `fish -lc`: a user unit starts from an almost
 empty environment, and that login shell is what supplies `~/.bun/bin` on `PATH`
 and `OLLAMA_API_KEY` without either reaching a unit file or the journal.
@@ -91,8 +117,10 @@ the module the rule came from.
 * **Subagent activity is read but not published.** `Catalog.agentActivity`
   tracks the pi subagent registry, and `BgJob.activity` is the field it belongs
   in, but the two are not joined.
-* **A parked conversation's `notice`/`error` are dropped**, because those two
-  events carry no `convId` and the host gates conversation traffic on "is this
-  the active one". A parked failure is still visible: `failTurn` marks the turn,
-  and the turn is in the snapshot.
-* `dist/` and `node_modules/` are not in the repo's `.gitignore`.
+* **`notice` and `error` are still routed by the emitter, not by the event.**
+  Both now carry an optional `convId` (absent means "the active conversation"),
+  and `pool.ts` uses it to report a parked child's death the moment it happens.
+  But `main.ts`'s per-conversation gate still drops everything a parked
+  conversation emits, so a parked `/export` or compaction notice does not reach
+  the panel; the gate has to start reading `ev.convId` instead of the id of the
+  conversation that emitted it.

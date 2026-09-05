@@ -35,6 +35,13 @@ const THROTTLE_MS = 60_000;
  *  this is a real deadline rather than a watchdog bolted on beside one. */
 const TIMEOUT_MS = 8_000;
 
+/** Floor between two 401-driven re-reads of models.json. A key that is simply
+ *  wrong 401s forever, and the caller refreshes on every settled turn, so
+ *  without a floor a rejected key would stat and parse that file once per turn
+ *  for the life of the host. A rotation is picked up within this window, which
+ *  is as immediate as a plan readout ever needs to be. */
+const KEY_REREAD_MS = 60_000;
+
 export interface UsageIo {
   fetch(url: string, init: { headers: Record<string, string>; signal: AbortSignal }): Promise<{
     status: number;
@@ -93,6 +100,7 @@ export class OllamaUsage {
   readonly #io: UsageIo;
   #key = "";
   #lastFetch = 0;
+  #lastKeyRead = 0;
   #inFlight = false;
 
   constructor(io: UsageIo = defaultUsageIo) {
@@ -117,7 +125,10 @@ export class OllamaUsage {
     try {
       if (this.#key === "") {
         this.#key = this.#io.envKey();
-        if (this.#key === "") this.#key = await this.#io.fileKey();
+        if (this.#key === "") {
+          this.#lastKeyRead = this.#io.now();
+          this.#key = await this.#io.fileKey();
+        }
       }
       if (this.#key === "") {
         this.error = "no key";
@@ -134,13 +145,18 @@ export class OllamaUsage {
         // Deliberately NOT latched on "we already read the file once": the host
         // is a daemon that runs for days and a key can rotate more than once in
         // that time, so a latch means the second rotation is never picked up and
-        // only a restart fixes the footer. Re-reading is one small file read on
-        // a path that has already spent a failed HTTP request, and the
-        // difference check keeps it from re-sending the key just rejected.
-        const fresh = await this.#io.fileKey();
-        if (fresh !== "" && fresh !== this.#key) {
-          this.#key = fresh;
-          status = await this.#get();
+        // only a restart fixes the footer. A cooldown instead of a latch -- so a
+        // permanently rejected key cannot turn every settled turn into a file
+        // read -- and the difference check keeps it from re-sending the key that
+        // was just refused.
+        const now = this.#io.now();
+        if (this.#lastKeyRead === 0 || now - this.#lastKeyRead >= KEY_REREAD_MS) {
+          this.#lastKeyRead = now;
+          const fresh = await this.#io.fileKey();
+          if (fresh !== "" && fresh !== this.#key) {
+            this.#key = fresh;
+            status = await this.#get();
+          }
         }
       }
       if (status === 401) this.error = "key rejected";

@@ -98,6 +98,10 @@ Singleton {
   // per monitor.
   property bool panelOpen: false
   property bool unread: false
+  // Right-click on the bar cell pins it shut. Not persisted and not host state:
+  // it is a preference about one widget, and the widget is instantiated once
+  // per monitor, so the two copies have to agree on it somewhere.
+  property bool cellCompact: false
 
   onPanelOpenChanged: root.send({ t: "panel", open: root.panelOpen })
 
@@ -222,9 +226,13 @@ Singleton {
     root.costById = next
     // The footer's rate freezes on the last finished turn. There is no live
     // rate in the protocol -- a turn's tokensPerSecond is only knowable once it
-    // is over -- so this is the honest number to show.
+    // is over -- so this is the honest number to show. Same for the duration:
+    // the bar cell's clock counts up while `busy` and then holds the settled
+    // figure, which is TurnCost.seconds and not a second measurement.
     if (cost && Number(cost.tokensPerSecond) > 0)
       root.tokensPerSecond = Number(cost.tokensPerSecond)
+    if (cost && Number(cost.seconds) > 0)
+      root.turnSeconds = Number(cost.seconds)
   }
 
   // The three fields that cannot live in a ListModel role, for ONE turn.
@@ -305,8 +313,29 @@ Singleton {
     : (root.usageOutput >= root.outputBase ? root.usageOutput - root.outputBase
                                            : root.usageOutput)
 
-  // Frozen on the last settled turn's cost -- see setCost.
+  // Both frozen on the last settled turn's cost -- see setCost. `turnSeconds`
+  // is what the bar cell shows once the count-up stops.
   property real tokensPerSecond: 0
+  property real turnSeconds: 0
+
+  // When the transcript last GREW, for the bar cell's flow gauge: it turns the
+  // silence since the last delta into a rate, so a stalled turn drifts and a
+  // streaming one races. Stamped off the signal rather than at each of the
+  // three emitters, so nothing that grows the transcript can forget to.
+  property double lastAppendAt: 0
+  onAppended: root.lastAppendAt = Date.now()
+
+  // The newest `Turn.settledAt` the host has sent. Lifted out of the row for
+  // the same reason and in the same way as tokensPerSecond: a ListModel role
+  // does not notify, so a binding through turns.get(i).settledAt is evaluated
+  // once and never again.
+  property double lastSettledAt: 0
+
+  function noteSettled(at) {
+    // Newest wins, so a patch for an older turn arriving late cannot rewind it.
+    var v = Number(at || 0)
+    if (v > root.lastSettledAt) root.lastSettledAt = v
+  }
 
   readonly property bool contextKnown: root.contextWindow > 0 && root.usageTotal > 0
   readonly property real contextFraction:
@@ -408,6 +437,10 @@ Singleton {
     var line = String(text || "").trim()
     if (line === "") return false
     if (!sock.connected) { root.error = root.agentDownError; return false }
+    // A notice describes the LAST thing that happened, and the panel sets some
+    // of them itself -- so nothing on the host's side would ever clear those.
+    // Asking again is the moment they stop being true.
+    root.notice = ""
     if (line.charAt(0) === "/") return root.command(line)
     if (!root.send({ t: "ask", text: line,
                      images: images || root.takeAttachments(line) })) return false
@@ -417,6 +450,7 @@ Singleton {
 
   function command(line) {
     if (!sock.connected) { root.error = root.agentDownError; return false }
+    root.notice = ""
     return root.send({ t: "command", line: String(line) })
   }
 
@@ -475,6 +509,13 @@ Singleton {
     return -1
   }
 
+  // The question the newest answer belongs to, for the hover veil.
+  function lastUser() {
+    for (var i = turnModel.count - 1; i >= 0; i--)
+      if (turnModel.get(i).role === "user") return i
+    return -1
+  }
+
   // ----------------------------------------------------------------- ingest
   // One HostEvent. A malformed line is DROPPED rather than thrown: a single
   // torn record must never take down a long-lived connection.
@@ -490,6 +531,10 @@ Singleton {
 
     // Events for a PARKED conversation must not land in the visible transcript.
     // The host re-snapshots on activate, so dropping them is complete.
+    //
+    // A MISSING `convId` means the active conversation and falls straight
+    // through. That is the whole handling `notice`/`error` need: they carry no
+    // convId today and are about to, and either way this one test is right.
     if (m.convId !== undefined && m.t !== "snapshot" && m.t !== "hello"
         && m.convId !== root.convId) return
 
@@ -596,6 +641,11 @@ Singleton {
     var tools = {}
     var costs = {}
     var rate = 0
+    var secs = 0
+    // ASSIGNED rather than noteSettled()'d: a snapshot replaces the
+    // conversation, so a later stamp belonging to the one being left has to go
+    // with it.
+    var settled = 0
     var list = m.turns || []
     for (var i = 0; i < list.length; i++) {
       var t = list[i]
@@ -605,12 +655,16 @@ Singleton {
       if (t.cost) {
         costs[id] = t.cost
         if (Number(t.cost.tokensPerSecond) > 0) rate = Number(t.cost.tokensPerSecond)
+        if (Number(t.cost.seconds) > 0) secs = Number(t.cost.seconds)
       }
+      if (Number(t.settledAt || 0) > settled) settled = Number(t.settledAt)
       if (t.pending === true) root.liveId = id
     }
     root.toolsById = tools
     root.costById = costs
     root.tokensPerSecond = rate
+    root.turnSeconds = secs
+    root.lastSettledAt = settled
     root.reindex()
     // Usage BEFORE state: applyState can flip `busy`, and the baseline
     // onBusyChanged stamps has to come off THIS conversation's reading rather
@@ -639,6 +693,7 @@ Singleton {
       root.reindex()
     }
     root.stashTurnExtras(t)
+    root.noteSettled(t.settledAt)
     if (t.pending === true) root.liveId = String(t.id)
     root.appended()
   }
@@ -688,8 +743,11 @@ Singleton {
         turnModel.setProperty(r, k, String(patch[k]))
         break
       case "delivery":
+        turnModel.setProperty(r, k, Number(patch[k]))
+        break
       case "settledAt":
         turnModel.setProperty(r, k, Number(patch[k]))
+        root.noteSettled(patch[k])
         break
       }
     }
