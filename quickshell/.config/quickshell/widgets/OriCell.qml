@@ -130,6 +130,14 @@ Item {
   readonly property int elapsedSec: root.thinking
     ? root.liveSec : Math.round(OriClient.turnSeconds)
 
+  // WHETHER THERE IS A DURATION TO SHOW AT ALL. A turn that ends with no
+  // content gets no TurnCost, so it reports no seconds -- and a readout that
+  // falls back to the last figure it held is showing the PREVIOUS turn's
+  // duration under this turn's label, which is worse than showing nothing
+  // because it cannot be told apart from a real reading. Absent renders as
+  // absent: the slot stays its fixed width and stays empty.
+  readonly property bool elapsedKnown: root.thinking || OriClient.turnSeconds > 0
+
   // The readout's right half is the turn's clock, which says nothing about a
   // job that outlived it -- so an idle cell with work still running shows a
   // COUNT there instead of a stale duration.
@@ -444,7 +452,7 @@ Item {
         horizontalAlignment: Text.AlignRight
         text: root.countingJobs
           ? "\u00d7" + OriClient.bgCount
-          : root.humanTime(root.elapsedSec)
+          : root.elapsedKnown ? root.humanTime(root.elapsedSec) : ""
         color: root.tint
         font.family: Style.font.family
         font.pixelSize: Style.font.tiny

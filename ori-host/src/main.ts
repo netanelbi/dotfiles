@@ -50,7 +50,16 @@ import {
   type SlashCommand,
 } from "./protocol";
 import { rehydrate } from "./rehydrate";
-import { deriveLabel, readTranscript, Store, summarise } from "./store";
+import {
+  deriveLabel,
+  piSessionDir,
+  readLegacyIndex,
+  readTranscript,
+  scanSessions,
+  Store,
+  summarise,
+  type FileStamp,
+} from "./store";
 import { serve, socketPath, type Conn, type OriServer } from "./transport";
 import { defaultUsageIo, OllamaUsage, type UsageIo } from "./usage";
 
@@ -61,6 +70,10 @@ import { defaultUsageIo, OllamaUsage, type UsageIo } from "./usage";
  * behind a build; long enough that a command about to finish still gets to.
  */
 const STEER_DETACH_GRACE_MS = 300;
+
+/** Set once the ori-sessions.json migration has run, so it is read exactly one
+ *  time in the life of an index rather than on every start. */
+const LEGACY_MIGRATED = "legacyIndexMigrated";
 
 /** pi's `ImageContent`, which is what `prompt`/`steer` carry. */
 interface ImagePayload {
@@ -358,6 +371,12 @@ export interface HostOptions {
   socket?: string;
   /** Defaults to `$XDG_STATE_HOME/ori-host/sessions.db`. */
   dbPath?: string;
+  /** pi's session directory for this workdir. Defaults to
+   *  `$PI_CODING_AGENT_SESSION_DIR`, else `~/.pi/agent/sessions/<encoded cwd>`. */
+  sessionDir?: string;
+  /** The QML panel's old index, migrated once. Defaults to
+   *  `<home>/.local/state/quickshell/ori-sessions.json`. */
+  legacyIndex?: string;
   home?: string;
   runtimeDir?: string;
   catalogPaths?: CatalogPaths;
@@ -380,12 +399,45 @@ export class Host {
   readonly #usage: OllamaUsage;
   #server: OriServer | null = null;
 
+  readonly #sessionDir: string;
+  readonly #legacyIndex: string;
+  /** What the last scan saw, so the next one only opens files that moved. */
+  #stamps: ReadonlyMap<string, FileStamp> = new Map();
+  /** A scan in flight, so concurrent callers join it instead of stacking. */
+  #scanning: Promise<void> | null = null;
+  /**
+   * Transcript restores in flight, by conversation id.
+   *
+   * This map is the fix for a race that cost a resumed conversation its entire
+   * history for the rest of its life: `#restore` reads the JSONL asynchronously
+   * and then calls `conv.install()`, which REPLACES the turn list -- so it has
+   * to refuse to run once a question has been asked, and refusing was permanent
+   * because nothing ever tried again. The question now waits for the read
+   * instead. Waiting is the right way round rather than retrying afterwards:
+   * `install()` also resets `busy`, `liveId` and the steer queue (see its
+   * comment), so there is no correct way to fold a file read into a
+   * conversation that has already started a turn.
+   */
+  readonly #restoring = new Map<string, Promise<void>>();
+
   constructor(opts: HostOptions = {}) {
     this.#home = opts.home ?? Bun.env["HOME"] ?? "";
     this.#runtimeDir = opts.runtimeDir ?? Bun.env["XDG_RUNTIME_DIR"] ?? "";
     this.#socket = opts.socket ?? socketPath();
     this.#spawn = opts.spawn ?? {};
     this.#usage = new OllamaUsage(opts.usageIo ?? defaultUsageIo);
+
+    // Derived, never hardcoded: the child's workdir decides which of pi's
+    // session directories holds this host's conversations, and argv.ts already
+    // owns that answer.
+    const workdir = buildWorkdir({ home: this.#home, exists: existsSync, ...this.#spawn });
+    this.#sessionDir =
+      opts.sessionDir ??
+      piSessionDir({ workdir, home: this.#home, env: Bun.env["PI_CODING_AGENT_SESSION_DIR"] });
+    // Off `home` and not `$XDG_STATE_HOME`, unlike the db below: this path is
+    // not ours to place. It is where Quickshell wrote the file we are reading,
+    // and tests that pass a scratch `home` must not reach the real one.
+    this.#legacyIndex = opts.legacyIndex ?? `${this.#home}/.local/state/quickshell/ori-sessions.json`;
 
     const dbPath = opts.dbPath ?? defaultDbPath(this.#home);
     // bun:sqlite will not create the directory; Bun.write (which the catalogue
@@ -419,6 +471,79 @@ export class Host {
         onGone: () => this.pool.clientDisconnected(),
       },
     });
+    // NOT awaited, and that is the requirement: the panel connects the moment
+    // the socket exists, and discovery is up to 40 stats and 40 bounded reads.
+    // Its result arrives as a `sessions` event whenever it lands.
+    void this.discover();
+  }
+
+  /**
+   * Everything the index can learn without being told: the old JSON index, then
+   * pi's own session directory.
+   *
+   * Migration first because it carries the better data (real labels, real turn
+   * counts) -- though `Store.seed` makes the order safe either way, since
+   * neither pass may overwrite the other.
+   */
+  async discover(): Promise<void> {
+    await this.#migrateLegacy();
+    await this.rescan();
+  }
+
+  /**
+   * Re-read pi's session directory. Cheap by design: a file whose mtime and
+   * size are unchanged is never opened, so the steady-state cost is one stat per
+   * session. Called on demand rather than by watching the directory -- the panel
+   * asking for its session list is the only moment the answer is looked at.
+   *
+   * Deduped: a scan already running is joined, so a reconnect storm cannot stack
+   * scans on top of each other.
+   */
+  rescan(): Promise<void> {
+    const running = this.#scanning;
+    if (running) return running;
+    const run = this.#scanOnce().finally(() => {
+      this.#scanning = null;
+    });
+    this.#scanning = run;
+    return run;
+  }
+
+  async #scanOnce(): Promise<void> {
+    try {
+      const { found, stamps, read } = await scanSessions(this.#sessionDir, this.#stamps);
+      this.#stamps = stamps;
+      if (found.length === 0) return;
+      this.store.seed(found);
+      log.info("discovered sessions", { dir: this.#sessionDir, found: found.length, read });
+      this.broadcast({
+        t: "sessions",
+        entries: this.pool.list(),
+        activeId: this.#active()?.sessionId ?? "",
+      });
+    } catch (e) {
+      // A host that cannot read pi's directory is a host with a short session
+      // list, not a host that fails to start.
+      log.warn("session scan failed", { dir: this.#sessionDir, err: String(e) });
+    }
+  }
+
+  /** `~/.local/state/quickshell/ori-sessions.json`, read ONCE ever. */
+  async #migrateLegacy(): Promise<void> {
+    if (this.store.meta(LEGACY_MIGRATED) !== null) return;
+    try {
+      const rows = await readLegacyIndex(this.#legacyIndex);
+      // Absent. Not recorded as done: the old panel may still be running and
+      // about to write it, and re-checking costs one stat per start.
+      if (rows === null) return;
+      if (rows.length > 0) {
+        this.store.seed(rows);
+        log.info("migrated the old session index", { file: this.#legacyIndex, rows: rows.length });
+      }
+      this.store.setMeta(LEGACY_MIGRATED, String(Date.now()));
+    } catch (e) {
+      log.warn("session index migration failed", { file: this.#legacyIndex, err: String(e) });
+    }
   }
 
   /** Closes the socket, unlinks its file, and SIGTERMs every child. */
@@ -540,16 +665,28 @@ export class Host {
    * A no-op for anything already in memory, which is the common case: parked
    * conversations keep their turns and `pool.resume` hands the live one back.
    */
-  async #restore(agent: Agent | null): Promise<void> {
-    if (!agent || agent.conv.turns.length > 0 || agent.sessionFile === "") return;
+  #restore(agent: Agent | null): Promise<void> {
+    if (!agent) return Promise.resolve();
+    const running = this.#restoring.get(agent.id);
+    if (running) return running;
+    if (agent.conv.turns.length > 0 || agent.sessionFile === "") return Promise.resolve();
+    const run = this.#readTranscriptInto(agent).finally(() => {
+      this.#restoring.delete(agent.id);
+    });
+    this.#restoring.set(agent.id, run);
+    return run;
+  }
+
+  async #readTranscriptInto(agent: Agent): Promise<void> {
     const file = agent.sessionFile;
     try {
       const { entries, torn } = await readTranscript(file);
       if (torn > 0) log.warn("skipped torn transcript lines", { file, torn });
       const turns = rehydrate(entries, { now: Date.now, newId: () => crypto.randomUUID() });
       if (turns.length === 0) return;
-      // Checked again: the read was asynchronous, and a question asked while it
-      // was in flight must not be overwritten by the file it predates.
+      // Belt and braces. `#ask` waits on this read precisely so this can no
+      // longer happen -- but `install()` replacing a live turn list is bad
+      // enough that the guard stays.
       if (agent.conv.turns.length > 0) return;
       agent.conv.install(turns);
       log.info("restored transcript", { conv: agent.id, file, turns: turns.length });
@@ -584,6 +721,10 @@ export class Host {
     conn.send({ t: "models", models: this.catalog.availableModels });
     conn.send({ t: "commands", commands: this.#panelCmds() });
     log.info("client attached", { channel, conv: agent.id, displaced });
+    // A panel connecting IS the panel asking for the session list, and sessions
+    // pi wrote while this host was down are only findable by looking. The list
+    // above went out first; a second one follows if the scan turns anything up.
+    void this.rescan();
   }
 
   #onCommand(conn: Conn, cmd: ClientCmd): void {
@@ -609,6 +750,10 @@ export class Host {
 
       case "attach_clipboard":
         void this.#attach(conn, cmd.id);
+        return;
+
+      case "attach_path":
+        void this.#attachPath(conn, cmd.path, cmd.id);
         return;
 
       case "attach_sync":
@@ -653,6 +798,20 @@ export class Host {
         const agent = this.#active();
         if (agent) conn.send(agent.snapshot());
         this.#ack(conn, cmd.id, agent !== null);
+        // Same reason as `hello`: a resync is the panel re-asking for
+        // everything, and unchanged files make this nearly free.
+        void this.rescan();
+        return;
+      }
+
+      default: {
+        // A command with no arm was dropped in SILENCE: `attach_path` shipped
+        // in the union with no case here, so `ori image` staged a question that
+        // could never be sent and no reply of any kind came back. The `never`
+        // binding makes tsc the gate -- a new ClientCmd member stops narrowing
+        // and the build breaks here rather than in the panel.
+        const unhandled: never = cmd;
+        log.warn("unhandled client command", { cmd: unhandled });
         return;
       }
     }
@@ -664,6 +823,13 @@ export class Host {
       this.#ack(conn, id, false, "no active conversation");
       return;
     }
+
+    // A question typed while this conversation is still reading its transcript
+    // waits for the read. Otherwise the read loses -- it must refuse to install
+    // over a live turn list -- and it loses PERMANENTLY, leaving that
+    // conversation with no history for the rest of its life. Typically
+    // microseconds; the file it waits on is one this host is already reading.
+    await this.#restoring.get(agent.id);
 
     const refs: ImageRef[] = [];
     const payload: ImagePayload[] = [];
@@ -778,6 +944,33 @@ export class Host {
     }
     const n = this.#staging.attach(shot.path);
     conn.send({ t: "attached", n, path: shot.path });
+    this.#ack(conn, id, true);
+  }
+
+  /**
+   * The same staging for a path the caller NAMES -- `ori image`, which has no
+   * clipboard to read from.
+   *
+   * It encodes to VERIFY: a marker index handed out for a path that turns out
+   * to be missing, empty, oversized or not an image would fail at `#ask` time
+   * instead, long after the caller was told the picture was staged. The encode
+   * is thrown away and redone at send time; that is 1.34 ms for 8 MB
+   * (images.ts) against a wrong answer to "is this attachable".
+   *
+   * The reply carries `id` so the panel can tell a staged `ori image` picture
+   * from a Ctrl+V one -- see protocol.ts.
+   */
+  async #attachPath(conn: Conn, path: string, id?: string): Promise<void> {
+    const enc = await encodeImage(path);
+    if (!enc.ok) {
+      // `id` may be undefined; JSON.stringify drops the key, which is exactly
+      // the "clipboard, uncorrelated" shape.
+      conn.send({ t: "attach_failed", id, why: enc.error });
+      this.#ack(conn, id, false, enc.error);
+      return;
+    }
+    const n = this.#staging.attach(path);
+    conn.send({ t: "attached", id, n, path });
     this.#ack(conn, id, true);
   }
 

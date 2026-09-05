@@ -17,20 +17,117 @@ import "assistant"
 // off ShellRoot, which a singleton is not part of. Hence a Scope, and one line
 // in shell.qml -- the same reason Launchers{} exists.
 //
+//   qs -p ~/.config/quickshell ipc call ori image "what is this?" /tmp/shot.png
 //   qs -p ~/.config/quickshell ipc call ori sessions
 //   qs -p ~/.config/quickshell ipc call ori resume 01a03a7c
 Scope {
+  id: oriIpc
+
+  // ------------------------------------------------------ `ori image` staging
+  // The question waiting on its pictures, and the markers collected so far.
+  //
+  // There is state here, and it is not the local state-keeping this rewrite
+  // deleted: it is a REQUEST IN FLIGHT, not a copy of anything the host owns.
+  // The marker indices `ask` needs are the host's to hand out -- the panel names
+  // a path, the host opens, sniffs, encodes and answers `attached` with the
+  // number -- so a question with pictures cannot be sent in one step. Nothing
+  // in this file opens the file. The QML that did hand-rolled base64 and took
+  // 2170 ms for 12 MB on the UI thread, which is one of the reasons the host
+  // exists at all.
+  property string imageQuestion: ""
+  property int imageWanted: 0
+  property var imageMarkers: []
+
+  function imageReset() {
+    oriIpc.imageQuestion = ""
+    oriIpc.imageWanted = 0
+    oriIpc.imageMarkers = []
+    imageDeadline.stop()
+  }
+
+  Connections {
+    target: OriClient
+
+    // Only OUR attachments: Ctrl+V lands on `attachedImage` and never here,
+    // which is also what keeps these markers out of the user's draft.
+    function onAttachedPath(n, path) {
+      if (oriIpc.imageQuestion === "") return
+      oriIpc.imageMarkers = oriIpc.imageMarkers.concat([n])
+      if (oriIpc.imageMarkers.length < oriIpc.imageWanted) return
+      var q = oriIpc.imageQuestion
+      var markers = oriIpc.imageMarkers
+      oriIpc.imageReset()
+      if (!OriClient.ask(q, markers))
+        OriClient.notice = "ori image: the question was refused -- " + OriClient.error
+    }
+
+    // ALL OR NOTHING. A question that asked about a picture and went without it
+    // reads as an answer about nothing, so one failure drops the whole thing --
+    // and says so on the notice strip, because image() itself returned long
+    // before this.
+    function onAttachPathFailed(why) {
+      if (oriIpc.imageQuestion === "") return
+      oriIpc.imageReset()
+      OriClient.notice = "ori image: " + why + " -- nothing was sent"
+    }
+  }
+
+  Timer {
+    id: imageDeadline
+    // Generous, because it covers a read and a base64 of up to 12 MB host-side
+    // -- not a model call, which happens after the question is sent. It exists
+    // for the case where NOTHING answers: the host can die between the command
+    // and the reply, and a staged question would otherwise wait for ever.
+    interval: 10000
+    onTriggered: {
+      var missing = oriIpc.imageWanted - oriIpc.imageMarkers.length
+      oriIpc.imageReset()
+      OriClient.notice = "ori image: the host never answered attach_path for "
+        + missing + " image(s) -- nothing was sent"
+      console.log("ori image: no attach_path reply for " + missing + " image(s)")
+    }
+  }
+
   IpcHandler {
     target: "ori"
 
-    // NO `image` FUNCTION any more, and it is not an oversight. It used to hand
-    // ask() a list of file paths. The protocol's `ask.images` is a list of
-    // MARKER INDICES handed out by an `attached` event, and the only thing that
-    // produces one is `attach_clipboard`, which captures from the Wayland
-    // clipboard -- there is no attach-by-path command in ClientCmd at all.
-    // Passing paths would send indices the host cannot resolve. Adding the
-    // capability is a host change; faking it here is exactly the local
-    // state-keeping this rewrite removed.
+    // ask() with attachments. `paths` is newline- or comma-separated, so one
+    // call can carry several.
+    //
+    // ASYNCHRONOUS, which master's version was not: it could call
+    // PiSession.ask(question, paths) because the panel then held the encoder
+    // itself. Now the host hands out one marker index per picture and the
+    // question cannot be sent until every one is back, so this returns as soon
+    // as the paths are on the wire and the OUTCOME lands on the notice strip
+    // (and in `qs log`). The alternative -- blocking here -- is not available:
+    // an IpcHandler function returns on the same stack that runs the event loop
+    // the reply arrives on.
+    //
+    // The markers are not written into the question text as `[Image n]`. The
+    // host resolves them from the numbers alone; the marker is a composer
+    // affordance for deleting one before sending, and there is no composer here.
+    function image(question: string, paths: string): string {
+      var list = String(paths || "").split(/[\n,]/)
+      var clean = []
+      for (var i = 0; i < list.length; i++)
+        if (list[i].trim() !== "") clean.push(list[i].trim())
+      if (String(question || "").trim() === "") return "refused: no question"
+      if (clean.length === 0) return "refused: no image paths"
+      if (oriIpc.imageQuestion !== "")
+        return "busy: another image question is still attaching"
+
+      oriIpc.imageQuestion = String(question)
+      oriIpc.imageWanted = clean.length
+      oriIpc.imageMarkers = []
+      for (var j = 0; j < clean.length; j++) {
+        if (OriClient.attachPath(clean[j])) continue
+        // A dead socket. send() has already put the reason in `error`.
+        oriIpc.imageReset()
+        return "error: " + OriClient.error
+      }
+      imageDeadline.restart()
+      return "attaching " + clean.length + " image(s); the question goes when they land"
+    }
 
     // The listing Ctrl+R is a view of, one per line: id, when, turn count, and
     // the opening question as the name.

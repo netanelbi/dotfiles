@@ -215,10 +215,16 @@ export type HostEvent =
   | { t: "notice"; convId?: string; text: string }
   | { t: "error"; convId?: string; text: string }
 
-  /** An image was captured from the clipboard and is ready to attach. `n` is
-   *  the 1-based marker index the composer inserts as `[Image n]`. */
-  | { t: "attached"; n: number; path: string }
-  | { t: "attach_failed"; why: string }
+  /** An image was captured and is ready to attach. `n` is the 1-based marker
+   *  index the composer inserts as `[Image n]`.
+   *
+   *  `id` ECHOES the id of the `attach_path` that asked for it, and is absent
+   *  for a clipboard capture. Without it the reply is a broadcast, and the
+   *  composer -- which inserts a marker for every one it sees -- would take an
+   *  `ori image` picture into the user's live draft, where it goes dead the
+   *  moment that IPC sends its own question and the host clears staging. */
+  | { t: "attached"; id?: string; n: number; path: string }
+  | { t: "attach_failed"; id?: string; why: string }
 
   /** Correlated reply to a ClientCmd that carried an `id`. */
   | { t: "ack"; id: string; ok: boolean; error?: string };
@@ -245,6 +251,14 @@ export type ClientCmd =
   /** Capture an image from the Wayland clipboard. Replies with `attached` or
    *  `attach_failed`. */
   | { t: "attach_clipboard"; id?: string }
+  /** Attach an image the caller NAMES BY PATH -- the `ori image` IPC entry
+   *  point, which has no clipboard to read. Replies with `attached` or
+   *  `attach_failed`, exactly like `attach_clipboard`, so the panel learns the
+   *  marker index the same way and the file is still opened, sniffed and
+   *  base64'd host-side. That last part is the point: the QML this replaced
+   *  hand-rolled the encoder and took 2170 ms for 12 MB on the UI thread.
+   *  ONE image per command; a caller with several sends several. */
+  | { t: "attach_path"; id?: string; path: string }
   /** Drop staged attachments whose `[Image n]` marker is no longer in `draft`. */
   | { t: "attach_sync"; draft: string }
 

@@ -90,11 +90,47 @@ describe("Store", () => {
     const path = join(dir, "index.db");
     const a = new Store(path);
     a.upsert(row("keep", 42));
+    a.setMeta("legacyIndexMigrated", "1");
     a.close();
 
     const b = new Store(path);
     expect(b.byId("keep")?.at).toBe(42);
+    // The migration marker outlives the process, which is what "migrate once"
+    // means.
+    expect(b.meta("legacyIndexMigrated")).toBe("1");
     b.close();
+  });
+
+  test("seed inserts what is missing and only fills gaps in what is not", () => {
+    const s = new Store();
+    // Nothing there yet: a scanned row is inserted whole.
+    s.seed([{ id: "new", file: "/s/new.jsonl", label: "scanned", at: 100, turns: 0 }]);
+    expect(s.byId("new")).toMatchObject({ label: "scanned", at: 100, turns: 0 });
+
+    // A row a settled turn wrote. Every column of it is better than a scan's.
+    s.upsert(row("live", 500, { label: "the real label", turns: 12 }));
+    s.seed([{ id: "live", file: "/s/live.jsonl", label: "scanned", at: 400, turns: 0 }]);
+    expect(s.byId("live")).toMatchObject({ label: "the real label", at: 500, turns: 12 });
+
+    // Except the path, where the filesystem is authoritative, and recency, which
+    // only ever moves forward.
+    s.seed([{ id: "live", file: "/moved/live.jsonl", label: "", at: 900, turns: 0 }]);
+    expect(s.byId("live")).toMatchObject({ file: "/moved/live.jsonl", at: 900, turns: 12 });
+
+    // A blank label IS a gap, and a scan may fill it.
+    s.upsert({ id: "blank", file: "/s/b.jsonl", label: "", at: 1, turns: 0 });
+    s.seed([{ id: "blank", file: "/s/b.jsonl", label: "found it", at: 1, turns: 0 }]);
+    expect(s.byId("blank")?.label).toBe("found it");
+    s.close();
+  });
+
+  test("meta is null until set", () => {
+    const s = new Store();
+    expect(s.meta("nope")).toBeNull();
+    s.setMeta("k", "a");
+    s.setMeta("k", "b");
+    expect(s.meta("k")).toBe("b");
+    s.close();
   });
 });
 

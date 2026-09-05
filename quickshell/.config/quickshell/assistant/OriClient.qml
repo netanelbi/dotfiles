@@ -103,7 +103,9 @@ Singleton {
   // per monitor, so the two copies have to agree on it somewhere.
   property bool cellCompact: false
 
-  onPanelOpenChanged: root.send({ t: "panel", open: root.panelOpen })
+  // Quiet: the host learning which surface has focus is housekeeping, and a
+  // panel toggled while the host is restarting must not be reported as a fault.
+  onPanelOpenChanged: root.send({ t: "panel", open: root.panelOpen }, true)
 
   // ------------------------------------------------------------------ turns
   // The conversation, oldest first.
@@ -226,13 +228,10 @@ Singleton {
     root.costById = next
     // The footer's rate freezes on the last finished turn. There is no live
     // rate in the protocol -- a turn's tokensPerSecond is only knowable once it
-    // is over -- so this is the honest number to show. Same for the duration:
-    // the bar cell's clock counts up while `busy` and then holds the settled
-    // figure, which is TurnCost.seconds and not a second measurement.
+    // is over -- so this is the honest number to show. The DURATION is not
+    // stamped here beside it; see `turnSeconds`.
     if (cost && Number(cost.tokensPerSecond) > 0)
       root.tokensPerSecond = Number(cost.tokensPerSecond)
-    if (cost && Number(cost.seconds) > 0)
-      root.turnSeconds = Number(cost.seconds)
   }
 
   // The three fields that cannot live in a ListModel role, for ONE turn.
@@ -294,7 +293,17 @@ Singleton {
       root.outputBase = root.usageOutput
       return
     }
-    root.settled()
+    // A SETTLE IS THE HOST SAYING THE TURN IS OVER, and nothing else. `retry`
+    // also clears `busy` after five seconds of outage -- the turn died with the
+    // process producing it -- and that is a death, not an answer. Emitting it
+    // there flashed the bar cell's arrival, latched `unread`, pinged the panel's
+    // mark and made the veil read out an answer that never came.
+    //
+    // The socket is the discriminator, and it is exact: every host-sent `state`
+    // is ingested on a live connection, while the watchdog branch runs only
+    // after `retry` has already returned early on `sock.connected` -- so it
+    // writes `busy` with the socket demonstrably down.
+    if (sock.connected) root.settled()
   }
 
   // The reading `Usage.output` held when this turn opened. protocol.ts does not
@@ -313,10 +322,31 @@ Singleton {
     : (root.usageOutput >= root.outputBase ? root.usageOutput - root.outputBase
                                            : root.usageOutput)
 
-  // Both frozen on the last settled turn's cost -- see setCost. `turnSeconds`
-  // is what the bar cell shows once the count-up stops.
+  // Frozen on the last settled turn's cost -- see setCost.
   property real tokensPerSecond: 0
-  property real turnSeconds: 0
+
+  // What the bar cell shows once the count-up stops, DERIVED off the newest
+  // assistant turn's cost rather than stamped when one arrives.
+  //
+  // A turn that ends with no content gets NO TurnCost at all (conversation.ts
+  // costFor: `if (!hasContent(t) ...) return undefined`), so nothing would
+  // overwrite a stamped figure and the cell went on showing the PREVIOUS
+  // turn's duration under this turn's label -- a stale number presented as
+  // current. Derived, an absent cost reads as 0, which is the cell's "this
+  // turn reported no duration" and renders as nothing.
+  //
+  // Re-evaluates on the two inputs that can change it: turnModel.count (a turn
+  // arrived) and costById (a cost arrived). A row's own roles do not notify,
+  // but none of the fields read here are patched on a settled turn.
+  readonly property real turnSeconds: {
+    for (var i = turnModel.count - 1; i >= 0; i--) {
+      var r = turnModel.get(i)
+      if (r.role !== "assistant") continue
+      var c = root.costById[r.tid]
+      return c ? Number(c.seconds || 0) : 0
+    }
+    return 0
+  }
 
   // When the transcript last GREW, for the bar cell's flow gauge: it turns the
   // silence since the last delta into a rate, so a stalled turn drifts and a
@@ -419,13 +449,60 @@ Singleton {
   // `[Image n]`; deleting that marker is what un-sends the image.
   signal attachedImage(int n, string path)
 
+  // The same two answers for an attachment staged BY PATH, kept apart from the
+  // clipboard's because they have different owners. `attachedImage` is what the
+  // composer inserts an `[Image n]` marker for; an `ori image` picture belongs
+  // to a question the IPC is holding, so routing it there would drop a marker
+  // into whatever the user was typing -- and that marker goes dead the instant
+  // the IPC sends its own question, because accepting a question clears host
+  // staging. The failure is separate for the same reason, and because a caller
+  // holding a question needs it: without it its only exit is the timeout, and
+  // something reportable in 20ms would sit for the whole deadline.
+  signal attachedPath(int n, string path)
+  signal attachPathFailed(string why)
+
+  // The ids of attach_path commands still waiting for an answer. The host
+  // echoes the id back on `attached`/`attach_failed` (protocol.ts); anything
+  // arriving without one is the clipboard's.
+  property var pathAttachIds: []
+  property int attachSeq: 0
+
+  // Consume an id, answering whether it was ours. Ours is removed, so a reply
+  // is routed exactly once.
+  function claimPathAttach(id) {
+    var key = String(id || "")
+    if (key === "") return false
+    var at = root.pathAttachIds.indexOf(key)
+    if (at < 0) return false
+    var next = root.pathAttachIds.slice()
+    next.splice(at, 1)
+    root.pathAttachIds = next
+    return true
+  }
+
   // -------------------------------------------------------------------- api
   // Every one of these is a ClientCmd and nothing more. None of them decides
   // anything -- above all, none of them decides prompt-vs-steer, which is the
   // host's call from its own `busy`.
 
-  function send(cmd) {
-    if (!sock.connected) return false
+  // THE ONE PLACE a ClientCmd reaches the socket, so every caller reports a
+  // dead one the same way. ask() and command() set `agentDownError` before
+  // their own early returns; abort(), resume(), activate(), newChat() and
+  // attachClipboard() used to return a bare false, and `ipc call ori resume X`
+  // then printed "error: " with nothing after it -- a report that names no
+  // fault reads as a bug in the caller. Setting it here means a refusal is
+  // never silent, whichever command was refused.
+  //
+  // `quiet` exempts HOUSEKEEPING frames -- ones the user did not initiate, of
+  // which `panel` is the only one that can reach a dead socket. Toggling the
+  // panel during a one-second host restart would otherwise paint the error
+  // strip instantly and defeat `retry`'s deliberate five-second grace, which
+  // exists precisely so a restart is not reported as a failure.
+  function send(cmd, quiet) {
+    if (!sock.connected) {
+      if (quiet !== true) root.error = root.agentDownError
+      return false
+    }
     sock.write(JSON.stringify(cmd) + "\n")
     return true
   }
@@ -457,6 +534,21 @@ Singleton {
   function abort() { return root.send({ t: "abort" }) }
 
   function attachClipboard() { return root.send({ t: "attach_clipboard" }) }
+
+  // The same handshake for an image named by PATH, which is what the `ori
+  // image` IPC has instead of a clipboard. The reply is the ordinary
+  // `attached`/`attach_failed` pair, so nothing here reads the file, sniffs it
+  // or encodes it -- that is the host's, and it is why this is a command rather
+  // than a QML function. One path per call.
+  //
+  // The `id` is what keeps this reply out of the composer -- see attachedPath.
+  function attachPath(path) {
+    root.attachSeq += 1
+    var id = "path-" + root.attachSeq
+    if (!root.send({ t: "attach_path", id: id, path: String(path) })) return false
+    root.pathAttachIds = root.pathAttachIds.concat([id])
+    return true
+  }
 
   // PARK, never stop: the current conversation's pi child keeps running and its
   // turn finishes in the background. The host does the rest.
@@ -611,10 +703,21 @@ Singleton {
       return
 
     case "attached":
+      if (root.claimPathAttach(m.id)) {
+        root.attachedPath(Number(m.n || 0), String(m.path || ""))
+        return
+      }
       root.attachedImage(Number(m.n || 0), String(m.path || ""))
       return
 
     case "attach_failed":
+      // A staged-by-path failure is the holder's to report -- it knows how many
+      // pictures the question was waiting for and says so -- so it does not
+      // also get the composer's wording.
+      if (root.claimPathAttach(m.id)) {
+        root.attachPathFailed(String(m.why || ""))
+        return
+      }
       // The NOTICE strip, not the error one. Ctrl+V with no image on the
       // clipboard is an ordinary miss -- nothing is broken and nothing was
       // inserted -- and `error` pins the whole card border to the busy accent.
@@ -641,7 +744,6 @@ Singleton {
     var tools = {}
     var costs = {}
     var rate = 0
-    var secs = 0
     // ASSIGNED rather than noteSettled()'d: a snapshot replaces the
     // conversation, so a later stamp belonging to the one being left has to go
     // with it.
@@ -655,7 +757,6 @@ Singleton {
       if (t.cost) {
         costs[id] = t.cost
         if (Number(t.cost.tokensPerSecond) > 0) rate = Number(t.cost.tokensPerSecond)
-        if (Number(t.cost.seconds) > 0) secs = Number(t.cost.seconds)
       }
       if (Number(t.settledAt || 0) > settled) settled = Number(t.settledAt)
       if (t.pending === true) root.liveId = id
@@ -663,7 +764,6 @@ Singleton {
     root.toolsById = tools
     root.costById = costs
     root.tokensPerSecond = rate
-    root.turnSeconds = secs
     root.lastSettledAt = settled
     root.reindex()
     // Usage BEFORE state: applyState can flip `busy`, and the baseline
