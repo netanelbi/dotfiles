@@ -1,8 +1,5 @@
 import Quickshell
 import Quickshell.Io
-// PiSession is a singleton in the config root; a subdirectory does not get the
-// root's implicit import, so pull it in explicitly.
-import ".."
 
 // Mount point for the assistant, so shell.qml adds one line:
 //
@@ -16,8 +13,8 @@ Scope {
   id: root
 
   // The bar indicator toggles the panel too, so "is it open" cannot live in
-  // this file alone -- it is on PiSession, which both windows can see.
-  readonly property bool opened: PiSession.panelOpen
+  // this file alone -- it is on OriClient, which both windows can see.
+  readonly property bool opened: OriClient.panelOpen
 
   // Held true through the exit animation so the panel can slide out before it is
   // destroyed. It is a plain flag PUSHED by the panel rather than `active`
@@ -36,7 +33,7 @@ Scope {
       opened: root.opened
       // Opening it IS reading it -- the bright dot in the bar cannot be
       // dismissed without the answer actually being on screen.
-      onOpenedChanged: if (opened) PiSession.unread = false
+      onOpenedChanged: if (opened) OriClient.unread = false
       onRevealedChanged: root.retain = revealed > 0.001
     }
   }
@@ -45,17 +42,17 @@ Scope {
     target: "assistant"
 
     function toggle(): string {
-      PiSession.panelOpen = !PiSession.panelOpen
-      return PiSession.panelOpen ? "opened" : "closed"
+      OriClient.panelOpen = !OriClient.panelOpen
+      return OriClient.panelOpen ? "opened" : "closed"
     }
 
     function open(): string {
-      PiSession.panelOpen = true
+      OriClient.panelOpen = true
       return "opened"
     }
 
     function close(): string {
-      PiSession.panelOpen = false
+      OriClient.panelOpen = false
       return "closed"
     }
 
@@ -64,25 +61,25 @@ Scope {
     // The answer lands in the transcript either way, so opening the panel later
     // shows it.
     function ask(question: string): string {
-      PiSession.ask(question)
+      OriClient.ask(question)
       return "asked"
     }
 
     function clear(): string {
-      PiSession.newChat()
+      OriClient.newChat()
       return "cleared"
     }
 
     function status(): string {
-      return PiSession.busy ? "busy" : PiSession.warm ? "warm" : "cold"
+      return OriClient.busy ? "busy" : OriClient.warm ? "warm" : "cold"
     }
 
     // The last assistant turn as plain text, so `ask` + `answer` is a usable
     // pair from a script: ask, poll status until it leaves "busy", read this.
     function answer(): string {
-      if (PiSession.error !== "") return "error: " + PiSession.error
-      var i = PiSession.lastAssistant()
-      return i < 0 ? "" : PiSession.turns.get(i).text
+      if (OriClient.error !== "") return "error: " + OriClient.error
+      var i = OriClient.lastAssistant()
+      return i < 0 ? "" : OriClient.turns.get(i).text
     }
   }
 }

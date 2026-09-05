@@ -5,8 +5,9 @@
     "module": "Preserve",
     "moduleResolution": "bundler",
     "moduleDetection": "force",
-    "types": ["bun-types"],
+    "types": ["bun"],
     "allowJs": true,
+    "allowImportingTsExtensions": true,
 
     "strict": true,
     "noUncheckedIndexedAccess": true,

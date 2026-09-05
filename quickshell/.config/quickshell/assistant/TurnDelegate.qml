@@ -20,15 +20,20 @@ Item {
   property color accent: Theme.sapphire
 
   // The list is BottomToTop, so index 0 is the NEWEST row.
-  readonly property int row: PiSession.turns.count - 1 - index
-  readonly property var turn: row >= 0 && row < PiSession.turns.count
-    ? PiSession.turns.get(row) : null
+  readonly property int row: OriClient.turns.count - 1 - index
+  readonly property var turn: row >= 0 && row < OriClient.turns.count
+    ? OriClient.turns.get(row) : null
 
   readonly property bool user: turn ? turn.role === "user" : false
   readonly property bool pending: turn ? turn.pending === true : false
-  readonly property var calls: PiSession.toolLog[row] || []
-  // { ms, tokens } once the turn has settled.
-  readonly property var cost: PiSession.turnCost[row] || null
+  // Keyed by the turn's own id, not by its row: a steer inserts a row mid-list
+  // and every index below it moves, which is the bug class ids delete.
+  readonly property var calls:
+    (turnItem.turn ? OriClient.toolsById[turnItem.turn.tid] : null) || []
+  // protocol.ts TurnCost -- { input, output, seconds, tokensPerSecond } -- once
+  // the turn has settled.
+  readonly property var cost:
+    (turnItem.turn ? OriClient.costById[turnItem.turn.tid] : null) || null
 
   // The turn, as an ordered run of pieces (Fmt.split).
   //
@@ -136,9 +141,9 @@ Item {
     for (var i = 0; i < pieces.length; i++)
       if (pieces[i].tool) ms += batchMs(pieces[i].calls)
     var parts = []
-    var d = fmt.duration(cost ? cost.ms : ms)
+    var d = fmt.duration(cost ? cost.seconds * 1000 : ms)
     if (d !== "") parts.push(d)
-    if (cost && cost.tokens > 0) parts.push(fmt.tokens(cost.tokens) + " tok")
+    if (cost && cost.output > 0) parts.push(fmt.tokens(cost.output) + " tok")
     return parts.join(" \u00b7 ")
   }
 
@@ -153,7 +158,7 @@ Item {
     0.65 + 0.35 * Math.cos(2 * Math.PI * nowMs / Style.ori.breathMs)
 
   // The tail of the reasoning, for the status row at the head of the turn.
-  // Reasoning streams into its own role (PiSession keeps thinking_delta and
+  // Reasoning streams into its own role (the host keeps thinking_delta and
   // text_delta apart) and is never rendered as prose -- a SHORT WINDOW of it
   // says what Ori is chewing on without becoming a second answer competing
   // with the real one.
@@ -272,9 +277,14 @@ Item {
     for (var i = 0; i < cs.length; i++) if (i !== at) out.push(i)
     return out
   }
-  // Only the last call of a turn being written can still be open.
+  // Only the last call of a turn being written can still be open. Read off
+  // `state`, which protocol.ts makes authoritative, and not off the `ms === 0`
+  // proxy: a call with no timing this panel ever saw ALSO has ms 0 (see
+  // OriClient.toolRow), so a snapshot of a running conversation whose last call
+  // has already returned used to leave that finished call breathing as if it
+  // were in flight.
   function liveOf(cs) {
-    return (pending && cs.length > 0 && cs[cs.length - 1].ms === 0) ? cs.length - 1 : -1
+    return (pending && cs.length > 0 && cs[cs.length - 1].state === "running") ? cs.length - 1 : -1
   }
 
   // Time spent in a batch. The open call is measured against the panel's clock,
@@ -309,17 +319,18 @@ Item {
   // enter, so there was no way to tell "it has this" from "it will have this in
   // a moment".
   //
-  // PiSession tracks three steps (0 queued, 1 on the wire, 2 the agent has
-  // acted since) and this collapses them to the two that are worth a picture.
+  // The host tracks three steps (protocol.ts Delivery: 0 queued, 1 on the wire,
+  // 2 the agent has demonstrably read it) and this collapses them to the two
+  // that are worth a picture.
   // The difference between 0 and 1 is milliseconds on a warm panel and is not
   // the thing anyone is asking; the thing anyone is asking is whether it
   // landed. Nothing in the protocol acknowledges a message by id, so "landed"
   // is inferred from the agent producing its first token or tool call after the
-  // message went out (PiSession.markRead). A rehydrated transcript has no
+  // message went out, host-side. A rehydrated transcript has no
   // record of any of this and reads as landed, which is true: those messages
   // were plainly answered.
   readonly property bool landed:
-    !turn || turn.sent === undefined || Number(turn.sent) >= 2
+    !turn || turn.delivery === undefined || Number(turn.delivery) >= 2
 
   Rectangle {
     id: pill

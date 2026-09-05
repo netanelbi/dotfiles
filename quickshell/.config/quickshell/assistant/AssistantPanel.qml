@@ -2,8 +2,9 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
-// Theme/Style/PiSession are singletons in the config root; a subdirectory does
-// not get the root's implicit import, so pull it in explicitly.
+// Theme/Style/Copy/Usage/ScrollProbe are singletons in the config root; a
+// subdirectory does not get the root's implicit import, so pull it in
+// explicitly. OriClient sits in THIS directory and needs no import.
 import ".."
 
 // The assistant panel: a conversation docked to the right edge.
@@ -22,7 +23,7 @@ import ".."
 //   * exclusionMode Ignore: it floats over the tiling instead of reshuffling
 //     every window each time it opens.
 //
-// The transcript lives in PiSession, not here, so closing the panel loses
+// The transcript lives in OriClient, not here, so closing the panel loses
 // nothing -- including mid-answer, since the process keeps writing into the turn
 // model with no window attached.
 //
@@ -42,7 +43,8 @@ import ".."
 //   how much is left   the hairline above the footer is the context gauge, with
 //                      the estimate spelled out beside it.
 //
-// The numbers come from PiSession's derived readouts; nothing here polls.
+// The numbers come from OriClient's readouts; nothing here polls and nothing
+// here computes -- every one of them is a field ori-host sent.
 //
 // -------------------------------------------------------------------- motion
 // One frame clock, running only while a turn is. It drives the mark and the
@@ -65,13 +67,13 @@ PanelWindow {
   property bool opened: false
 
   // NOTE these three are no longer the way in. `opened` is a binding onto
-  // PiSession.panelOpen so the bar indicator can toggle the same panel, which
+  // OriClient.panelOpen so the bar indicator can toggle the same panel, which
   // means the IpcHandler sets that property directly and NOTHING here is
   // called -- open()'s focus call was dead code and the composer never took the
   // keyboard. Focus now happens in onOpenedChanged, which fires either way.
-  function open() { PiSession.panelOpen = true }
-  function close() { PiSession.panelOpen = false }
-  function toggle() { PiSession.panelOpen = !PiSession.panelOpen }
+  function open() { OriClient.panelOpen = true }
+  function close() { OriClient.panelOpen = false }
+  function toggle() { OriClient.panelOpen = !OriClient.panelOpen }
 
   // --------------------------------------------------------------- geometry
   // Opens on whichever monitor has focus, the same rule the launchers and the
@@ -154,25 +156,25 @@ PanelWindow {
   // it separates "it is talking to the model" from "it is touching the machine",
   // which is the distinction that matters when you look up mid-turn.
   readonly property color accent:
-      PiSession.error !== "" ? Theme.red
-    : PiSession.activeTool !== "" ? Theme.accent
-    : PiSession.busy ? Theme.sapphire
-    : PiSession.bgCount > 0 ? Theme.accent
-    : PiSession.warm ? Theme.sapphire
+      OriClient.error !== "" ? Theme.red
+    : OriClient.activeTool !== "" ? Theme.accent
+    : OriClient.busy ? Theme.sapphire
+    : OriClient.bgCount > 0 ? Theme.accent
+    : OriClient.warm ? Theme.sapphire
     : Theme.inactive
 
   // The verb, in the panel's own vocabulary. "thinking" and "answering" are
   // different states and the difference is visible from across the room: one is
   // silence, the other is text arriving.
   readonly property string stateLabel:
-      PiSession.error !== "" ? "error"
-    : PiSession.activeTool !== "" ? "running " + PiSession.activeTool.split(" ")[0]
-    : !PiSession.busy ? ""
+      OriClient.error !== "" ? "error"
+    : OriClient.activeTool !== "" ? "running " + OriClient.activeTool.split(" ")[0]
+    : !OriClient.busy ? ""
     // Background work is NOT named here any more. It has a strip of its own
     // (BackgroundTray) directly above this one, because it is a different kind
     // of fact: this rail describes the turn in flight and collapses with it,
     // and a backgrounded job outlives every turn there is.
-    : (PiSession.liveTurn && PiSession.liveTurn.text !== "") ? "answering" : "thinking"
+    : (OriClient.liveTurn && OriClient.liveTurn.text !== "") ? "answering" : "thinking"
 
   // WHY it is running that, beside the verb that says it is running something.
   // `activeTool` is the tool name and its one summarised argument joined by a
@@ -188,9 +190,9 @@ PanelWindow {
   // transcript keeps the same sentence per call as a ToolLine, which is the
   // record; this is the readout.
   readonly property string stateDetail: {
-    if (PiSession.error !== "" || PiSession.activeTool === "") return ""
-    var cut = PiSession.activeTool.indexOf(" ")
-    return cut < 0 ? "" : PiSession.activeTool.substring(cut + 1)
+    if (OriClient.error !== "" || OriClient.activeTool === "") return ""
+    var cut = OriClient.activeTool.indexOf(" ")
+    return cut < 0 ? "" : OriClient.activeTool.substring(cut + 1)
   }
 
   Fmt { id: fmt }
@@ -204,12 +206,12 @@ PanelWindow {
   // moves for an afternoon, while the running total is what actually tells you
   // the conversation is getting heavy.
   readonly property string contextLabel: {
-    if (PiSession.usageTotal <= 0) return "—"
+    if (OriClient.usageTotal <= 0) return "—"
     // `~` while the number is pi's post-compaction estimate: the readout says
     // what it knows and admits it is not measured yet.
-    var out = (PiSession.usageEstimated ? "~" : "") + fmt.tokens(PiSession.usageTotal)
-    if (!PiSession.contextKnown) return out
-    var pct = PiSession.contextFraction * 100
+    var out = (OriClient.usageEstimated ? "~" : "") + fmt.tokens(OriClient.usageTotal)
+    if (!OriClient.contextKnown) return out
+    var pct = OriClient.contextFraction * 100
     return out + " · " + (pct < 10 ? pct.toFixed(1) : String(Math.round(pct))) + "%"
   }
 
@@ -223,7 +225,7 @@ PanelWindow {
   // "IS ANYTHING ON THIS SURFACE STILL MOVING?" -- which is a different
   // question from "what is the agent waiting on", and the two must not be
   // confused again. The clock and the breath below both ask the first one;
-  // `PiSession.bgCount` answers the second, and deliberately EXCLUDES speech,
+  // `OriClient.bgCount` answers the second, and deliberately EXCLUDES speech,
   // because counting a speak job there made the bar cell show a phantom `x1`
   // and put the panel in busy chrome over an empty tray. Both things are
   // right, and speech is exactly where they part: nothing is waiting on it,
@@ -232,7 +234,7 @@ PanelWindow {
   // kept from here. Named once rather than spelled out twice, because it was
   // spelled out twice that a change to bgCount silently froze the strip.
   readonly property bool inMotion:
-    PiSession.busy || PiSession.bgCount > 0 || PiSession.speakJob !== null
+    OriClient.busy || OriClient.bgCount > 0 || OriClient.speakJob !== null
 
   FrameAnimation {
     id: clock
@@ -254,29 +256,29 @@ PanelWindow {
     : 1
 
   readonly property real elapsedMs:
-    PiSession.turnStartedAt > 0 ? Math.max(0, panel.nowMs - PiSession.turnStartedAt) : 0
+    OriClient.turnStartedAt > 0 ? Math.max(0, panel.nowMs - OriClient.turnStartedAt) : 0
 
   // Output tokens per second, for the footer. `warm`/`cold` sat there before and
   // said only whether a process existed -- true of nearly every moment you are
   // looking at the panel, so it told you nothing. This moves.
   //
-  // The rate itself is PiSession's, measured over GENERATION time rather than
+  // The rate itself is the host's, measured over GENERATION time rather than
   // the wall clock: a turn that sat nine seconds in bash and then wrote fifty
   // tokens is not a 5 tok/s model, and dividing by the turn made every
   // tool-using answer read as a slow one. Falls back to warm/cold when there is
   // no sample yet.
   readonly property string rateLabel:
-    PiSession.tokensPerSecond > 0
-      ? (PiSession.tokensPerSecond >= 10 ? Math.round(PiSession.tokensPerSecond)
-                                         : PiSession.tokensPerSecond.toFixed(1)) + " tok/s"
-      : (PiSession.warm ? "warm" : "cold")
+    OriClient.tokensPerSecond > 0
+      ? (OriClient.tokensPerSecond >= 10 ? Math.round(OriClient.tokensPerSecond)
+                                         : OriClient.tokensPerSecond.toFixed(1)) + " tok/s"
+      : (OriClient.warm ? "warm" : "cold")
 
   Connections {
-    target: PiSession
+    target: OriClient
     // Stamp the clock at the start of the turn rather than waiting for the
     // first frame, so the readout opens at 0.0s instead of at whatever the last
     // turn left behind.
-    function onBusyChanged() { if (PiSession.busy) panel.nowMs = Date.now() }
+    function onBusyChanged() { if (OriClient.busy) panel.nowMs = Date.now() }
     // One ring on the mark as the answer lands. The bar deliberately stays
     // quiet when the panel is open; this is the full stop, not an alert.
     function onSettled() { if (panel.opened) mark.ping() }
@@ -331,7 +333,7 @@ PanelWindow {
     // effort on purpose -- Netanel tried the effort heat scale here and asked
     // for it on the composer edge alone; the full-card flash at every cycle
     // was louder than the signal.
-    border.color: PiSession.busy || PiSession.error !== ""
+    border.color: OriClient.busy || OriClient.error !== ""
       ? panel.accent : Theme.alpha(Theme.sapphire, 0.4)
     clip: true
 
@@ -357,7 +359,7 @@ PanelWindow {
         id: mark
         anchors { left: parent.left; leftMargin: 14; verticalCenter: parent.verticalCenter }
         accent: panel.accent
-        alive: PiSession.busy
+        alive: OriClient.busy
         phase: clock.elapsedTime
       }
 
@@ -376,7 +378,7 @@ PanelWindow {
       // chrome, permanently, not in an about box.
       Text {
         anchors { right: newBtn.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
-        text: PiSession.workdir
+        text: OriClient.workdir
         color: Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
@@ -407,7 +409,7 @@ PanelWindow {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onClicked: PiSession.newChat()
+          onClicked: OriClient.newChat()
         }
       }
 
@@ -433,7 +435,7 @@ PanelWindow {
         bottomMargin: 4
       }
 
-      model: PiSession.turns
+      model: OriClient.turns
       spacing: 12
       clip: true
       // A conversation is read from the bottom, so that is where it rests.
@@ -1067,7 +1069,7 @@ PanelWindow {
       }
 
       Connections {
-        target: PiSession
+        target: OriClient
         function onAppended() {
           if (!transcript.stuck) return
           transcript.toBottom()
@@ -1233,7 +1235,7 @@ PanelWindow {
       anchors.centerIn: transcript
       width: transcript.width - 40
       spacing: 6
-      visible: PiSession.turns.count === 0
+      visible: OriClient.turns.count === 0
       opacity: 0.9
 
       OriMark {
@@ -1275,7 +1277,7 @@ PanelWindow {
         // forever; this is the one surface with space going spare. That does
         // leave it nearly unseen once a session is restored on boot -- the
         // durable answer is a `/keys` entry beside the other panel commands,
-        // which lives in CommandBar/PiSession, not in this file. The verified
+        // which lives in CommandBar/OriClient, not in this file. The verified
         // list is also in CLAUDE.md, "Inside the assistant panel".
         //
         // Widest line is 40 chars; at panelMeta 512px fits 58, and this column
@@ -1320,7 +1322,7 @@ PanelWindow {
       id: speakStrip
       anchors { left: parent.left; right: parent.right; bottom: tray.top
                 leftMargin: 10; rightMargin: 10; bottomMargin: 4 }
-      height: PiSession.speakJob ? 24 : 0
+      height: OriClient.speakJob ? 24 : 0
       visible: height > 0
       color: Theme.alpha(Theme.yellow, 0.10)
       radius: 6
@@ -1342,7 +1344,7 @@ PanelWindow {
       Text {
         anchors { left: speakMark.right; leftMargin: 8; right: speakAge.left; rightMargin: 8
                   verticalCenter: parent.verticalCenter }
-        text: String(PiSession.speakJob ? PiSession.speakJob.label || "speaking" : "")
+        text: String(OriClient.speakJob ? OriClient.speakJob.label || "speaking" : "")
         color: Theme.subtext0
         elide: Text.ElideRight
         font.family: Style.font.panelMono
@@ -1353,7 +1355,7 @@ PanelWindow {
       Text {
         id: speakAge
         anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
-        text: PiSession.speakJob ? fmt.duration(panel.nowMs - PiSession.speakJob.since) : ""
+        text: OriClient.speakJob ? fmt.duration(panel.nowMs - OriClient.speakJob.since) : ""
         color: Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
@@ -1383,7 +1385,7 @@ PanelWindow {
       id: rail
       anchors { left: parent.left; right: parent.right; bottom: errorStrip.top
                 leftMargin: card.border.width; rightMargin: card.border.width }
-      height: PiSession.busy ? 28 : 0
+      height: OriClient.busy ? 28 : 0
       clip: true
 
       Behavior on height {
@@ -1464,9 +1466,9 @@ PanelWindow {
       Text {
         id: readout
         anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
-        text: !PiSession.busy ? ""
+        text: !OriClient.busy ? ""
           : fmt.duration(panel.elapsedMs)
-            + (PiSession.liveTokens > 0 ? "  ↓ " + fmt.tokens(PiSession.liveTokens) : "")
+            + (OriClient.liveTokens > 0 ? "  ↓ " + fmt.tokens(OriClient.liveTokens) : "")
         color: Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
@@ -1479,9 +1481,9 @@ PanelWindow {
       id: errorStrip
       anchors { left: parent.left; right: parent.right; bottom: composer.top
                 leftMargin: card.border.width; rightMargin: card.border.width }
-      height: PiSession.error !== "" || PiSession.notice !== ""
+      height: OriClient.error !== "" || OriClient.notice !== ""
               ? errText.implicitHeight + 12 : 0
-      color: PiSession.error !== "" ? Theme.alpha(Theme.red, 0.15)
+      color: OriClient.error !== "" ? Theme.alpha(Theme.red, 0.15)
                                     : Theme.alpha(Theme.sapphire, 0.12)
       clip: true
 
@@ -1492,8 +1494,8 @@ PanelWindow {
       Text {
         id: errText
         anchors { left: parent.left; right: parent.right; top: parent.top; margins: 6 }
-        text: PiSession.error !== "" ? PiSession.error : PiSession.notice
-        color: PiSession.error !== "" ? Theme.red : Theme.subtext0
+        text: OriClient.error !== "" ? OriClient.error : OriClient.notice
+        color: OriClient.error !== "" ? Theme.red : Theme.subtext0
         wrapMode: Text.Wrap
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
@@ -1585,7 +1587,7 @@ PanelWindow {
           // While a turn runs the field is refused, so it says what the key
           // that DOES do something is, rather than inviting a message that
           // would be dropped.
-          text: PiSession.busy ? "ctrl+c to stop" : "ask anything — / for commands"
+          text: OriClient.busy ? "ctrl+c to stop" : "ask anything — / for commands"
           color: Theme.overlay0
           font.family: Style.font.panelFamily
           font.pixelSize: Style.font.panelBody
@@ -1628,7 +1630,7 @@ PanelWindow {
           // the completion list already had first refusal above.
           case Qt.Key_Backtab:
             if (event.modifiers & Qt.ShiftModifier || event.key === Qt.Key_Backtab) {
-              PiSession.cycleEffort()
+              OriClient.cycleEffort()
               event.accepted = true
               return
             }
@@ -1641,7 +1643,7 @@ PanelWindow {
             // Only clear the draft if it was actually taken. Asking while a turn
             // is still running is refused, and clearing anyway would delete what
             // you just typed with nothing to show for it.
-            if (PiSession.ask(entry.text, PiSession.takeAttachments(entry.text)))
+            if (OriClient.ask(entry.text, OriClient.takeAttachments(entry.text)))
               entry.text = ""
             event.accepted = true
             return
@@ -1651,7 +1653,7 @@ PanelWindow {
             return
           case Qt.Key_N:
             if (event.modifiers & Qt.ControlModifier) {
-              PiSession.newChat()
+              OriClient.newChat()
               event.accepted = true
             }
             return
@@ -1666,7 +1668,7 @@ PanelWindow {
               // history key did nothing at all: no list, no message, no way to
               // tell it apart from a dead binding. Say so instead.
               if (!picker.open())
-                PiSession.notice = "no saved conversations yet"
+                OriClient.notice = "no saved conversations yet"
               event.accepted = true
             }
             return
@@ -1675,14 +1677,14 @@ PanelWindow {
             // once wl-paste has answered, so the field's own paste has to be
             // allowed to run. It inserts nothing when the clipboard offers no
             // text, which is exactly the case where an image is attached.
-            if (event.modifiers & Qt.ControlModifier) PiSession.pasteImage()
+            if (event.modifiers & Qt.ControlModifier) OriClient.attachClipboard()
             return
           case Qt.Key_C:
             // Ctrl+C stops the model; with a selection it is a copy, so only
             // claim it while something is actually running and nothing is selected.
-            if ((event.modifiers & Qt.ControlModifier) && PiSession.busy
+            if ((event.modifiers & Qt.ControlModifier) && OriClient.busy
                 && entry.selectedText === "") {
-              PiSession.abort()
+              OriClient.abort()
               event.accepted = true
             }
             return
@@ -1746,9 +1748,9 @@ PanelWindow {
 
         Rectangle {
           anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-          width: parent.width * PiSession.contextFraction
-          color: PiSession.contextFraction < 0.7 ? Theme.sapphire
-            : PiSession.contextFraction < 0.9 ? Theme.yellow : Theme.red
+          width: parent.width * OriClient.contextFraction
+          color: OriClient.contextFraction < 0.7 ? Theme.sapphire
+            : OriClient.contextFraction < 0.9 ? Theme.yellow : Theme.red
 
           Behavior on width {
             NumberAnimation { duration: Style.anim.normal; easing.type: Style.anim.easing }
@@ -1789,13 +1791,13 @@ PanelWindow {
                   verticalCenter: parent.verticalCenter; verticalCenterOffset: 1 }
         // Carries its own separator, so that the dot goes with the level rather
         // than being left stranded on the end of an elided model id.
-        text: PiSession.effortLabel !== "" ? "·  " + PiSession.effortLabel : ""
+        text: OriClient.effortLabel !== "" ? "·  " + OriClient.effortLabel : ""
         // The effort readout: the word itself is the indicator, in the same
         // heat scale everywhere else in pi speaks effort -- neutral for off,
         // then blue, yellow, red as the thinking level rises. One word, in the
         // line the eye already reads for state; nothing else on the panel
         // changes colour for it.
-        color: panel.effortColor(PiSession.effortLabel)
+        color: panel.effortColor(OriClient.effortLabel)
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
@@ -1816,10 +1818,10 @@ PanelWindow {
       // rather than printed straight through it.
       Text {
         anchors { left: parent.left; leftMargin: 12
-                  right: effortText.left; rightMargin: PiSession.effortLabel === "" ? 0 : 8
+                  right: effortText.left; rightMargin: OriClient.effortLabel === "" ? 0 : 8
                   verticalCenter: parent.verticalCenter
                   verticalCenterOffset: 1 }
-        text: PiSession.model
+        text: OriClient.model
         color: Theme.overlay0
         elide: Text.ElideRight
         font.family: Style.font.panelMono

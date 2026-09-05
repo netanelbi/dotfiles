@@ -19,20 +19,17 @@ import ".."
 //   breaks the moment you type the second character.
 //
 // -------------------------------------------------------------- what it lists
-// Two lists, concatenated.
+// ONE list, and this file no longer builds it.
 //
-// PiSession.commands is get_commands verbatim: { name, description, source }.
-// That is NOT the pi TUI's slash menu -- `/compact`, `/ollama-usage` and
-// friends do not exist over RPC. They are separate message types, and a prompt
-// whose text is "/compact" is sent to the model as that literal string.
-//
-// PiSession.panelCommands is the short list this SHELL implements for exactly
-// that reason: `/model` and `/effort`, which are set_model and
-// set_thinking_level and are intercepted in PiSession.ask() before a draft can
-// become a question. They are offered here because a user who types `/` is
-// asking what there is, and the honest answer includes the two the panel runs
-// itself. Nothing else is added: a command is listed here only if something
-// will actually run it.
+// It used to be two, concatenated here: pi's `get_commands` verbatim, plus a
+// short list the shell hard-coded for the commands it ran itself (`/model`,
+// `/effort`, ...). Those are still two different kinds of command -- pi's slash
+// menu does not exist over RPC, so `/compact` is a message type and not a
+// prompt -- but which is which is the HOST's knowledge, and every row now
+// arrives from it tagged with a `source` of "extension", "prompt", "skill" or
+// "panel", already in the order it wants them shown. A command is listed here
+// only if something will actually run it, exactly as before; the difference is
+// that the panel no longer has an opinion about which ones those are.
 //
 // --------------------------------------------------------------- and its args
 // This used to say flatly that no command takes an enumerable argument, and
@@ -65,22 +62,19 @@ Rectangle {
   // The composer's TextEdit. Read for the draft, written to on completion.
   property var entry: null
 
-  // Everything the engine reports, extension commands included. That was not
+  // Everything the host reports, extension commands included. That was not
   // always safe and the history is worth keeping: an extension command is
   // intercepted by pi before the agent loop starts, so it settles nothing, and
   // for a while sending one left `busy` stuck true and the composer refusing
   // every later message until the shell was reloaded. This list was filtered to
-  // skills to avoid offering that trap. PiSession now recognises the case (a
-  // prompt response preceded by an extension_ui_request) and settles the turn
-  // itself, putting the extension's own "/llama is available in interactive
-  // mode" on the error strip -- so the worst outcome is now a command that
-  // politely says it does not run here, and hiding a real command is worse than
-  // that.
+  // skills to avoid offering that trap. The host now recognises the case and
+  // settles the turn itself, putting the extension's own "/llama is available
+  // in interactive mode" on the error strip -- so the worst outcome is a
+  // command that politely says it does not run here, and hiding a real command
+  // is worse than that.
   //
-  // Panel-implemented first. On this machine the engine reports one command and
-  // the panel two, so putting the engine's first would bury both of the ones
-  // someone types `/` looking for.
-  readonly property var commands: PiSession.panelCommands.concat(PiSession.commands || [])
+  // Order is the host's, not this file's.
+  readonly property var commands: OriClient.commands || []
 
   // ------------------------------------------------------------------- arming
   readonly property string draft: root.entry ? String(root.entry.text) : ""
@@ -91,12 +85,13 @@ Rectangle {
   readonly property bool naming: /^\/[^\s]*$/.test(root.draft)
 
   // Stage two: a complete command name, whitespace, and a partial value. The
-  // engine is the one that decides whether a name HAS values -- commandValues()
-  // answers with an empty list for every command that does not -- so this arms
-  // for `/model` and `/effort` and stays shut for the sixteen skills without a
-  // name of either being written down here.
+  // host is the one that decides whether a name HAS values -- commandValues()
+  // reads the protocol's own `values` field and answers with an empty list for
+  // every command that does not -- so this arms for `/model` and `/effort` and
+  // stays shut for the sixteen skills without a name of either being written
+  // down here.
   readonly property var argMatch: /^\/([^\s]+)\s+([^\s]*)$/.exec(root.draft)
-  readonly property var values: root.argMatch ? PiSession.commandValues(root.argMatch[1]) : []
+  readonly property var values: root.argMatch ? OriClient.commandValues(root.argMatch[1]) : []
   readonly property bool arging: root.values.length > 0
 
   readonly property bool armed: root.naming || root.arging

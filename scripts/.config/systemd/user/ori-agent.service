@@ -1,31 +1,45 @@
 [Unit]
-Description=Ori's agent broker (pi --mode rpc, off the shell's process tree)
-Documentation=file:%h/.local/bin/ori-agent
+Description=Ori's host (pi children, conversation state, the panel socket)
+Documentation=file:%h/.dotfiles/ori-host/ARCHITECTURE.md
 # No graphical-session dependency, and none is wanted. Upstream-style user
 # units carry Requisite=graphical-session.target, which Hyprland never
 # raises -- that is why this repo ships full-file units rather than
 # drop-ins. This one has nothing to do with the session at all: it holds a
-# socket and a node process, and it is meant to outlive every reload of the
+# socket and a process, and it is meant to outlive every reload of the
 # shell that talks to it. That is the entire point of the unit existing.
-Requires=ori-agent.socket
-After=ori-agent.socket
+#
+# SOCKET ACTIVATION IS GONE, and ori-agent.socket with it. Bun cannot adopt
+# an fd systemd hands it -- `new net.Socket(fd)` is WRITE-ONLY in Bun, so a
+# socket-activated host could answer nobody. The host therefore binds
+# $XDG_RUNTIME_DIR/ori-agent.sock itself and unlinks a stale file at
+# startup (transport.ts: claimSocketPath probes first, and refuses to
+# unlink a socket another live host is serving).
+#
+# What that costs: the socket no longer exists from login, so the panel's
+# first connect can race this unit coming up. The panel already retries --
+# and the bug class the .socket unit CAUSED goes away with it, namely a
+# connect that succeeds against a listener with nothing behind it, which is
+# the only reason PiSession needed an 8-second hello watchdog.
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
 Type=simple
 # fish, not sh. A systemd user unit starts from an almost empty environment,
-# and measured from one: `sh -lc` gives neither ~/.bun/bin on PATH (so `pi`
-# is not found) nor OLLAMA_API_KEY (so nothing answers). Both are set in
-# ~/.config/fish/conf.d/secrets.fish, which fish sources for every shell, so
-# `fish -lc` from an empty environment produces both.
+# and measured from one: `sh -lc` gives neither ~/.bun/bin on PATH (so the
+# host cannot find `pi` for its children) nor OLLAMA_API_KEY (so nothing
+# answers). Both are set in ~/.config/fish/conf.d/secrets.fish, which fish
+# sources for every shell, so `fish -lc` from an empty environment produces
+# both.
 #
 # This is why there is no EnvironmentFile= and no Environment=OLLAMA_API_KEY=
 # here: the key stays in the one file it was already in, and never reaches a
 # unit file, a command line or the journal.
-ExecStart=/usr/bin/fish -lc 'exec %h/.local/bin/ori-agent'
+ExecStart=/usr/bin/fish -lc 'exec %h/.local/bin/ori-host'
 Restart=on-failure
 RestartSec=2
 
-# No [Install]. This is started by ori-agent.socket, not at login --
-# `systemctl --user enable --now ori-agent.socket` is the whole install.
+[Install]
+# Started at login now that nothing else can start it. `systemctl --user
+# enable --now ori-agent` is the whole install.
+WantedBy=default.target
