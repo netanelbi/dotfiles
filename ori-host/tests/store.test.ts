@@ -76,6 +76,29 @@ describe("Store", () => {
     s.close();
   });
 
+  test("byId REFUSES an ambiguous prefix instead of picking the newest", () => {
+    const s = new Store();
+    // Two real pi ids that share their first 8 characters. Before disk
+    // discovery the index held only Ori's own sessions and this was rare;
+    // with 207 sessions in one workdir it is ordinary, and the old
+    // `ORDER BY at DESC LIMIT 1` silently opened whichever was newer.
+    s.upsert(row("01a05285-bf63-7fcd-a3fc-2edd7fcf406c", 100));
+    s.upsert(row("01a05285-0000-4000-8000-000000000000", 900));
+
+    expect(s.byId("01a05285")).toBeNull();
+    expect(s.ambiguous("01a05285")).toBe(true);
+
+    // One more character disambiguates, and then it resolves again.
+    expect(s.byId("01a05285-b")?.at).toBe(100);
+    expect(s.ambiguous("01a05285-b")).toBe(false);
+
+    // A prefix matching nothing is NOT ambiguous -- the caller words those
+    // two failures differently, so they must stay distinguishable.
+    expect(s.byId("zzzz")).toBeNull();
+    expect(s.ambiguous("zzzz")).toBe(false);
+    s.close();
+  });
+
   test("byId prefers an exact hit over a prefix hit", () => {
     const s = new Store();
     // "ab" is both a full id and a prefix of the newer "abcd".

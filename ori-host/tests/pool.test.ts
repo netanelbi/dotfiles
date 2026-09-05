@@ -179,6 +179,12 @@ class CountingIndex implements SessionIndex {
     this.lists++;
     return this.#inner.list(limit);
   }
+  // Not counted: ambiguous() is only consulted on the failure path, after
+  // byId() has already returned null, so counting it would double-count one
+  // lookup and break the "did not touch the disk" assertions.
+  ambiguous(id: string): boolean {
+    return this.#inner.ambiguous(id);
+  }
   byId(id: string): SessionRow | null {
     this.reads++;
     return this.#inner.byId(id);

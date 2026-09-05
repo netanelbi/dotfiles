@@ -205,7 +205,16 @@ export class Pool {
       return held.conv;
     }
     const row = this.#store.byId(sessionId);
-    if (!row) throw new Error(`no such session: ${sessionId}`);
+    if (!row) {
+      // Two different failures, and telling them apart is the whole point: a
+      // short id that matches several sessions used to open one of them at
+      // random, which looks like a working resume until you read the wrong
+      // transcript. Say "give me more characters" instead.
+      if (this.#store.ambiguous(sessionId)) {
+        throw new Error(`ambiguous session id: ${sessionId} matches more than one -- use more characters`);
+      }
+      throw new Error(`no such session: ${sessionId}`);
+    }
 
     this.#park();
     const conv = this.#spawn({

@@ -46,6 +46,8 @@ export interface SessionIndex {
   upsert(entry: SessionUpsert): void;
   list(limit?: number): SessionRow[];
   byId(id: string): SessionRow | null;
+  /** True when `id` is a prefix of several sessions, so byId() refused it. */
+  ambiguous(id: string): boolean;
 }
 
 const SELECT_COLS = `id, file, label, at, turns, read_offset AS readOffset`;
@@ -110,9 +112,16 @@ export class Store {
     // Prefix match, newest first: the old sessionById() accepted "any
     // unambiguous prefix" so a script could pass the short id the listing
     // prints, and the IPC surface still depends on that.
+    //
+    // LIMIT 2, not 1, and the word UNAMBIGUOUS is load-bearing. Before disk
+    // discovery the index held only sessions Ori had created; now it holds
+    // every pi session in the workdir -- 207 of them here -- so a colliding
+    // 8-char prefix went from rare to ordinary. With LIMIT 1 the collision is
+    // invisible and `ipc call ori resume <short>` silently opens the WRONG
+    // conversation. Two rows back means "refuse and say so".
     this.#byPrefix = this.db.query(
       `SELECT ${SELECT_COLS} FROM sessions
-         WHERE substr(id, 1, $n) = $prefix ORDER BY at DESC LIMIT 1`,
+         WHERE substr(id, 1, $n) = $prefix ORDER BY at DESC LIMIT 2`,
     );
     this.#setOffset = this.db.query(
       `UPDATE sessions SET read_offset = $readOffset WHERE id = $id`,
@@ -191,17 +200,42 @@ export class Store {
     this.#setMeta.run({ key, value });
   }
 
-  list(limit = 50): SessionRow[] {
+  /**
+   * Newest first. The default was 50, which was fine while the index held only
+   * sessions Ori had created; disk discovery raised the real count to 207 in
+   * this workdir, so 50 silently hid most of the user's history behind a cap
+   * nothing surfaced. 250 covers reality with headroom, and the payload is
+   * ~150 bytes a row -- a rounding error next to one transcript.
+   *
+   * Open question, deliberately not decided here: discovery lists EVERY pi
+   * session in the workdir, not just Ori's, so plain `pi` runs from the same
+   * directory now share the picker. Ranking Ori-opened rows first needs a
+   * column and a policy; capping is not the place to smuggle one in.
+   */
+  list(limit = 250): SessionRow[] {
     return this.#list.all({ limit }) as SessionRow[];
   }
 
-  /** Exact id first, then prefix. Returns null when nothing matches. */
+  /**
+   * Exact id first, then UNAMBIGUOUS prefix. Returns null when nothing matches
+   * AND when more than one row shares the prefix -- see `ambiguous()` to tell
+   * those two cases apart, because the caller must word them differently.
+   */
   byId(id: string): SessionRow | null {
     const key = String(id ?? "");
     if (key === "") return null;
     const exact = this.#byExactId.get({ id: key }) as SessionRow | null;
     if (exact) return exact;
-    return this.#byPrefix.get({ n: key.length, prefix: key }) as SessionRow | null;
+    const hits = this.#byPrefix.all({ n: key.length, prefix: key }) as SessionRow[];
+    return hits.length === 1 ? hits[0]! : null;
+  }
+
+  /** True when `id` is a prefix of several sessions, so byId() refused it. */
+  ambiguous(id: string): boolean {
+    const key = String(id ?? "");
+    if (key === "") return false;
+    if (this.#byExactId.get({ id: key })) return false;
+    return (this.#byPrefix.all({ n: key.length, prefix: key }) as SessionRow[]).length > 1;
   }
 
   setOffset(id: string, readOffset: number): void {
