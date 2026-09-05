@@ -27,6 +27,7 @@
 
 import {
   Delivery,
+  REJECTED_LEVELS,
   type BgJob,
   type BgKind,
   type HostEvent,
@@ -1304,7 +1305,19 @@ export class Conversation {
   private applyLevels(data: unknown): void {
     const list = ((data ?? {}) as { levels?: unknown[] }).levels ?? [];
     if (list.length === 0) return;
-    this.patchState({ levels: list.map(str) });
+    // FILTERED, which protocol.ts already promised ("Efforts offered for the
+    // CURRENT model, already filtered") and this did not deliver. pi answers
+    // with what PI can ask for -- all six -- while the endpoint behind it takes
+    // fewer; catalog.ts REJECTED_LEVELS records which, measured from Ollama
+    // Cloud's own 400.
+    //
+    // Two consumers read this and they disagreed: the completion list showed
+    // the filtered four (it reads the /effort command's `values`, which were
+    // filtered), while Shift+Tab cycled THIS list of six -- so cycling walked
+    // straight into `minimal` and `xhigh` and was refused, twice per lap.
+    // One list, filtered once, at the point it enters the state.
+    const offered = list.map(str).filter((l) => !REJECTED_LEVELS.includes(l));
+    this.patchState({ levels: offered.length > 0 ? offered : list.map(str) });
   }
 
   /**

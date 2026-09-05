@@ -385,6 +385,38 @@ describe("a turn that errors", () => {
     expect(h.of("error").map((e) => e.text)).toEqual(["already processing"]);
   });
 
+  test("levels the endpoint refuses never reach the panel", () => {
+    // Reported from the live panel: Shift+Tab "fails for some effort levels".
+    // Two lists had drifted apart -- the completion offered the filtered four
+    // (it reads the /effort command's `values`), while Shift+Tab cycled
+    // SessionState.levels, which was pi's raw six. So a lap ran into `minimal`
+    // and `xhigh`, both of which Ollama Cloud answers with
+    // `400 invalid reasoning value`. protocol.ts already promised this field
+    // was "already filtered"; it was not.
+    const h = harness();
+    h.conv.handleResponse({
+      type: "response",
+      command: "get_available_thinking_levels",
+      success: true,
+      data: { levels: ["off", "minimal", "low", "medium", "high", "xhigh"] },
+    });
+    expect(h.conv.state.levels).toEqual(["off", "low", "medium", "high"]);
+  });
+
+  test("a provider offering ONLY refused levels keeps them rather than none", () => {
+    // The filter must not be able to empty the scale: with nothing left,
+    // Shift+Tab would have no value to move to and /effort would reject every
+    // argument. A wrong-looking level the user can try beats a dead control.
+    const h = harness();
+    h.conv.handleResponse({
+      type: "response",
+      command: "get_available_thinking_levels",
+      success: true,
+      data: { levels: ["minimal", "xhigh"] },
+    });
+    expect(h.conv.state.levels).toEqual(["minimal", "xhigh"]);
+  });
+
   test("a refused thinking level is unpinned instead of poisoning every turn", () => {
     const h = harness();
     h.conv.handleResponse({

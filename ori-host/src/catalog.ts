@@ -38,7 +38,7 @@
 
 import { watch } from "node:fs";
 import { dirname, basename } from "node:path";
-import type { ModelChoice } from "./protocol";
+import { REJECTED_LEVELS, type ModelChoice } from "./protocol";
 
 /**
  * pi's universal scale, minus what the endpoint refuses (below). This is what
@@ -62,7 +62,10 @@ const UNIVERSAL_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
  * Seeded from that measurement rather than left empty, because the first person
  * to find each one out pays a failed turn for it and one of them is paid.
  */
-export const REJECTED_LEVELS = ["minimal", "xhigh"];
+// Re-exported so callers that already reach for the catalogue do not need to
+// know it lives in protocol.ts (it does, because conversation.ts must stay
+// free of anything that touches the filesystem).
+export { REJECTED_LEVELS };
 
 /** How long to sit on filesystem events before re-reading. Editors fire several
  *  per save (write, rename-into-place, attribute change); 50 ms collapses a

@@ -26,6 +26,23 @@
 
 export const PROTOCOL_VERSION = 1;
 
+/**
+ * Thinking levels the ENDPOINT refuses, learned the only way there is -- by
+ * being refused. pi's `get_available_thinking_levels` describes what PI can ask
+ * for; it does not know what the provider behind it will take. Ollama Cloud
+ * answers `/effort minimal` with, verbatim:
+ *
+ *   400 invalid reasoning value: 'minimal'
+ *   (must be "high", "medium", "low", "max", or "none")
+ *
+ * It lives HERE, in the file with no imports, because two modules need it and
+ * neither may import the other: catalog.ts does filesystem work, and
+ * conversation.ts is required to stay pure (there is a test asserting it pulls
+ * in no fs, net, spawn or sqlite). Anything both ends agree on belongs in this
+ * file, and "which levels are real" is exactly that.
+ */
+export const REJECTED_LEVELS = ["minimal", "xhigh"];
+
 /* ------------------------------------------------------------------ *
  * Conversation content -- what the panel draws
  * ------------------------------------------------------------------ */
