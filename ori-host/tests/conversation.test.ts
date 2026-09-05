@@ -312,8 +312,20 @@ describe("a turn with two tool calls interleaved with text", () => {
       },
       isError: false,
     });
+    // convId and origin are stamped at start: a backgrounded command outlives
+    // the switch away from the conversation that started it, so the tray needs
+    // to know whose it is. `origin` is the opening question here because the
+    // conversation has not been given a name.
     expect(h.conv.bg).toEqual([
-      { pid: 4242, kind: "monitor", label: "tail the build log", name: "", since: h.at() },
+      {
+        pid: 4242,
+        kind: "monitor",
+        label: "tail the build log",
+        name: "",
+        since: h.at(),
+        convId: h.conv.convId,
+        origin: expect.any(String),
+      },
     ]);
 
     h.conv.handleEvent({

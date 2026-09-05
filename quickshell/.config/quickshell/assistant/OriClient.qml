@@ -161,7 +161,12 @@ Singleton {
       images: root.imageLines(t.images),
       pending: t.pending === true,
       delivery: Number(t.delivery || 0),
-      settledAt: Number(t.settledAt || 0)
+      settledAt: Number(t.settledAt || 0),
+      // Why this turn ended without finishing, or "". A permanent fact about
+      // one row, unlike `error`, which is a banner about the conversation right
+      // now -- see protocol.ts. It is what stops a died turn reading as a short
+      // answer, and it is the discriminator `settled()` needs below.
+      failed: String(t.failed || "")
     }
   }
 
@@ -303,7 +308,24 @@ Singleton {
     // is ingested on a live connection, while the watchdog branch runs only
     // after `retry` has already returned early on `sock.connected` -- so it
     // writes `busy` with the socket demonstrably down.
-    if (sock.connected) root.settled()
+    //
+    // The SECOND death, which the socket test cannot see because the host is
+    // perfectly healthy while it reports it: pi exits, the provider refuses,
+    // the child is idle-killed mid-turn. `busy` goes false over a live socket
+    // exactly as a real answer does, so the bar cell played the whole arrival
+    // celebration -- rule overshoot, glyph fill, scale, `unread` latched -- and
+    // a heartbeat later the frame turned red. The turn itself now carries the
+    // verdict, so ask it.
+    if (sock.connected && !root.lastTurnFailed()) root.settled()
+  }
+
+  /** Did the newest assistant turn end without finishing? Reads the row rather
+   *  than `error`, because `error` is transient and a settle may arrive after
+   *  it has been cleared or replaced. */
+  function lastTurnFailed() {
+    var i = root.lastAssistant()
+    if (i < 0) return false
+    return String(turnModel.get(i).failed || "") !== ""
   }
 
   // The reading `Usage.output` held when this turn opened. protocol.ts does not
@@ -518,6 +540,15 @@ Singleton {
     // of them itself -- so nothing on the host's side would ever clear those.
     // Asking again is the moment they stop being true.
     root.notice = ""
+    // AND THE ERROR, which is the same argument and was the worse bug: `error`
+    // only ever cleared when it happened to equal agentDownError, so any other
+    // failure -- a rejected /model, a provider 500, a stopReason of error --
+    // latched five surfaces red FOREVER: the bar glyph, the panel border, the
+    // rail, the veil and the notice strip. Nothing could dismiss it, including
+    // the gesture the design promises dismisses it. A turn that ended badly is
+    // now recorded ON THE TURN (`failed`), which is where a permanent fact
+    // belongs, so the banner is free to be transient again.
+    root.error = ""
     if (line.charAt(0) === "/") return root.command(line)
     if (!root.send({ t: "ask", text: line,
                      images: images || root.takeAttachments(line) })) return false
@@ -528,6 +559,9 @@ Singleton {
   function command(line) {
     if (!sock.connected) { root.error = root.agentDownError; return false }
     root.notice = ""
+    // Same reason as ask(): a new command supersedes the last failure, and a
+    // rejected /model was one of the ways `error` used to latch permanently.
+    root.error = ""
     return root.send({ t: "command", line: String(line) })
   }
 

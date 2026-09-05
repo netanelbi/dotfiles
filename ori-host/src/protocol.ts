@@ -98,6 +98,21 @@ export interface Turn {
   cost?: TurnCost;
   /** Epoch ms when the turn stopped changing. */
   settledAt?: number;
+  /**
+   * Why this turn ENDED WITHOUT FINISHING -- pi exited, the provider refused,
+   * the child was idle-killed while the conversation was parked. Empty or
+   * absent means it completed.
+   *
+   * docs/specs/multi-session.md requires a parked conversation's dead turn to
+   * be "shown as failed, never silently dropped", and until this existed there
+   * was nothing to show it WITH: the turn simply stopped, usually with no text
+   * and no cost receipt, which reads exactly like a short answer. It is on the
+   * turn rather than in the ambient `error` string because it is a permanent
+   * fact about one turn, while `error` is a transient banner about the
+   * conversation -- conflating them is what made `error` a latch nothing could
+   * clear.
+   */
+  failed?: string;
 }
 
 /* ------------------------------------------------------------------ *
@@ -152,6 +167,18 @@ export interface BgJob {
   since: number;
   /** Live activity line for subagents, from the pi subagent registry. */
   activity?: string;
+  /**
+   * WHICH CONVERSATION started this job, and what that conversation is called.
+   *
+   * A backgrounded `bash` outlives the turn that started it AND the switch away
+   * from it, which is the point -- but the tray drew every job identically, so
+   * a job still running in a conversation you parked was indistinguishable from
+   * one in the conversation you are reading. `convId` is the identity; `origin`
+   * is the label to show, and the panel shows it only when the job did not come
+   * from the conversation on screen.
+   */
+  convId?: string;
+  origin?: string;
 }
 
 export interface ModelChoice {

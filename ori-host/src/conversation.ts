@@ -758,6 +758,12 @@ export class Conversation {
     if (!failed) return;
 
     const msg = res.error ?? "rejected";
+    // The turn is marked BEFORE it settles, so the mark is part of the same
+    // state the panel settles on. A turn that ends this way otherwise just
+    // stops -- usually with no text and no cost receipt, because costFor
+    // returns undefined for a turn with no content -- and reads exactly like a
+    // short answer. docs/specs/multi-session.md calls that out by name.
+    this.markFailed(msg);
     // Without this the panel WEDGES: `busy` never clears, the composer refuses
     // every later message, and nothing settles the open turn.
     this.patchState({ busy: false });
@@ -911,7 +917,25 @@ export class Conversation {
   }
 
   private addBgJob(pid: number, kind: BgKind, label: string, name: string): void {
-    this.bgJobs.set(pid, { pid, kind, label, name, since: this.deps.now() });
+    // Stamped with WHOSE job it is, at the moment it starts. A backgrounded
+    // command outlives both the turn that started it and the switch away from
+    // that conversation -- which is the point -- but the tray drew every job
+    // the same, so one still running in a conversation you parked looked like
+    // one belonging to the conversation on screen. `origin` is captured now
+    // rather than read later because the label is what the conversation was
+    // called when the job began, and that is the useful answer.
+    this.bgJobs.set(pid, {
+      pid,
+      kind,
+      label,
+      name,
+      since: this.deps.now(),
+      convId: this.convId,
+      // The conversation's own name if it has been given one, else its opening
+      // question -- the same thing the picker shows, so a tray row and a picker
+      // row name the conversation identically.
+      origin: this.st.sessionName || firstLine(this.turns.find((t) => t.role === "user")?.text ?? ""),
+    });
     this.emit({ t: "bg", convId: this.convId, jobs: this.bg });
   }
 
@@ -953,10 +977,12 @@ export class Conversation {
     // clause is kept: pi's message carries the URL, the response body and a JS
     // stack, which is a paragraph on a strip sized for a line.
     if (m.stopReason === "error") {
-      this.emit({
-        t: "error",
-        text: firstLine(m.errorMessage ?? "the model returned an error"),
-      });
+      const why = firstLine(m.errorMessage ?? "the model returned an error");
+      // Both, and they are not redundant: the banner is how you find out NOW,
+      // the turn mark is how you find out later -- scrolled back, or switched
+      // away and returned, by which time the banner is long gone.
+      this.markFailed(why);
+      this.emit({ t: "error", text: why });
     }
   }
 
@@ -1048,6 +1074,29 @@ export class Conversation {
   /* ---------------------------------------------------------------- *
    * settling and cost
    * ---------------------------------------------------------------- */
+
+  /**
+   * Record on the TURN that it ended without finishing. The ambient `error`
+   * banner is a separate thing and deliberately so: it describes the
+   * conversation right now and something must be able to clear it, while this
+   * is a permanent fact about one row that must survive scrolling away, a
+   * reconnect, and a resume from disk.
+   *
+   * Also the discriminator the panel needs for a second bug: `settled()` fires
+   * on every busy->idle edge, so a turn that DIED played the same arrival
+   * animation as one that answered. With this the panel can tell them apart.
+   */
+  private markFailed(why: string): void {
+    const t = this.live() ?? this.lastAssistant();
+    if (!t || t.failed) return;
+    t.failed = firstLine(why) || "the turn ended without finishing";
+    this.emit({
+      t: "turn_patch",
+      convId: this.convId,
+      turnId: t.id,
+      patch: { failed: t.failed },
+    });
+  }
 
   private settle(): void {
     // A steer that never reached its boundary -- the turn ended first, was

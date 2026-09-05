@@ -176,12 +176,28 @@ Item {
           + (task.activity !== "" ? doing.implicitHeight + 1 : 0)
         height: implicitHeight
 
+        // Whose job this is. `convId` is the identity and `origin` the name the
+        // conversation had when the job started -- both stamped host-side at
+        // that moment (conversation.ts addBgJob), never derived here.
+        readonly property string origin: String(task.job.origin || "another conversation")
+        readonly property bool foreign:
+          String(task.job.convId || "") !== "" && String(task.job.convId) !== OriClient.convId
+
         Text {
           id: what
           anchors { left: parent.left; right: pid.left; rightMargin: 8 }
           // The delegate's handle, the command a job is running, or the kind if
           // there is nothing better.
-          text: String(task.job.label || OriClient.bgKindNoun[task.job.kind] || "task")
+          //
+          // Prefixed with the conversation that started it when that is NOT the
+          // one on screen. A backgrounded command deliberately outlives both
+          // its turn and the switch away from it, so the tray legitimately
+          // holds jobs from several conversations at once -- and it used to
+          // draw them all identically, which made "is this mine?" unanswerable.
+          // Absent when it IS this conversation: labelling every row with the
+          // conversation you are already in is noise, not signal.
+          text: (task.foreign ? task.origin + "  ·  " : "")
+              + String(task.job.label || OriClient.bgKindNoun[task.job.kind] || "task")
           color: Theme.subtext0
           elide: Text.ElideRight
           maximumLineCount: 1

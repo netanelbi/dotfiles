@@ -136,7 +136,20 @@ Item {
   // no text and no calls) came out visible with nothing in it, so a settled
   // conversation grew a stray `\u25c7` floating between two turns. One binding,
   // read twice, cannot disagree with itself.
+  // Why this turn ended without finishing, or "". Set by the host on the TURN
+  // (protocol.ts `failed`), so it survives scrolling away, a reconnect and a
+  // resume from disk -- unlike the `error` banner, which is about the
+  // conversation right now and must be clearable.
+  readonly property string failed: turn ? String(turn.failed || "") : ""
+
   readonly property string receiptText: {
+    // A turn that DIED says so, in the slot that otherwise reports what it
+    // cost. Without this it just stopped -- and because costFor returns nothing
+    // for a turn with no content, it stopped with no receipt either, which is
+    // exactly what a very short answer looks like. docs/specs/multi-session.md
+    // requires the opposite: "shown as failed, never silently dropped".
+    if (failed !== "") return failed
+
     var ms = 0
     for (var i = 0; i < pieces.length; i++)
       if (pieces[i].tool) ms += batchMs(pieces[i].calls)
@@ -574,9 +587,14 @@ Item {
           // prose. The tail of it, bottom-anchored in the reserved slot above:
           // enough to know the shape of what it is considering, not so much
           // that it competes with the answer that follows.
+          // A failed turn takes the FILLED glyph and the error colour: a hollow
+          // one in overlay grey reads as "here is what it cost", which is the
+          // one thing this row must never say about a turn that did not finish.
           text: turnItem.pending ? "\u25c6 " + turnItem.thought
-                                 : "\u25c7 " + turnItem.receiptText
-          color: turnItem.pending ? Theme.subtext0 : Theme.overlay0
+              : turnItem.failed !== "" ? "\u25c6 " + turnItem.receiptText
+              : "\u25c7 " + turnItem.receiptText
+          color: turnItem.failed !== "" ? Theme.red
+               : turnItem.pending ? Theme.subtext0 : Theme.overlay0
           font.italic: turnItem.pending
           wrapMode: Text.Wrap
           font.family: Style.font.panelMono

@@ -44,6 +44,7 @@ import { isRpcResponse, type PiFrame, type RpcCommand } from "./pi/pi-types";
 import { Pool, type ConversationHooks, type ConvSpec, type Conversation as PoolConv, type Snapshot } from "./pool";
 import {
   PROTOCOL_VERSION,
+  type BgJob,
   type ClientCmd,
   type HostEvent,
   type ImageRef,
@@ -577,6 +578,18 @@ export class Host {
    */
   #emitFor(convId: string): (ev: HostEvent) => void {
     return (ev) => {
+      // BACKGROUND JOBS ARE THE EXCEPTION TO THE GATE ABOVE, and they have to
+      // be, because they are the one kind of work that deliberately outlives
+      // the conversation you are looking at. Dropping a parked conversation's
+      // `bg` meant a command you backgrounded and then parked stopped being
+      // reported the moment you switched away, though it was still running.
+      // Each job now carries its own convId and origin (protocol.ts), so the
+      // union is unambiguous and the panel can show which are not from here.
+      if (ev.t === "bg") {
+        this.#bgByConv.set(convId, ev.jobs);
+        this.#broadcastBg();
+        return;
+      }
       if (this.pool.activeId !== convId) return;
       // pi's `get_commands` answers with SKILLS ONLY -- the child spawns with
       // `-ne` and no `--skill` -- so the panel's own rows have to be merged back
@@ -588,6 +601,20 @@ export class Host {
       }
       this.broadcast(ev);
     };
+  }
+
+  /** Live jobs per conversation, so the tray can show the union. Keyed by
+   *  convId and replaced wholesale, because a `bg` event is already the
+   *  complete list for that conversation rather than a delta. */
+  #bgByConv = new Map<string, BgJob[]>();
+
+  #broadcastBg(): void {
+    const jobs: BgJob[] = [];
+    for (const list of this.#bgByConv.values()) jobs.push(...list);
+    // convId is the ACTIVE conversation, not the jobs' owners: the panel's
+    // ingest drops any event addressed to a conversation it is not showing, and
+    // this one is addressed to all of them at once.
+    this.broadcast({ t: "bg", convId: this.pool.activeId, jobs });
   }
 
   #panelCmds(): SlashCommand[] {
