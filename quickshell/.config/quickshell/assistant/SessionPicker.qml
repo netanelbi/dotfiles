@@ -198,17 +198,37 @@ Rectangle {
       readonly property bool here: root.isActive(modelData)
       color: on ? Theme.surface1 : "transparent"
 
-      // The selected row is marked on its edge rather than by colour alone --
-      // at this size a surface tint is easy to lose against the card behind it.
-      // The row you are IN keeps a ghost of the same rail once the selection
-      // has moved off it, so "where was I" survives arrowing down the list.
+      // THREE THINGS, THREE PLACES. They were sharing two, and the collision
+      // lost the one that mattered: a row that was BOTH the current
+      // conversation and working printed "open" and never said it was running,
+      // because the status slot was spent on the focus word. Focus is not a
+      // status -- a conversation does not stop working because you are looking
+      // at it. So:
+      //   selection (where ↑↓ is)   -> this rail + the surface tint
+      //   focus (what the panel shows) -> the gutter caret below
+      //   status (working or not)   -> the pip and the meta line, ALWAYS
       Rectangle {
         width: 2
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom
                   leftMargin: 2; topMargin: 3; bottomMargin: 3 }
         radius: 1
         color: root.accent
-        opacity: parent.on ? 1 : parent.here ? 0.35 : 0
+        opacity: parent.on ? 1 : 0
+      }
+
+      // FOCUS: the conversation the panel is showing behind this list. A fixed
+      // gutter, so every title starts on the same column and the caret is the
+      // only thing that varies -- an indent that moved per row would read as a
+      // layout bug rather than a mark.
+      Text {
+        id: caret
+        anchors { left: parent.left; top: parent.top; leftMargin: 12; topMargin: 5 }
+        width: 10
+        text: parent.here ? "▸" : ""
+        color: Theme.text
+        font.family: Style.font.panelMono
+        font.pixelSize: Style.font.panelMeta
+        renderType: Text.QtRendering
       }
 
       // ONE meaning: this conversation is working RIGHT NOW, behind this list.
@@ -243,10 +263,13 @@ Rectangle {
 
       Text {
         id: label
-        anchors { left: parent.left; right: pip.left; top: parent.top
-                  leftMargin: 12; rightMargin: 8; topMargin: 5 }
+        anchors { left: caret.right; right: pip.left; top: parent.top
+                  rightMargin: 8; topMargin: 5 }
         text: String(modelData.label || "(no title)")
-        color: parent.on ? Theme.text : Theme.subtext0
+        // The current conversation reads at full strength even when the
+        // selection has arrowed away from it, so "where was I" survives
+        // browsing the list.
+        color: (parent.on || parent.here) ? Theme.text : Theme.subtext0
         elide: Text.ElideRight
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
@@ -261,8 +284,12 @@ Rectangle {
         // shows for the same conversation -- live, 119 here against 235 there.
         // Two counts of the same thing on two surfaces is a bug report waiting
         // to happen; naming the unit stops it being one.
+        // STATUS ONLY. "open" used to live here and won the slot whenever the
+        // current conversation was also working, which is exactly when its
+        // status was worth reading. Focus moved to the gutter caret; this line
+        // now answers one question and always answers it.
         text: root.when(modelData.at, root.nonce) + "  ·  " + (modelData.turns || 0) + " exchanges"
-            + (modelData.busy ? "  ·  running now" : parent.here ? "  ·  open" : "")
+            + (modelData.busy ? "  ·  running now" : "")
         // The busy row's meta line is lifted out of the grey the other rows
         // sit in. "running now" in overlay0 next to "12 exchanges" in overlay0
         // is information you have to go looking for.

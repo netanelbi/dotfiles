@@ -135,6 +135,8 @@ interface Slot {
    *  pool-wide clock meant a single long turn anywhere kept every other
    *  conversation's child alive indefinitely past the 90 s grace. */
   grace: TimerHandle | null;
+  /** Last `busy` the pool told clients about, so a change is edge-triggered. */
+  busySeen: boolean;
 }
 
 /* ------------------------------------------------------------------ *
@@ -259,7 +261,7 @@ export class Pool {
       onSettled: () => this.#settled(spec.convId),
       onChildExit: () => this.#childExit(spec.convId),
     });
-    this.#slots.set(spec.convId, { conv, lastActive: this.#clock.now(), idle: null, grace: null });
+    this.#slots.set(spec.convId, { conv, lastActive: this.#clock.now(), idle: null, grace: null, busySeen: conv.busy });
     this.#touch(spec.convId);
     return conv;
   }
@@ -327,6 +329,22 @@ export class Pool {
     // is being polled (ori-agent.touch_idle).
     if (slot.idle !== null) this.#clock.clearTimeout(slot.idle);
     slot.idle = this.#clock.setTimeout(() => this.#idleFire(convId), this.#idleMs);
+
+    // A turn STARTING changes the session list, and nothing else noticed.
+    // `sessions` went out on park, settle and child-exit -- every edge except
+    // the one where a conversation begins working. So the picker held
+    // `busy: false` for the conversation you were IN, from the moment you asked
+    // until it answered: the row you were looking at was the one row that could
+    // not say it was running, and parking something else was what "fixed" it,
+    // because that re-listed.
+    //
+    // Edge-triggered off a remembered value rather than emitted from here
+    // directly: onActivity fires on every frame of a stream, and the list is
+    // every conversation plus a store read.
+    if (slot.conv.busy !== slot.busySeen) {
+      slot.busySeen = slot.conv.busy;
+      this.#emitSessions();
+    }
   }
 
   #idleFire(convId: string): void {

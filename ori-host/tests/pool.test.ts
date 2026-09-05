@@ -325,6 +325,33 @@ describe("activate", () => {
     expect(a.busy).toBe(true);
   });
 
+  test("a turn STARTING re-emits the session list, so busy is not stale", () => {
+    // Reported from the live panel: Ctrl+R while the conversation you are in is
+    // working showed it as idle. `sessions` went out on park, settle and
+    // child-exit -- every edge except a turn beginning -- so the row you were
+    // looking at was the only row that could not say it was running, and
+    // parking something else was what appeared to "fix" it.
+    const h = harness();
+    const a = h.pool.create() as FakeConv;
+    const sessionsSeen = () => h.events.filter((e) => e.t === "sessions").length;
+
+    const before = sessionsSeen();
+    a.ask("something slow");
+    expect(a.busy).toBe(true);
+    expect(sessionsSeen()).toBeGreaterThan(before);
+
+    const listed = h.pool.list().find((e) => e.id === a.sessionId);
+    expect(listed?.busy).toBe(true);
+
+    // EDGE-triggered: onActivity fires on every frame of a stream, and each
+    // list is a store read plus every conversation. Frames while already busy
+    // must not re-emit.
+    const afterStart = sessionsSeen();
+    a.frame();
+    a.frame();
+    expect(sessionsSeen()).toBe(afterStart);
+  });
+
   test("resume REFUSES an ambiguous prefix even when a LIVE conversation matches it", () => {
     // The bug this pins was found by driving the real panel, not by a test:
     // `ipc call ori resume 0` reported success and silently re-activated the
