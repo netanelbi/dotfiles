@@ -736,9 +736,71 @@ Singleton {
   // every `snapshot`.
   property string convId: ""
 
+  // TRUE WHILE THE TRANSCRIPT IS BEING REPLACED, and the reason switching
+  // conversations is not a freeze any more.
+  //
+  // The transcript view binds its `model` to this (AssistantPanel: `model:
+  // OriClient.rebuilding ? null : OriClient.turns`), so for the duration of the
+  // rebuild there is NO VIEW ATTACHED to the ListModel. That is the whole fix,
+  // and it is worth spelling out why, because the loop below looks innocent:
+  //
+  //   * `turnModel.count` changes once per append, and a ListModel's count is a
+  //     notifying property, so every delegate ALREADY BUILT re-evaluates
+  //     `row = count - 1 - index` -- synchronously, inside the loop. Each one
+  //     then points at a DIFFERENT turn, so `turn` -> `bodyText`/`calls` ->
+  //     `pieces` -> Fmt.splitCached all re-derive for a row that is about to
+  //     change again on the next append. cacheBuffer keeps every turn
+  //     instantiated (AssistantPanel's note says why), so "already built" means
+  //     the whole outgoing conversation.
+  //   * `clear()` tears those delegates down ONE AT A TIME through the view.
+  //
+  // Measured offscreen on Qt 6.11.2 (software backend), switching between two
+  // real 235-turn transcripts, counters planted in a copy of this file and of
+  // the delegate's binding graph:
+  //
+  //     attached (today)   row re-evals 55,930   splits 702   apply 231ms
+  //                        first frame +830ms, in ONE 830ms frame
+  //     detached (this)    row re-evals    235   splits 235   apply  15ms
+  //                        first frame +37ms, fully built by +665ms over 42 frames
+  //
+  // So it is not only 15x less blocking work; the build is FRAME-PACED instead
+  // of one long stall, which is the difference the user actually feels.
+  //
+  // No flash of an empty transcript: the flag goes true and false inside this
+  // one synchronous function, so no frame is ever rendered while the model is
+  // detached.
+  property bool rebuilding: false
+
   // The panel replaces everything it holds. One pass, and both id-keyed maps
   // are assigned ONCE at the end -- see stashTurnExtras for why not per turn.
   function applySnapshot(m) {
+    // try/finally, not a plain pair of assignments: a throw anywhere in the
+    // rebuild would otherwise leave `rebuilding` true, and the panel would draw
+    // an empty transcript for the rest of the session with nothing to say why.
+    root.rebuilding = true
+    try {
+      root.fillTurns(m)
+    } finally {
+      root.rebuilding = false
+    }
+    // Usage BEFORE state: applyState can flip `busy`, and the baseline
+    // onBusyChanged stamps has to come off THIS conversation's reading rather
+    // than the one the panel was showing a moment ago.
+    root.applyUsage(m.usage || ({}))
+    root.applyState(m.state || ({}))
+    // Switching into a conversation that is ALREADY busy never flips `busy`, so
+    // nothing stamped a baseline for it and the one still standing belongs to
+    // another conversation entirely.
+    if (root.busy) root.outputBase = root.usageOutput
+    root.bg = m.bg || []
+    root.appended()
+  }
+
+  // The turn list itself, and nothing else. Split out of applySnapshot so the
+  // detached window above covers EXACTLY the model writes and not the state,
+  // usage or bg assignments -- those touch bindings the rest of the panel reads
+  // and have no business happening while the transcript is unmounted.
+  function fillTurns(m) {
     turnModel.clear()
     root.liveId = ""
     var tools = {}
@@ -766,17 +828,6 @@ Singleton {
     root.tokensPerSecond = rate
     root.lastSettledAt = settled
     root.reindex()
-    // Usage BEFORE state: applyState can flip `busy`, and the baseline
-    // onBusyChanged stamps has to come off THIS conversation's reading rather
-    // than the one the panel was showing a moment ago.
-    root.applyUsage(m.usage || ({}))
-    root.applyState(m.state || ({}))
-    // Switching into a conversation that is ALREADY busy never flips `busy`, so
-    // nothing stamped a baseline for it and the one still standing belongs to
-    // another conversation entirely.
-    if (root.busy) root.outputBase = root.usageOutput
-    root.bg = m.bg || []
-    root.appended()
   }
 
   // Appended, or INSERTED where a steer split the seam. An insert moves every

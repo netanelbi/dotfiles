@@ -87,12 +87,45 @@ Item {
   // others -- what it is doing now, and what it is holding for you, both matter
   // more than what is ticking away in a log somewhere.
   readonly property bool background: OriClient.bgCount > 0
+
+  // ------------------------------------------------ another conversation working
+  // Ctrl+N and Ctrl+R PARK rather than stop -- the turn you walked away from is
+  // still being answered by a child the host is holding. Until now that state
+  // had no ambient surface at all: `OriClient.busy` is the ACTIVE conversation
+  // only, so the cell sat cold through it, and the only way to find out was to
+  // open a modal you had to already suspect was worth opening.
+  //
+  // The count is the host's own per-session `busy`, off the session list it
+  // already sends -- not a guess made here. It is re-emitted at exactly the
+  // three moments it can change: when a conversation is parked (pool.ts
+  // #makeActive), when one settles (#settled) and when a child dies
+  // (#childExit).
+  readonly property int elsewhere: {
+    var me = OriClient.sessionId
+    // Before the first state frame there is no id to exclude, and every busy
+    // row would count as somebody else's -- including this conversation's own.
+    if (me === "") return 0
+    var list = OriClient.sessions
+    var n = 0
+    for (var i = 0; i < list.length; i++)
+      if (list[i].busy === true && String(list[i].id) !== me) n++
+    return n
+  }
+
+  // The QUIETEST register in the cell, and last in rank: work happening in a
+  // conversation that is not on this screen matters less than what this one is
+  // doing, what it is holding for you, or what it left running. It never
+  // brightens, never fills the glyph and starts no animation -- it colours the
+  // cold state sapphire and puts a count in the readout. "Something is being
+  // worked on, and it is not here."
+  readonly property bool parked: root.elsewhere > 0
+    && !root.thinking && !root.holding && !root.background
   // Set by Bar.qml when the gap between the islands cannot hold the open cell.
   // Treated exactly like the user's own right-click: the cell simply does not
   // open. See the comment at the OriCell instantiation for the measurement.
   property bool cramped: false
   readonly property bool expanded: !cramped && !OriClient.cellCompact
-    && (thinking || holding || background)
+    && (thinking || holding || background || parked)
 
   // Mauve, the shell's own "touched the machine" colour, and the same one the
   // panel gives a tool row -- so a job still running reads as machine activity
@@ -101,6 +134,9 @@ Item {
     : failed ? Theme.urgent
     : unread ? Theme.sky
     : background ? Theme.accent
+    // The working colour, at the cold state's own alphas: it is the same kind
+    // of activity as `thinking`, happening somewhere you are not looking.
+    : parked ? Theme.sapphire
     : Theme.subtext0
 
   // Cold is dim, not absent. subtext0 at 0.42/0.70 rather than `Theme.inactive`
@@ -212,14 +248,45 @@ Item {
     }
   }
 
+  // AN ARRIVAL IS AN ANSWER LANDING, NOT `busy` GOING FALSE. A turn that DIES
+  // clears busy too -- pi crashes, the child is idle-killed, the endpoint
+  // refuses the thinking level -- and the host clears it FIRST and reports the
+  // failure second (conversation.ts: `patchState({busy:false}); this.settle();`
+  // and only then `emit({t:"error"})`). So at the instant `settled()` fires,
+  // `OriClient.error` is still whatever it was, and the cell played the whole
+  // arrival celebration -- rule overshooting, glyph filling, `unread` latched --
+  // a fraction of a second before the same mark turned red.
+  //
+  // The frames are sent back to back, so waiting one beat is enough to see
+  // which kind of settle this was, and 140ms is under the threshold at which a
+  // light switching on reads as delayed. What is compared is the error STRING,
+  // not its emptiness: a failure that arrives with this settle CHANGES it, and
+  // that stays true even if an older error is still latched from before.
+  property string errAtSettle: ""
+
+  Timer {
+    id: confirm
+    interval: 140
+    onTriggered: {
+      // Opened while we waited: the answer is in front of you, and the panel
+      // clears `unread` itself.
+      if (OriClient.panelOpen) return
+      // A failure came in with it. There IS still something to read, and the
+      // failed register says so in red -- but it is not an arrival.
+      if (OriClient.error !== root.errAtSettle) return
+      OriClient.unread = true
+      arrive.restart()
+    }
+  }
+
   Connections {
     target: OriClient
     // Only when the panel is CLOSED. With the panel open the answer is already
     // arriving in front of you and a second announcement is noise.
     function onSettled() {
       if (OriClient.panelOpen) return
-      OriClient.unread = true
-      arrive.restart()
+      root.errAtSettle = OriClient.error
+      confirm.restart()
     }
   }
 
@@ -241,6 +308,7 @@ Item {
     : root.failed ? "failed"
     : root.unread ? "answered"
     : root.background ? "background"
+    : root.parked ? "parked"
     : ""
 
   // Claude Code's own format, so the two strips are comparable at a glance.
@@ -450,8 +518,13 @@ Item {
       Text {
         width: Style.ori.timeWidth
         horizontalAlignment: Text.AlignRight
+        // A turn's clock is meaningless in the parked register -- the work being
+        // counted is not this conversation's, and `turnSeconds` here is the
+        // duration of the last answer THIS one gave, which would read as the
+        // parked turn's age. The count is the only true number available.
         text: root.countingJobs
           ? "\u00d7" + OriClient.bgCount
+          : root.parked ? "\u00d7" + root.elsewhere
           : root.elapsedKnown ? root.humanTime(root.elapsedSec) : ""
         color: root.tint
         font.family: Style.font.family

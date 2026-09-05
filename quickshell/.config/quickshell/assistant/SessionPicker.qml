@@ -14,8 +14,21 @@ import ".."
 //
 // It now includes PARKED conversations: Ctrl+N and Ctrl+R park rather than
 // stop, so a child can still be finishing a turn behind a row in this list.
-// Those rows carry `busy`, which the meta line says out loud -- picking one is
-// instant, and it would be a lie to show it as just another old thread.
+// Those rows carry `busy`, which the meta line says out loud -- it would be a
+// lie to show a conversation that is mid-answer as just another old thread.
+//
+// -------------------------------------------------- what a row may claim
+// `busy` and "this is the one you are in" are the only two states drawn here,
+// because they are the only two the user can act on. The list used to draw a
+// third -- a dim pip and the word "loaded" for `SessionEntry.live`, meaning the
+// host is holding the conversation in memory rather than on disk. That is an
+// implementation fact wearing a status's clothes: it is not something you can
+// do anything about, the "instant switch" it implied is the switch the user
+// reported as SLOW, and it stays true after the session's pi child has been
+// idle-killed (measured: sessionsJson said live:true for two conversations
+// whose children the journal had killed for 'idle 600s'). It is off the screen.
+// `live` is still on the wire, where it belongs -- it is a scheduling hint for
+// the host, not a label.
 Rectangle {
   id: root
 
@@ -25,6 +38,36 @@ Rectangle {
 
   readonly property var sessions: OriClient.sessions
   property int current: 0
+
+  // WHICH ROW IS THE ONE YOU ARE READING. The host has always known -- it sends
+  // `activeId` beside the entries -- and it is also the session id already in
+  // OriClient, in the same id space (checked live: `ipc call ori state` reports
+  // session=01a05285… and sessionsJson's second row carries that exact id).
+  // Without it the list answered "where am I?" with nothing, and the reflex
+  // gesture -- Ctrl+R, look, Enter to back out -- landed on row 0, which is NOT
+  // your session, and paid a full transcript rebuild to leave the conversation
+  // you were in.
+  readonly property string activeId: OriClient.sessionId
+  function isActive(s) { return s !== undefined && root.activeId !== "" && String(s.id) === root.activeId }
+
+  function indexOfActive() {
+    for (var i = 0; i < root.sessions.length; i++)
+      if (root.isActive(root.sessions[i])) return i
+    return -1
+  }
+
+  // Bumped on every open so the relative times below are recomputed. `Date.now()`
+  // has no change notifier, so `when(at)` on its own is evaluated once per
+  // delegate creation and then frozen -- a row that said "just now" went on
+  // saying it hours later.
+  property int nonce: 0
+
+  readonly property int running: {
+    var n = 0
+    for (var i = 0; i < root.sessions.length; i++)
+      if (root.sessions[i].busy === true) n++
+    return n
+  }
 
   color: Theme.mantle
   opacity: 0
@@ -37,7 +80,13 @@ Rectangle {
 
   function open() {
     if (root.sessions.length === 0) return false
-    root.current = 0
+    // Recompute the ages: see `nonce`.
+    root.nonce++
+    // Opens ON the conversation you are in, so the list answers "where am I?"
+    // before you have read a single row -- and so the cheapest gesture in it
+    // (Enter, straight away) is the one that costs nothing.
+    var i = root.indexOfActive()
+    root.current = i >= 0 ? i : 0
     root.opacity = 1
     root.forceActiveFocus()
     return true
@@ -51,14 +100,20 @@ Rectangle {
   function take() {
     var s = root.sessions[root.current]
     root.close()
-    if (s) OriClient.resume(s.id)
+    // Resuming the conversation you are ALREADY IN is not a switch: the host
+    // takes the exact-match branch, activate() re-emits the whole snapshot, and
+    // the panel clears and rebuilds every delegate to land you on the screen you
+    // were already looking at. So Enter on your own row just shuts the list.
+    if (s && !root.isActive(s)) OriClient.resume(s.id)
   }
 
   // ------------------------------------------------------------------ label
   // Relative, because "3 min ago" is what you are actually looking for after a
   // shell reload -- an absolute clock time makes you do the subtraction. Past a
   // day it flips to the date, where the subtraction stops being useful.
-  function when(at) {
+  // `nonce` is unused and deliberate: naming it in the call is what makes the
+  // delegate's binding depend on it, so bumping it on open() re-reads the clock.
+  function when(at, nonce) {
     var ms = Date.now() - (at || 0)
     if (ms < 60000) return "just now"
     var m = Math.floor(ms / 60000)
@@ -97,7 +152,12 @@ Rectangle {
   Text {
     id: title
     anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
-    text: "resume  ·  ↑↓ move   ⏎ open   esc back"
+    // The count of conversations actually WORKING right now, in the one place
+    // you have already come to look at conversations. It is the host's own
+    // per-session `busy`, re-sent whenever a conversation is parked, settles or
+    // loses its child -- not a guess made here.
+    text: "resume" + (root.running > 0 ? "  ·  " + root.running + " running" : "")
+        + "  ·  ↑↓ move   ⏎ open   esc back"
     color: Theme.overlay0
     font.family: Style.font.panelMono
     font.pixelSize: Style.font.panelMeta
@@ -135,39 +195,42 @@ Rectangle {
       height: label.implicitHeight + meta.implicitHeight + 14
       radius: 4
       readonly property bool on: index === root.current
+      readonly property bool here: root.isActive(modelData)
       color: on ? Theme.surface1 : "transparent"
 
       // The selected row is marked on its edge rather than by colour alone --
       // at this size a surface tint is easy to lose against the card behind it.
+      // The row you are IN keeps a ghost of the same rail once the selection
+      // has moved off it, so "where was I" survives arrowing down the list.
       Rectangle {
         width: 2
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom
                   leftMargin: 2; topMargin: 3; bottomMargin: 3 }
         radius: 1
         color: root.accent
-        opacity: parent.on ? 1 : 0
+        opacity: parent.on ? 1 : parent.here ? 0.35 : 0
       }
 
-      // Held in memory, so picking it is instant and -- if `busy` -- it is
-      // working RIGHT NOW behind this list. The meta line said so in grey text
-      // two sizes below the title, which is not where an eye scanning titles
-      // ever goes. A pip on the row edge is read without being looked for.
+      // ONE meaning: this conversation is working RIGHT NOW, behind this list.
+      // The meta line says so too, in grey text two sizes below the title, which
+      // is not where an eye scanning titles ever goes -- a pip on the row edge is
+      // read without being looked for.
       //
-      // Two states, not one: a parked-and-idle conversation is still worth
-      // marking, because "instant, already loaded" is different from "cold
-      // resume off disk" and the old list drew them identically.
+      // It used to have a second, dimmer state for `live` ("loaded"). See the
+      // note at the top of this file: that was a fact about which side of an
+      // in-RAM/on-disk line the bytes were on, and the user cannot act on it.
       Rectangle {
         id: pip
         width: 6; height: 6; radius: 3
         anchors { right: parent.right; top: parent.top; rightMargin: 10; topMargin: 9 }
-        visible: modelData.live === true
-        color: modelData.busy ? root.accent : Theme.overlay0
+        visible: modelData.busy === true
+        color: root.accent
 
         SequentialAnimation on opacity {
           // Bound to `running`, not started once: a delegate is recycled by the
           // view, and an animation left running on a pooled item keeps burning
           // frames for a row nobody is looking at.
-          running: pip.visible && modelData.busy === true
+          running: pip.visible
           loops: Animation.Infinite
           NumberAnimation { to: 0.25; duration: 620; easing.type: Easing.InOutQuad }
           NumberAnimation { to: 1.0;  duration: 620; easing.type: Easing.InOutQuad }
@@ -193,13 +256,17 @@ Rectangle {
       Text {
         id: meta
         anchors { left: label.left; top: label.bottom; topMargin: 1 }
-        text: root.when(modelData.at) + "  ·  " + (modelData.turns || 0) + " msg"
-            + (modelData.busy ? "  ·  running now"
-                              : modelData.live ? "  ·  loaded" : "")
+        // "exchanges", not "msg": the store counts USER messages only
+        // (store.ts summarise), so this figure is half the row count the panel
+        // shows for the same conversation -- live, 119 here against 235 there.
+        // Two counts of the same thing on two surfaces is a bug report waiting
+        // to happen; naming the unit stops it being one.
+        text: root.when(modelData.at, root.nonce) + "  ·  " + (modelData.turns || 0) + " exchanges"
+            + (modelData.busy ? "  ·  running now" : parent.here ? "  ·  open" : "")
         // The busy row's meta line is lifted out of the grey the other rows
-        // sit in. "running now" in overlay0 next to "12 msg" in overlay0 is
-        // information you have to go looking for.
-        color: modelData.busy ? root.accent : Theme.overlay0
+        // sit in. "running now" in overlay0 next to "12 exchanges" in overlay0
+        // is information you have to go looking for.
+        color: modelData.busy ? root.accent : parent.here ? Theme.subtext0 : Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta - 2
         renderType: Text.QtRendering

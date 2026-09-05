@@ -435,7 +435,18 @@ PanelWindow {
         bottomMargin: 4
       }
 
-      model: OriClient.turns
+      // DETACHED WHILE THE TRANSCRIPT IS BEING REPLACED, which is what makes
+      // switching conversations cheap. OriClient.rebuilding is true for the
+      // duration of one synchronous applySnapshot and no longer -- see the note
+      // on that property for the measurement (55,930 delegate row re-evals down
+      // to 235, a 231ms blocking apply down to 15ms). With the model attached,
+      // every one of the 235 appends bumped `count`, and every delegate the
+      // cacheBuffer below keeps alive re-derived a DIFFERENT turn on each bump.
+      //
+      // No frame is rendered while it is null, so there is no blank flash; and
+      // nothing else in this file may write `model`, or the binding dies and
+      // the transcript never comes back.
+      model: OriClient.rebuilding ? null : OriClient.turns
       spacing: 12
       clip: true
       // A conversation is read from the bottom, so that is where it rests.
