@@ -199,22 +199,30 @@ export class Pool {
    * is just an activate: no disk read, no second child for the same session id.
    */
   resume(sessionId: string): Conversation {
-    const held = this.#findBySessionId(sessionId);
+    // An EXACT id can never be ambiguous, so it short-circuits everything.
+    const exact = this.#findBySessionId(sessionId, true);
+    if (exact) {
+      this.activate(exact.conv.id);
+      return exact.conv;
+    }
+
+    // Ambiguity is decided against the INDEX, before any prefix matching, and
+    // that ordering is the fix. The index knows all 200+ sessions in the
+    // workdir; the pool knows the 4 it is holding. Checking the pool first
+    // meant one live conversation whose id happened to start with the typed
+    // prefix won outright, even when the prefix matched two hundred others --
+    // a resume that looks successful and opens the wrong conversation.
+    if (this.#store.ambiguous(sessionId)) {
+      throw new Error(`ambiguous session id: ${sessionId} matches more than one -- use more characters`);
+    }
+
+    const held = this.#findBySessionId(sessionId, false);
     if (held) {
       this.activate(held.conv.id);
       return held.conv;
     }
     const row = this.#store.byId(sessionId);
-    if (!row) {
-      // Two different failures, and telling them apart is the whole point: a
-      // short id that matches several sessions used to open one of them at
-      // random, which looks like a working resume until you read the wrong
-      // transcript. Say "give me more characters" instead.
-      if (this.#store.ambiguous(sessionId)) {
-        throw new Error(`ambiguous session id: ${sessionId} matches more than one -- use more characters`);
-      }
-      throw new Error(`no such session: ${sessionId}`);
-    }
+    if (!row) throw new Error(`no such session: ${sessionId}`);
 
     this.#park();
     const conv = this.#spawn({
@@ -458,18 +466,34 @@ export class Pool {
     });
   }
 
-  #findBySessionId(sessionId: string): Slot | null {
+  /**
+   * `exactOnly` splits the two halves resume() needs in a different order: the
+   * exact match runs BEFORE the index's ambiguity check (a full id cannot be
+   * ambiguous), the prefix match runs after it.
+   */
+  #findBySessionId(sessionId: string, exactOnly = false): Slot | null {
     if (sessionId === "") return null;
     for (const slot of this.#slots.values()) {
       if (slot.conv.sessionId === sessionId) return slot;
     }
+    if (exactOnly) return null;
     // Prefix, to match the store's byId: the short id a listing prints must
     // resolve to a live conversation rather than cold-resuming a second child
     // for the same session.
+    //
+    // UNAMBIGUOUS, for the same reason byId is. Returning the first startsWith
+    // hit made `resume 0` silently re-activate whichever conversation happened
+    // to be iterated first -- observed live, where it re-activated the ACTIVE
+    // one and reported success, so the ambiguity error below could never fire.
+    // On more than one hit, fall through: the store sees the same collision and
+    // raises the error that tells the caller to type more characters.
+    let hit: Slot | null = null;
     for (const slot of this.#slots.values()) {
-      if (slot.conv.sessionId.startsWith(sessionId)) return slot;
+      if (!slot.conv.sessionId.startsWith(sessionId)) continue;
+      if (hit) return null;
+      hit = slot;
     }
-    return null;
+    return hit;
   }
 
   /**

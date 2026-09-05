@@ -325,6 +325,33 @@ describe("activate", () => {
     expect(a.busy).toBe(true);
   });
 
+  test("resume REFUSES an ambiguous prefix even when a LIVE conversation matches it", () => {
+    // The bug this pins was found by driving the real panel, not by a test:
+    // `ipc call ori resume 0` reported success and silently re-activated the
+    // conversation that happened to be active, because the pool's prefix match
+    // ran BEFORE the index's ambiguity check and returned its first hit. The
+    // index knows every session in the workdir; the pool knows the four it
+    // holds, so the pool must never get to decide this.
+    const h = harness();
+    const live = h.pool.create() as FakeConv;
+    // A prefix the live conversation shares with a session it has never seen.
+    // Real pi ids are uuidv7, so in one workdir they all share several leading
+    // characters -- which is exactly why this stopped being a rare case.
+    // Strictly SHORTER than the id: at full length it is an exact match, which
+    // short-circuits ahead of the ambiguity check by design.
+    const prefix = live.sessionId.slice(0, -1);
+    h.store.seed({ id: live.sessionId, file: "/s/live.jsonl", label: "live", at: 9, turns: 1 });
+    h.store.seed({ id: `${prefix}-decoy`, file: "/s/decoy.jsonl", label: "decoy", at: 5, turns: 1 });
+
+    expect(() => h.pool.resume(prefix)).toThrow(/ambiguous/);
+
+    // The full id is never ambiguous, and must still reuse the LIVE
+    // conversation rather than cold-spawning -- the guard must not break that.
+    const before = h.factoryCalls();
+    expect(h.pool.resume(live.sessionId)).toBe(live);
+    expect(h.factoryCalls()).toBe(before);
+  });
+
   test("resume of a session only on disk cold-spawns from its stored file", () => {
     const h = harness();
     h.store.seed({ id: "sess-old", file: "/s/old.jsonl", label: "old chat", at: 5, turns: 3 });
