@@ -148,9 +148,39 @@ Rectangle {
         opacity: parent.on ? 1 : 0
       }
 
+      // Held in memory, so picking it is instant and -- if `busy` -- it is
+      // working RIGHT NOW behind this list. The meta line said so in grey text
+      // two sizes below the title, which is not where an eye scanning titles
+      // ever goes. A pip on the row edge is read without being looked for.
+      //
+      // Two states, not one: a parked-and-idle conversation is still worth
+      // marking, because "instant, already loaded" is different from "cold
+      // resume off disk" and the old list drew them identically.
+      Rectangle {
+        id: pip
+        width: 6; height: 6; radius: 3
+        anchors { right: parent.right; top: parent.top; rightMargin: 10; topMargin: 9 }
+        visible: modelData.live === true
+        color: modelData.busy ? root.accent : Theme.overlay0
+
+        SequentialAnimation on opacity {
+          // Bound to `running`, not started once: a delegate is recycled by the
+          // view, and an animation left running on a pooled item keeps burning
+          // frames for a row nobody is looking at.
+          running: pip.visible && modelData.busy === true
+          loops: Animation.Infinite
+          NumberAnimation { to: 0.25; duration: 620; easing.type: Easing.InOutQuad }
+          NumberAnimation { to: 1.0;  duration: 620; easing.type: Easing.InOutQuad }
+          // A stopped animation leaves opacity wherever the last frame put it,
+          // so a turn settling mid-fade would strand the pip at 0.25 and read
+          // as "half off" forever.
+          onRunningChanged: if (!running) pip.opacity = 1
+        }
+      }
+
       Text {
         id: label
-        anchors { left: parent.left; right: parent.right; top: parent.top
+        anchors { left: parent.left; right: pip.left; top: parent.top
                   leftMargin: 12; rightMargin: 8; topMargin: 5 }
         text: String(modelData.label || "(no title)")
         color: parent.on ? Theme.text : Theme.subtext0
@@ -164,8 +194,12 @@ Rectangle {
         id: meta
         anchors { left: label.left; top: label.bottom; topMargin: 1 }
         text: root.when(modelData.at) + "  ·  " + (modelData.turns || 0) + " msg"
-            + (modelData.busy ? "  ·  running" : "")
-        color: Theme.overlay0
+            + (modelData.busy ? "  ·  running now"
+                              : modelData.live ? "  ·  loaded" : "")
+        // The busy row's meta line is lifted out of the grey the other rows
+        // sit in. "running now" in overlay0 next to "12 msg" in overlay0 is
+        // information you have to go looking for.
+        color: modelData.busy ? root.accent : Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta - 2
         renderType: Text.QtRendering
