@@ -8,9 +8,14 @@ import ".."
 // take one, Escape to leave. The panel already takes focus on demand, so this
 // only has to take it from the composer and give it back.
 //
-// The list is PiSession.sessions, which is the index the engine keeps -- not a
+// The list is OriClient.sessions, which is the index the host keeps -- not a
 // directory scan. It is Ori's conversations only, and it is readable while pi
 // is cold, which is the whole reason the index exists.
+//
+// It now includes PARKED conversations: Ctrl+N and Ctrl+R park rather than
+// stop, so a child can still be finishing a turn behind a row in this list.
+// Those rows carry `busy`, which the meta line says out loud -- picking one is
+// instant, and it would be a lie to show it as just another old thread.
 Rectangle {
   id: root
 
@@ -18,7 +23,7 @@ Rectangle {
   // Handed back when this closes, so the caret returns to where you were.
   property var returnFocus: null
 
-  readonly property var sessions: PiSession.sessions
+  readonly property var sessions: OriClient.sessions
   property int current: 0
 
   color: Theme.mantle
@@ -46,7 +51,7 @@ Rectangle {
   function take() {
     var s = root.sessions[root.current]
     root.close()
-    if (s) PiSession.resume(s.id)
+    if (s) OriClient.resume(s.id)
   }
 
   // ------------------------------------------------------------------ label
@@ -158,7 +163,8 @@ Rectangle {
       Text {
         id: meta
         anchors { left: label.left; top: label.bottom; topMargin: 1 }
-        text: root.when(modelData.at) + "  ·  " + (modelData.count || 0) + " msg"
+        text: root.when(modelData.at) + "  ·  " + (modelData.turns || 0) + " msg"
+            + (modelData.busy ? "  ·  running" : "")
         color: Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta - 2

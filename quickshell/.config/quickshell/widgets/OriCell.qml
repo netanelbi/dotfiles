@@ -1,7 +1,7 @@
-import QtQml
 import QtQuick
 import QtQuick.Shapes
 import "root:/"
+import "../assistant"
 
 // Ori's presence in the bar: one cell, in the gap, on nothing.
 //
@@ -55,7 +55,7 @@ import "root:/"
 //            because it is the only one that wants you.
 //   failed   the same shape in red. There is still something to read.
 //
-// Compact vs expanded is right-click, held on PiSession so both monitors agree.
+// Compact vs expanded is right-click, held on OriClient so both monitors agree.
 // Compact is the glyph and its stub, and nothing else; expanded grows only when
 // Ori is working or when an answer waits.
 //
@@ -71,9 +71,9 @@ Item {
   id: root
 
   // ------------------------------------------------------------------ state
-  readonly property bool thinking: PiSession.busy
-  readonly property bool failed: PiSession.error !== "" && !thinking
-  readonly property bool unread: PiSession.unread
+  readonly property bool thinking: OriClient.busy
+  readonly property bool failed: OriClient.error !== "" && !thinking
+  readonly property bool unread: OriClient.unread
   // Asking again while an older answer is still unread leaves BOTH true. What
   // it is doing NOW outranks what it has been holding since earlier -- without
   // this the glyph sits filled and bright through a whole new turn, saying
@@ -86,12 +86,12 @@ Item {
   // about a TURN and this outlives the turn that made it. Ranked below the
   // others -- what it is doing now, and what it is holding for you, both matter
   // more than what is ticking away in a log somewhere.
-  readonly property bool background: PiSession.bgCount > 0
+  readonly property bool background: OriClient.bgCount > 0
   // Set by Bar.qml when the gap between the islands cannot hold the open cell.
   // Treated exactly like the user's own right-click: the cell simply does not
   // open. See the comment at the OriCell instantiation for the measurement.
   property bool cramped: false
-  readonly property bool expanded: !cramped && !PiSession.cellCompact
+  readonly property bool expanded: !cramped && !OriClient.cellCompact
     && (thinking || holding || background)
 
   // Mauve, the shell's own "touched the machine" colour, and the same one the
@@ -128,7 +128,15 @@ Item {
   property real scanPhase: 0
 
   readonly property int elapsedSec: root.thinking
-    ? root.liveSec : Math.round(PiSession.turnSeconds)
+    ? root.liveSec : Math.round(OriClient.turnSeconds)
+
+  // WHETHER THERE IS A DURATION TO SHOW AT ALL. A turn that ends with no
+  // content gets no TurnCost, so it reports no seconds -- and a readout that
+  // falls back to the last figure it held is showing the PREVIOUS turn's
+  // duration under this turn's label, which is worse than showing nothing
+  // because it cannot be told apart from a real reading. Absent renders as
+  // absent: the slot stays its fixed width and stays empty.
+  readonly property bool elapsedKnown: root.thinking || OriClient.turnSeconds > 0
 
   // The readout's right half is the turn's clock, which says nothing about a
   // job that outlived it -- so an idle cell with work still running shows a
@@ -144,7 +152,7 @@ Item {
     running: root.thinking || root.background || root.flash > 0.001
     onTriggered: {
       if (root.thinking) {
-        var s = Math.max(0, Math.floor((Date.now() - PiSession.askedAt) / 1000))
+        var s = Math.max(0, Math.floor((Date.now() - OriClient.turnStartedAt) / 1000))
         // Assigning the same value would be free, but the guard makes it
         // obvious that this is a display clock ticking, not a poll looking for
         // change.
@@ -153,7 +161,7 @@ Item {
         // The flow gauge, harvested wholesale from the deleted OriAura. It
         // reads ONE wall-clock stamp per frame, on a frame it was already
         // drawing, and turns the silence since the last delta into a rate.
-        var gap = Date.now() - PiSession.lastAppendAt
+        var gap = Date.now() - OriClient.lastAppendAt
         var f = 1
         if (gap > Style.ori.flowGraceMs) {
           f = Math.exp(-(gap - Style.ori.flowGraceMs) / Style.ori.flowDecayMs)
@@ -205,42 +213,31 @@ Item {
   }
 
   Connections {
-    target: PiSession
+    target: OriClient
     // Only when the panel is CLOSED. With the panel open the answer is already
     // arriving in front of you and a second announcement is noise.
     function onSettled() {
-      if (PiSession.panelOpen) return
-      PiSession.unread = true
+      if (OriClient.panelOpen) return
+      OriClient.unread = true
       arrive.restart()
     }
   }
 
   // ---------------------------------------------------------- what it is doing
-  // `ingest()` writes the tool onto the open turn with ListModel.setProperty,
-  // which notifies that model's DELEGATES and nothing else -- a plain
-  // `PiSession.turns.get(i).tool` binding is evaluated once and never again,
-  // which is why the tool never showed anywhere but the panel. So the readout
-  // watches the model the way a view does: one throwaway QObject per turn, each
-  // bound to its own row's roles. It lives here rather than on PiSession
-  // because it is a VIEW of the engine, not part of it.
-  property string liveTool: ""
-
-  Instantiator {
-    model: PiSession.turns
-    delegate: QtObject {
-      required property string tool
-      required property bool pending
-      // Only the open turn's tool counts; settling clears it by clearing
-      // `pending`, without needing a second signal.
-      readonly property string live: pending ? tool : ""
-      onLiveChanged: root.liveTool = live
-    }
-  }
-
-  // The one word. `tool` arrives as "bash ls -la /etc" -- the name is the verb,
+  // `OriClient.activeTool` is the running call on the turn the host has marked
+  // pending, as "name summary". It used to take a shadow Instantiator over the
+  // turn model to get this: the tool lived in a ListModel role, and
+  // setProperty notifies that model's DELEGATES and nothing else, so a binding
+  // through `turns.get(i)` was evaluated once and never again. Tools are no
+  // longer in a role -- they live in an id-keyed map that is REASSIGNED on
+  // every change -- so an ordinary binding follows them, and the shadow view
+  // is gone.
+  //
+  // The one word: `activeTool` reads "bash ls -la /etc", the name is the verb,
   // and the rest is the veil's business.
   readonly property string verb:
-      root.thinking ? (root.liveTool === "" ? "thinking" : String(root.liveTool).split(" ")[0])
+      root.thinking ? (OriClient.activeTool === "" ? "thinking"
+                                                   : OriClient.activeTool.split(" ")[0])
     : root.failed ? "failed"
     : root.unread ? "answered"
     : root.background ? "background"
@@ -454,8 +451,8 @@ Item {
         width: Style.ori.timeWidth
         horizontalAlignment: Text.AlignRight
         text: root.countingJobs
-          ? "\u00d7" + PiSession.bgCount
-          : root.humanTime(root.elapsedSec)
+          ? "\u00d7" + OriClient.bgCount
+          : root.elapsedKnown ? root.humanTime(root.elapsedSec) : ""
         color: root.tint
         font.family: Style.font.family
         font.pixelSize: Style.font.tiny
@@ -510,8 +507,8 @@ Item {
     cursorShape: Qt.PointingHandCursor
 
     onClicked: function (event) {
-      if (event.button === Qt.RightButton) PiSession.cellCompact = !PiSession.cellCompact
-      else PiSession.panelOpen = !PiSession.panelOpen
+      if (event.button === Qt.RightButton) OriClient.cellCompact = !OriClient.cellCompact
+      else OriClient.panelOpen = !OriClient.panelOpen
     }
   }
 

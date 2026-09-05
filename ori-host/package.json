@@ -1,0 +1,17 @@
+{
+  "name": "ori-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Engine for the Ori assistant panel. Owns pi children, conversation state and all IO; the Quickshell panel only draws.",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build": "bun run scripts/build.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

@@ -3,6 +3,7 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "assistant"
 
 // How much of the Ollama Cloud allowance is spent.
 //
@@ -263,9 +264,9 @@ Singleton {
   }
 
   Connections {
-    target: PiSession
+    target: OriClient
     function onSettled() { root.refresh(false) }
-    function onPanelOpenChanged() { if (PiSession.panelOpen) root.refresh(false) }
+    function onPanelOpenChanged() { if (OriClient.panelOpen) root.refresh(false) }
   }
 
   // The open EVENT is not enough on its own, and this is not belt-and-braces.
@@ -279,5 +280,5 @@ Singleton {
   // This is still not a fetch at startup -- it only fires if the panel is
   // already up at the moment this is built, which is precisely the case the
   // Connections above cannot see.
-  Component.onCompleted: if (PiSession.panelOpen) refresh(false)
+  Component.onCompleted: if (OriClient.panelOpen) refresh(false)
 }

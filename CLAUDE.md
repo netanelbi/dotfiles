@@ -399,12 +399,16 @@ should freeze the same way, since it also stops getting frames.
 ### What `qmllint` does NOT check, and when "clean" means "aborted"
 `qmllint` is necessary and nowhere near sufficient. Two measured limits:
 
-* **It does not member-check locally-defined types.** Rename a property to a
-  bogus name and reference it — `SessionManager.active.noSuchThing` — and
-  qmllint still exits 0. So "lint clean" says nothing about whether a rewrite
-  across your own components actually resolves. A hand-written member check
-  (walk the references, resolve each against the type's declared properties) is
-  the only thing that catches it.
+* **It does not member-check AT ALL — not even builtin types.** The weaker
+  version of this note said "locally-defined types": rename a property to a
+  bogus name, reference it as `SessionManager.active.noSuchThing`, and qmllint
+  exits 0. Measured again during the ori-host rewrite, it is worse than that —
+  `nosuchproperty: 1` planted on a **`Timer`**, a builtin, also exits 0, with
+  and without `-I /usr/lib/qt6/qml`. Treat qmllint as a *parser*: it proves the
+  file is syntactically QML and nothing more. A hand-written member check (walk
+  every reference, resolve each against the type's declared members) is the only
+  thing that catches a rename, and `qs log` is the only thing that catches it at
+  runtime.
 * **`readonly property list<Foo>` makes qmllint exit 255 printing NOTHING.**
   Reproduced in two files. A wrapper that only tests for empty output will call
   that a pass — one previous "clean" result was the linter aborting. **Always

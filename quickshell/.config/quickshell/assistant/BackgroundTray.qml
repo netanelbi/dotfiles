@@ -27,9 +27,9 @@ import ".."
 // That is the delegate's own tool `description` -- the one line it wrote for a
 // human to read. It is not output and it is not progress: it is the answer to
 // "why is this still running", which a name and a clock could never give. It
-// comes off PiSession.agentActivity, keyed by the handle in `job.name`.
+// comes off OriClient.agentActivity, keyed by the handle in `job.name`.
 //
-// `kind` is the vocabulary (PiSession.bgKindNoun).
+// `kind` is the vocabulary (OriClient.bgKindNoun).
 Item {
   id: tray
 
@@ -40,10 +40,10 @@ Item {
 
   readonly property var ids: {
     var out = []
-    for (var k in PiSession.bgJobs)
+    for (var k in OriClient.bgJobs)
       // Speech renders in its own strip; this tray is about work the agent
       // is waiting on.
-      if (String(PiSession.bgJobs[k].kind) !== "speak") out.push(k)
+      if (String(OriClient.bgJobs[k].kind) !== "speak") out.push(k)
     out.sort()
     return out
   }
@@ -68,9 +68,9 @@ Item {
   // point is the conversation.
   readonly property real oldestMs: {
     var t = 0
-    for (var k in PiSession.bgJobs) {
-      if (String(PiSession.bgJobs[k].kind) === "speak") continue
-      var age = tray.nowMs - PiSession.bgJobs[k].since
+    for (var k in OriClient.bgJobs) {
+      if (String(OriClient.bgJobs[k].kind) === "speak") continue
+      var age = tray.nowMs - OriClient.bgJobs[k].since
       if (age > t) t = age
     }
     return Math.max(0, t)
@@ -105,7 +105,7 @@ Item {
     Text {
       anchors { left: mark.right; leftMargin: 8; right: age.left; rightMargin: 8
                 verticalCenter: parent.verticalCenter }
-      text: PiSession.bgSummary
+      text: OriClient.bgSummary
       color: Theme.subtext0
       elide: Text.ElideRight
       font.family: Style.font.panelMono
@@ -163,13 +163,13 @@ Item {
       delegate: Item {
         id: task
         required property int index
-        readonly property var job: PiSession.bgJobs[tray.ids[task.index]] || ({})
+        readonly property var job: OriClient.bgJobs[tray.ids[task.index]] || ({})
 
         // A delegate's live line, joined by its handle. Empty for a bash job,
         // and empty again the moment the delegate settles -- so the second row
         // below appears only while there is something true to put in it.
         readonly property string activity:
-          String(PiSession.agentActivity[task.job.name] || "")
+          String(OriClient.agentActivity[task.job.name] || "")
 
         width: rows.width
         implicitHeight: what.implicitHeight
@@ -181,7 +181,7 @@ Item {
           anchors { left: parent.left; right: pid.left; rightMargin: 8 }
           // The delegate's handle, the command a job is running, or the kind if
           // there is nothing better.
-          text: String(task.job.label || PiSession.bgKindNoun[task.job.kind] || "task")
+          text: String(task.job.label || OriClient.bgKindNoun[task.job.kind] || "task")
           color: Theme.subtext0
           elide: Text.ElideRight
           maximumLineCount: 1

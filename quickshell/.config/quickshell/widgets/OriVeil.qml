@@ -142,23 +142,23 @@ PanelWindow {
   readonly property int answerLineH: Math.ceil(bodyMetrics.lineSpacing * 1.3) + 1
 
   // ------------------------------------------------------------------ state
-  readonly property bool working: PiSession.busy
-  readonly property bool failed: PiSession.error !== "" && !working
-  readonly property bool holding: (PiSession.unread || failed) && !working
+  readonly property bool working: OriClient.busy
+  readonly property bool failed: OriClient.error !== "" && !working
+  readonly property bool holding: (OriClient.unread || failed) && !working
 
   readonly property color tint: working ? Theme.sapphire
     : failed ? Theme.urgent
-    : PiSession.unread ? Theme.sky
+    : OriClient.unread ? Theme.sky
     : Theme.overlay0
 
   // What you asked. One line, dim, and the most valuable thing on the surface
   // after four minutes away -- it is what makes "bash rg -n implicitHeight"
   // mean anything. Read through `turns.count` so it re-reads on append.
   readonly property string ask: {
-    var n = PiSession.turns.count
+    var n = OriClient.turns.count
     if (n <= 0) return ""
-    var i = PiSession.lastUser()
-    return i < 0 ? "" : String(PiSession.turns.get(i).text).replace(/\s+/g, " ").trim()
+    var i = OriClient.lastUser()
+    return i < 0 ? "" : String(OriClient.turns.get(i).text).replace(/\s+/g, " ").trim()
   }
 
   // The answer's opening, at reading size: the one fact that decides whether
@@ -167,23 +167,22 @@ PanelWindow {
   // into three words of column. The panel has the real thing, formatted.
   //
   // PUSHED by the `appended` signal rather than bound through the turn model:
-  // `grow()` writes the answer with ListModel.setProperty, which notifies that
-  // model's delegates and nothing else, so a binding through
-  // `turns.get(i).text` is evaluated once and never again. (The bar cell hits
-  // the same wall and solves it with an Instantiator; here there is one string
-  // and one signal, so a slot is simpler than a shadow view.)
+  // a delta is applied with ListModel.setProperty, which notifies that model's
+  // delegates and nothing else, so a binding through `turns.get(i).text` is
+  // evaluated once and never again. Here there is one string and one signal, so
+  // a slot is the whole of it.
   property string answer: ""
 
   function readAnswer() {
-    if (veil.failed) { veil.answer = PiSession.error; return }
-    var i = PiSession.lastAssistant()
+    if (veil.failed) { veil.answer = OriClient.error; return }
+    var i = OriClient.lastAssistant()
     if (i < 0) { veil.answer = ""; return }
-    var t = String(PiSession.turns.get(i).text).replace(/\s+/g, " ").trim()
+    var t = String(OriClient.turns.get(i).text).replace(/\s+/g, " ").trim()
     veil.answer = t === "" ? "…" : t
   }
 
   Connections {
-    target: PiSession
+    target: OriClient
     function onAppended() { veil.readAnswer() }
     function onSettled() { veil.readAnswer() }
     function onErrorChanged() { veil.readAnswer() }
@@ -194,34 +193,38 @@ PanelWindow {
   // Every ordinary token goes through grow(), which raises `appended`; a whole
   // new conversation arriving does not have to.
   Connections {
-    target: PiSession.turns
+    target: OriClient.turns
     function onCountChanged() { veil.readAnswer() }
   }
 
   // -------------------------------------------------------- the call in flight
-  // The turn's record of what it has touched, straight off `toolLog` -- the
-  // same read the panel's transcript already makes (TurnDelegate.qml). It is
-  // rebuilt by ASSIGNMENT on every tool boundary, which is what makes a plain
-  // binding through it follow the turn. (A binding through `turns.get(i).tool`
-  // would not: setProperty notifies that model's delegates and nothing else,
-  // which is why the bar cell watches the model through an Instantiator.)
+  // The turn's record of what it has touched, straight off `toolsById` -- the
+  // same read the panel's transcript already makes (TurnDelegate.qml). Keyed by
+  // TURN ID, not by row: a steer inserting a turn mid-list re-keys nothing. The
+  // map is rebuilt by ASSIGNMENT on every tool boundary, which is what makes a
+  // plain binding through it follow the turn.
   //
   // NOTHING HERE IS HISTORY. An earlier version drew a trail of the turn's last
   // four calls under a divider; the user cut it -- "we dont need the short
   // trail of the turns recent tool the user doesnt care" -- and the engine
   // accessor that existed to serve it went with it. What is read is the LAST
-  // entry and only while it is still open: its `ms` is 0 until the call
-  // returns, and its `t0` is the only place its start time is recorded, which
-  // is the whole reason this surface touches `toolLog` at all.
+  // entry and only while it is still open: its `t0` is the only place its start
+  // time is recorded, which is the whole reason this surface touches the tool
+  // map at all.
   readonly property var turnCalls: {
-    var row = PiSession.turns.count - 1
-    return (row >= 0 && PiSession.toolLog[row]) || []
+    var n = OriClient.turns.count
+    if (n <= 0) return []
+    return OriClient.toolsById[OriClient.turns.get(n - 1).tid] || []
   }
 
+  // `state`, not `ms === 0`: a call the panel first saw ALREADY FINISHED -- one
+  // restored in a snapshot -- carries the unknown pair t0=0/ms=0, and timing it
+  // from t0 would print the milliseconds since the epoch. `t0 > 0` is the
+  // invariant every other consumer of these rows is written against.
   readonly property var liveCall: {
     var all = veil.turnCalls
     var last = all.length > 0 ? all[all.length - 1] : null
-    return (last && last.ms === 0 && veil.working) ? last : null
+    return (last && last.state === "running" && last.t0 > 0 && veil.working) ? last : null
   }
 
   // How long ago the last answer landed, in the coarsest unit that is still
@@ -229,7 +232,7 @@ PanelWindow {
   // figure in minutes cannot change inside one, so there is nothing here to
   // tick and no second clock to outlive the surface.
   readonly property string settledAgo: {
-    var at = PiSession.settledAtMs
+    var at = OriClient.lastSettledAt
     if (at <= 0) return ""
     var s = Math.max(0, (Date.now() - at) / 1000)
     return s < 60 ? "just now"
@@ -559,7 +562,7 @@ PanelWindow {
       width: parent.width
       visible: !veil.working && veil.answer === ""
       height: visible ? implicitHeight : 0
-      text: PiSession.warm ? "warm · nothing asked yet" : "SUPER+A to ask"
+      text: OriClient.warm ? "warm · nothing asked yet" : "SUPER+A to ask"
       color: Theme.alpha(Theme.subtext0, 0.75)
       font.family: Style.font.family
       font.pixelSize: Style.font.panelBody
@@ -591,7 +594,7 @@ PanelWindow {
         if (!veil.holding && veil.settledAgo !== "") parts.push("answered " + veil.settledAgo)
         var n = veil.turnCalls.length
         if (n > 0) parts.push(n + (n === 1 ? " tool" : " tools"))
-        if (PiSession.tokensTotal > 0) parts.push("↓ " + fmt.tokens(PiSession.tokensTotal))
+        if (OriClient.usageTotal > 0) parts.push("↓ " + fmt.tokens(OriClient.usageTotal))
         return parts.join("  ·  ")
       }
       color: Theme.alpha(Theme.subtext0, 0.72)
@@ -619,7 +622,7 @@ PanelWindow {
       }
       Text {
         anchors.right: parent.right
-        text: PiSession.cellCompact ? "right-click  let it open" : "right-click  keep compact"
+        text: OriClient.cellCompact ? "right-click  let it open" : "right-click  keep compact"
         color: Theme.alpha(Theme.subtext0, 0.55)
         font.family: Style.font.family
         font.pixelSize: Style.font.tiny
@@ -641,6 +644,6 @@ PanelWindow {
     height: block.height + 16
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
-    onClicked: PiSession.panelOpen = true
+    onClicked: OriClient.panelOpen = true
   }
 }
