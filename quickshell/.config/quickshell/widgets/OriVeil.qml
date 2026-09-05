@@ -151,6 +151,33 @@ PanelWindow {
     : OriClient.unread ? Theme.sky
     : Theme.overlay0
 
+  // ------------------------------------------------- what is working ELSEWHERE
+  // The bar cell's quietest register says "parked ×2" and cannot say more in
+  // 58px. This surface exists to be the rest of that sentence, and the host
+  // already sends what it needs: the session list carries `busy` and a label per
+  // conversation. Nothing is derived here -- a row is busy because the host says
+  // so, and it is somebody else because its id is not this conversation's.
+  readonly property var othersBusy: {
+    var me = OriClient.sessionId
+    if (me === "") return []
+    var list = OriClient.sessions
+    var out = []
+    for (var i = 0; i < list.length; i++)
+      if (list[i].busy === true && String(list[i].id) !== me)
+        out.push(String(list[i].label || "(no title)"))
+    return out
+  }
+
+  readonly property string elsewhereLine: {
+    var rows = veil.othersBusy
+    if (rows.length === 0) return ""
+    // One is the case worth naming: WHICH conversation is still going is the
+    // whole reason you would want to know. Past one, the count is the fact and
+    // the picker is where the names are.
+    return rows.length === 1 ? "still working  ·  " + rows[0]
+                             : rows.length + " other conversations still working"
+  }
+
   // What you asked. One line, dim, and the most valuable thing on the surface
   // after four minutes away -- it is what makes "bash rg -n implicitHeight"
   // mean anything. Read through `turns.count` so it re-reads on append.
@@ -529,6 +556,21 @@ PanelWindow {
       renderType: Text.NativeRendering
     }
 
+    // ------------------------------------------------- FAILED: say it failed
+    // Without this line the error text below sits exactly where an ANSWER sits,
+    // in the three-line reading layout the unread state uses, and reads as one.
+    // The frame turning red is not a label.
+    Text {
+      width: parent.width
+      visible: veil.failed
+      height: visible ? 22 : 0
+      text: "failed"
+      color: veil.tint
+      font.family: Style.font.family
+      font.pixelSize: Style.font.size
+      renderType: Text.NativeRendering
+    }
+
     // ---------------------------------------------- UNREAD: what it answered
     // Three lines while the answer is UNREAD and one, elided, once it has been
     // read. The difference is the whole point of the state: an unread answer is
@@ -566,6 +608,23 @@ PanelWindow {
       color: Theme.alpha(Theme.subtext0, 0.75)
       font.family: Style.font.family
       font.pixelSize: Style.font.panelBody
+      renderType: Text.NativeRendering
+    }
+
+    // ------------------------------------------- ELSEWHERE: the parked turn
+    // A conversation you parked mid-answer is still being answered, and until
+    // now the only surface that knew was a modal you had to remember to open.
+    // In sapphire, the working colour, because that is what it is -- just not
+    // here. Absent renders as absent: no row, no gap.
+    Text {
+      width: parent.width
+      visible: veil.elsewhereLine !== ""
+      height: visible ? implicitHeight + 10 : 0
+      text: veil.elsewhereLine
+      color: Theme.alpha(Theme.sapphire, 0.85)
+      elide: Text.ElideRight
+      font.family: Style.font.family
+      font.pixelSize: Style.font.panelMeta
       renderType: Text.NativeRendering
     }
 

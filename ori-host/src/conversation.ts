@@ -379,12 +379,16 @@ export class Conversation {
     return [...this.bgJobs.values()];
   }
 
-  /** Everything the panel needs to draw this conversation from nothing. */
+  /**
+   * Everything the panel needs to draw this conversation from nothing.
+   *
+   * `thinking` is carried for the PENDING turn only -- see cloneForSnapshot.
+   */
   snapshot(): HostEvent {
     return {
       t: "snapshot",
       convId: this.convId,
-      turns: this.turnList.map(cloneTurn),
+      turns: this.turnList.map(cloneForSnapshot),
       state: this.state,
       usage: this.usage,
       bg: this.bg,
@@ -1348,6 +1352,31 @@ export function hasContent(t: Turn): boolean {
 
 function cloneTurn(t: Turn): Turn {
   return { ...t, tools: t.tools.map((x) => ({ ...x })), images: t.images.map((x) => ({ ...x })) };
+}
+
+/**
+ * A turn on its way into a SNAPSHOT, which is the one place the reasoning is
+ * dead weight.
+ *
+ * The panel draws `thinking` only while a turn is being written -- TurnDelegate
+ * gates the reasoning block on `pending && thought !== ""`, and a settled turn
+ * shows its cost receipt in that slot instead. So every settled turn's
+ * reasoning is parsed, copied into a ListModel role and never turned into a
+ * single pixel. Measured on a real 235-turn transcript: 487,012 of 1,200,569
+ * snapshot bytes, 41%.
+ *
+ * The live turn keeps it, because that one IS drawn -- and it is the only turn
+ * that can be pending, so this is one field on one row.
+ *
+ * NOT dropped from the type, and not dropped anywhere else: `turn_add`,
+ * `turn_patch` and `turn_delta` all still carry reasoning, because the panel
+ * needs it as the turn arrives. A panel from before this change reads exactly
+ * the same shape and simply has an empty string where it never looked.
+ */
+function cloneForSnapshot(t: Turn): Turn {
+  const c = cloneTurn(t);
+  if (!c.pending) c.thinking = "";
+  return c;
 }
 
 function firstLine(s: string): string {

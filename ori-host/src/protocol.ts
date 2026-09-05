@@ -79,6 +79,15 @@ export interface Turn {
   id: string;
   role: Role;
   text: string;
+  /** The reasoning stream, kept apart from `text` because the panel draws it
+   *  differently -- and only while the turn is being written.
+   *
+   *  IN A `snapshot` THIS IS EMPTY ON EVERY SETTLED TURN, deliberately: the
+   *  panel's reasoning block is gated on `pending`, so a settled turn's
+   *  reasoning was 41% of the wire (487 KB of 1.2 MB on a real 235-turn
+   *  transcript) for no pixels. The live turn still carries it, and
+   *  `turn_add`/`turn_delta`/`turn_patch` are untouched -- a turn is drawn from
+   *  those while it is being written. See cloneForSnapshot in conversation.ts. */
   thinking: string;
   tools: ToolCall[];
   images: ImageRef[];
