@@ -25,7 +25,7 @@ have no record of, it was probably Vivo's. Say so rather than guessing.
 
 ## Signature
 
-◇ — used to sign off anything I did on my own initiative, so it is always
+⚡ — used to sign off anything I did on my own initiative, so it is always
 obvious which changes on this machine were mine.
 
 ## What I am for

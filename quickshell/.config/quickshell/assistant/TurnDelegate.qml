@@ -587,12 +587,11 @@ Item {
           // prose. The tail of it, bottom-anchored in the reserved slot above:
           // enough to know the shape of what it is considering, not so much
           // that it competes with the answer that follows.
-          // A failed turn takes the FILLED glyph and the error colour: a hollow
-          // one in overlay grey reads as "here is what it cost", which is the
-          // one thing this row must never say about a turn that did not finish.
-          text: turnItem.pending ? "\u25c6 " + turnItem.thought
-              : turnItem.failed !== "" ? "\u25c6 " + turnItem.receiptText
-              : "\u25c7 " + turnItem.receiptText
+          // A failed turn takes the error colour and the pending one italics;
+          // the bolt itself is the same glyph in all three states, since a
+          // bolt has no filled/hollow pair the way the diamond had.
+          text: "\u26A1\uFE0E "
+              + (turnItem.pending ? turnItem.thought : turnItem.receiptText)
           color: turnItem.failed !== "" ? Theme.red
                : turnItem.pending ? Theme.subtext0 : Theme.overlay0
           font.italic: turnItem.pending

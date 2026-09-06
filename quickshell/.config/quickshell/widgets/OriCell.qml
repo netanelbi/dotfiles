@@ -454,20 +454,25 @@ Item {
       anchors.centerIn: parent
       // Lifted 2px so the rule below it has its own air.
       anchors.verticalCenterOffset: -2
-      // soul.md signs Ori's own work with this diamond, so the bar and the
-      // transcript are marked with the same glyph. Filled once it is holding
-      // something for you: a SHAPE change is legible at a glance in a way a
-      // brightness change is not.
-      text: root.holding ? "◆" : "◇"
+      // The lightning, in its TEXT presentation (U+FE0E): monochrome, so it
+      // takes the tint and keeps the failed-red / unread-sky states legible.
+      // The colour-emoji form would ignore `color` outright. Holding once
+      // filled the diamond; a bolt has no filled variant, so holding now
+      // ENLARGES the mark instead -- a shape-scale change is still legible at
+      // a glance, and the halo and flash carry the rest.
+      text: "\u26A1\uFE0E"
       color: root.holding ? Qt.lighter(root.tint, 1 + 0.4 * root.flash) : root.tint
       opacity: (root.thinking || root.background) ? root.breath : root.markAlpha
       font.family: Style.font.family
-      font.pixelSize: Style.font.size
-      font.weight: root.holding ? Style.font.boldWeight : Style.font.normalWeight
+      font.pixelSize: root.holding ? Style.font.size + 2 : Style.font.size
       renderType: Text.NativeRendering
       style: Text.Outline
       styleColor: root.inkEdge
-      scale: 1 + 0.10 * root.flash
+      scale: (root.holding ? 1.15 : 1) + 0.10 * root.flash
+
+      Behavior on font.pixelSize {
+        NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+      }
 
       Behavior on color {
         ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }

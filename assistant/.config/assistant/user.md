@@ -17,3 +17,5 @@ wrong. A short honest line beats a recovery narrative.
 Prefers tables over long prose when comparing options.
 §
 2026-07-29 — When I need root, use polkit (pkexec / systemd-run with polkit auth) instead of printing sudo commands for him to run. No sudo on this machine.
+§
+Emails: always show him the draft and wait for explicit approval before sending — never treat an answer to a placeholder question as a send confirmation.
