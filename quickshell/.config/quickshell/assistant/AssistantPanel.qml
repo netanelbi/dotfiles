@@ -1394,7 +1394,7 @@ PanelWindow {
       id: speakStrip
       anchors { left: parent.left; right: parent.right; bottom: tray.top
                 leftMargin: 10; rightMargin: 10; bottomMargin: 4 }
-      height: OriClient.oriTalking ? 24 : 0
+      height: OriClient.speaking ? 24 : 0
       visible: height > 0
       color: Theme.alpha(Theme.yellow, 0.10)
       radius: 6
@@ -1644,7 +1644,7 @@ PanelWindow {
         Behavior on scale { NumberAnimation { duration: 420; easing.type: Easing.OutBack } }
         floating: panel.opened
         mode: OriClient.voiceState === "listening" ? "listening"
-            : (OriClient.oriTalking || OriClient.voiceState === "speaking") ? "speaking"
+            : (OriClient.speaking || OriClient.voiceState === "speaking") ? "speaking"
             : OriClient.voiceState === "done" ? "done"
             : OriClient.working ? "working"
             : (OriClient.busy || OriClient.voiceState === "transcribing") ? "thinking"

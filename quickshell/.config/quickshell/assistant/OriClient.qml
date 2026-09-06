@@ -166,6 +166,31 @@ Singleton {
   }
   readonly property string workTool: root.activeTool !== "" ? root.activeTool : root.lastTool
 
+  // ...and the speak tool's OWN word, which is exact: it writes what is
+  // playing and how many lines wait to $XDG_RUNTIME_DIR/ori-speak.json the
+  // instant that changes, and this watches the file (inotify). No hold, no
+  // guessing across the gap between two queued lines. The stream stays as
+  // the fallback for speech the tool did not start (the orb's own wake).
+  property bool speakPlaying: false
+  property int speakQueued: 0
+  readonly property bool speaking: root.oriTalking || root.speakPlaying || root.speakQueued > 0
+  FileView {
+    id: speakState
+    path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/ori-speak.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.readSpeakState(text())
+    onFileChanged: reload()
+    onLoadFailed: { root.speakPlaying = false; root.speakQueued = 0 }
+  }
+  function readSpeakState(raw) {
+    try {
+      var o = JSON.parse(String(raw))
+      root.speakPlaying = o.playing === true
+      root.speakQueued = Number(o.queued || 0)
+    } catch (e) { root.speakPlaying = false; root.speakQueued = 0 }
+  }
+
   // Right-click on the bar cell pins it shut. Not persisted and not host state:
   // it is a preference about one widget, and the widget is instantiated once
   // per monitor, so the two copies have to agree on it somewhere.

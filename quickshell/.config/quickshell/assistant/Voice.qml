@@ -261,6 +261,9 @@ Scope {
             return voice.state
         }
 
+        // Build marker, to tell a stale engine from a fresh one.
+        function version(): string { return "orb-2" }
+
         // Let it out, or call it home: on | off | toggle.
         //   qs ipc call voice free toggle
         function free(mode: string): string {
@@ -284,7 +287,7 @@ Scope {
 
         // Where the orb is and whether Ori's voice is on the speaker.
         function orb(): string {
-            return voice.state + " talking=" + OriClient.oriTalking
+            return voice.state + " talking=" + OriClient.oriTalking + " speaking=" + OriClient.speaking
                 + " at=" + Math.round(overlay.ox) + "," + Math.round(overlay.oy)
                 + " level=" + voice.level.toFixed(2) + " shown=" + overlay.shown
                 + " mem=" + overlay.memInfo()
@@ -433,8 +436,8 @@ Scope {
         // The SOUND, not the job list: PipeWire announces kokoro's stream the
         // moment it opens and the moment it closes. The speak row in the panel
         // reads the same flag, so both agree to the frame.
-        function onOriTalkingChanged() {
-            if (OriClient.oriTalking) {
+        function onSpeakingChanged() {
+            if (OriClient.speaking) {
                 // Never override an exchange the user is mid-way through --
                 // barge-in only flows one way: their press cuts the speech.
                 if (state === "working") state = "speaking"
@@ -466,10 +469,11 @@ Scope {
         onTriggered: state = "hidden"
     }
 
-    // Check (0-600ms), flight home (600-1300ms), then gone.
+    // The check pops, then it lingers a moment before flying home -- an orb
+    // that bolts the instant the last word lands reads as fleeing.
     Timer {
         id: doneTimer
-        interval: 1400
+        interval: 2600
         onTriggered: state = "hidden"
     }
 
