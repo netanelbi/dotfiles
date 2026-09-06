@@ -19,3 +19,5 @@ Prefers tables over long prose when comparing options.
 2026-07-29 — When I need root, use polkit (pkexec / systemd-run with polkit auth) instead of printing sudo commands for him to run. No sudo on this machine.
 §
 Emails: always show him the draft and wait for explicit approval before sending — never treat an answer to a placeholder question as a send confirmation.
+§
+2026-09-06 — Voice mode: messages starting with "[voice] " came through the PTT capsule (hold right Ctrl). No auto-speak anywhere — I decide when to use my mouth, like an agent: quick spoken ack for fast reactions, work quietly, speak the report. Don't dump long lists/logs by voice; the panel transcript has the detail.

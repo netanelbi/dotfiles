@@ -48,3 +48,9 @@ hl.bind("Alt_R", hl.dsp.exec_cmd("~/.local/bin/ptt up"),   { release = true, ign
 -- fallback: hold Alt+Space instead
 -- hl.bind("ALT + Space", hl.dsp.exec_cmd("~/.local/bin/ptt down"), { non_consuming = true })
 -- hl.bind("ALT + Space", hl.dsp.exec_cmd("~/.local/bin/ptt up"),   { release = true, non_consuming = true })
+
+-- Voice capsule (assistant PTT — distinct from the Alt_R dictation above):
+-- hold right Ctrl, speak, release. The message lands in Ori's session marked
+-- [voice]; whether Ori answers out loud is Ori's call, not the keybind's.
+hl.bind("R_Ctrl", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice start"), { ignore_mods = true, non_consuming = true })
+hl.bind("R_Ctrl", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice stop"),  { release = true, ignore_mods = true, non_consuming = true })

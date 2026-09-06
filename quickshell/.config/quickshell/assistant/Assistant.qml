@@ -23,6 +23,10 @@ Scope {
   // reports as a binding loop.
   property bool retain: false
 
+  // Voice mode: the capsule. Always alive (unlike the panel) -- the keybind
+  // must reach it whether or not the panel has ever been opened.
+  Voice { }
+
   LazyLoader {
     id: loader
     // `activeAsync` would let the first SUPER+A open onto a half-built window;
