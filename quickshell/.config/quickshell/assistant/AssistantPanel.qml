@@ -141,10 +141,6 @@ PanelWindow {
     if (opened) Qt.callLater(function () { transcript.goBottom() })
   }
 
-  Behavior on revealed {
-    NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
-  }
-
   // The input-row orb's centre on the screen, for the overlay's flight in and
   // out. The surface sits at the screen's left edge, under the bar's reserved
   // strip; everything else is card geometry.
@@ -157,6 +153,12 @@ PanelWindow {
     when: panel.opened
     value: ({ screen: panel.screen ? panel.screen.name : "", x: panel.orbDockX, y: panel.orbDockY })
   }
+
+  // No Behavior: `revealed` flips at once. The compositor animates the
+  // surface in and out (layer rule "ori-glass" in hyprland.lua, slide from the
+  // left), so it moves exactly like the tiles it pushes and everything else on
+  // this desktop. The card used to slide on its own inside the surface, and the
+  // two motions stacked into a wobble.
 
   // Only the card takes clicks; the empty strip beside it stays click-through so
   // the desktop underneath is still usable with the panel open.
@@ -362,9 +364,8 @@ PanelWindow {
     // the windows, and a tile runs the height of the workspace.
     height: parent.height - 16
     anchors.verticalCenter: parent.verticalCenter
-    // Slides in from the left edge it is anchored to.
-    x: 16 - (1 - panel.revealed) * (width + 32)
-    opacity: panel.revealed
+    x: 16
+    opacity: 1
 
     // Glass: a translucent crust over the compositor's blur (layer rule on
     // this namespace in hyprland.lua), so the windows under it become soft
@@ -1583,8 +1584,8 @@ PanelWindow {
                 leftMargin: 12; rightMargin: 12; bottomMargin: 10 }
       // Grows with the draft up to a ceiling, then the field scrolls. The card
       // is a fixed size, so this only moves the boundary between the two panes.
-      height: Math.min(entry.implicitHeight, 120) + 20
-      radius: 8
+      height: Math.max(64, Math.min(entry.implicitHeight, 120) + 20)
+      radius: 12
       color: Theme.alpha(Theme.mantle, 0.72)
       border.width: 1
       border.color: Theme.alpha(panel.accent, entry.activeFocus ? 0.55 : 0.30)
@@ -1614,17 +1615,33 @@ PanelWindow {
       // where it lives instead of the pill, and where it wakes when you speak
       // with the panel up. Bright while the cursor is in the field, which is
       // the only affordance this panel needs for "the keyboard is here".
+      // Its light on the box, under the orb.
+      Rectangle {
+        anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+        width: 120
+        radius: parent.radius
+        gradient: Gradient {
+          orientation: Gradient.Horizontal
+          GradientStop { position: 0.0; color: Theme.alpha(caret.tint, 0.32) }
+          GradientStop { position: 1.0; color: Theme.alpha(caret.tint, 0.0) }
+        }
+        Behavior on opacity { NumberAnimation { duration: 300 } }
+      }
+
       Orb {
         id: caret
-        anchors { left: parent.left; leftMargin: 4; top: parent.top; topMargin: 2 }
-        size: 9
+        anchors { left: parent.left; leftMargin: 4; verticalCenter: parent.verticalCenter }
+        size: 22
         alive: panel.opened
-        breathe: false
+        breathe: true
+        bright: true
         level: OriClient.voiceLevel
         // It comes OUT here when the panel opens -- the other end of the hole
         // it left in the pill.
-        scale: panel.opened ? 1 : 0
-        Behavior on scale { NumberAnimation { duration: 520; easing.type: Easing.OutBack } }
+        // ...and it waits for the flight when there is one: the free orb
+        // lands here, then this one pops.
+        scale: panel.opened && !OriClient.orbInFlight ? 1 : 0
+        Behavior on scale { NumberAnimation { duration: 420; easing.type: Easing.OutBack } }
         floating: panel.opened
         mode: OriClient.voiceState === "listening" ? "listening"
             : (OriClient.oriTalking || OriClient.voiceState === "speaking") ? "speaking"
@@ -1648,7 +1665,7 @@ PanelWindow {
       // visible edge scrolls just enough to bring the line into view.
       Flickable {
         id: entryScroll
-        anchors { fill: parent; leftMargin: 38; rightMargin: 100; topMargin: 10; bottomMargin: 10 }
+        anchors { fill: parent; leftMargin: 84; rightMargin: 100; topMargin: 10; bottomMargin: 10 }
         contentWidth: width
         contentHeight: entry.implicitHeight
         clip: true

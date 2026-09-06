@@ -121,6 +121,9 @@ Singleton {
   // the panel is open. Written by the panel; the overlay flies here when the
   // panel opens and leaves from here when it closes.
   property var panelDock: ({ screen: "", x: 0, y: 0 })
+  // True while the overlay's orb is flying into the panel's input row, so the
+  // panel's own orb waits for it to land instead of being there already.
+  property bool orbInFlight: false
   function setOrbDock(screenName, x, y) {
     var d = {}
     for (var k in root.orbDocks) d[k] = root.orbDocks[k]
@@ -156,7 +159,6 @@ Singleton {
     if (root.activeTool !== "") { root.lastTool = root.activeTool; root.workHeld = true; workHold.stop() }
     else workHold.restart()
   }
-  onBusyChanged: if (!root.busy) { root.workHeld = false; workHold.stop() }
   Timer {
     id: workHold
     interval: 1000
@@ -364,6 +366,9 @@ Singleton {
       root.outputBase = root.usageOutput
       return
     }
+    // The working hold ends with the turn.
+    root.workHeld = false
+    workHold.stop()
     // A SETTLE IS THE HOST SAYING THE TURN IS OVER, and nothing else. `retry`
     // also clears `busy` after five seconds of outage -- the turn died with the
     // process producing it -- and that is a death, not an answer. Emitting it

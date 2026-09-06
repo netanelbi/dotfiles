@@ -38,28 +38,29 @@ Item {
   // A slow drift, up and down and a little sideways, while it floats free or
   // rests in the panel. Never in the bar.
   property bool floating: false
+  // Lit even at rest: full halo and faint rings. The panel's orb is the
+  // centrepiece there and must not read as a dot.
+  property bool bright: false
 
-  transform: Translate {
-    id: drift
-    x: 0
-    y: 0
-    SequentialAnimation on y {
-      running: orb.alive && orb.floating
-      loops: Animation.Infinite
-      NumberAnimation { to: -7; duration: 1900; easing.type: Easing.InOutSine }
-      NumberAnimation { to: 4;  duration: 2300; easing.type: Easing.InOutSine }
-      NumberAnimation { to: -2; duration: 1500; easing.type: Easing.InOutSine }
-      NumberAnimation { to: 5;  duration: 2100; easing.type: Easing.InOutSine }
-      NumberAnimation { to: 0;  duration: 1700; easing.type: Easing.InOutSine }
+  // The float and the breath share one slow clock: 20 steps a second, not
+  // the 60 a NumberAnimation would render. On a drift of a few px over two
+  // seconds the eye cannot tell, and it is a third of the frames.
+  transform: Translate { id: drift; x: 0; y: 0 }
+  property real phase: 0
+  Timer {
+    interval: 50
+    repeat: true
+    running: orb.alive && (orb.floating || orb.breathe || orb.mode !== "idle")
+    onTriggered: {
+      orb.phase += 0.05
+      var t = orb.phase
+      if (orb.floating) {
+        drift.y = Math.sin(t * 0.9) * 5 + Math.sin(t * 1.7 + 1) * 2
+        drift.x = Math.sin(t * 0.6 + 2) * 4 + Math.sin(t * 1.3) * 1.5
+      } else { drift.x = 0; drift.y = 0 }
+      breath.value = 1 + 0.035 * (1 + Math.sin(t * 1.5))
     }
-    SequentialAnimation on x {
-      running: orb.alive && orb.floating
-      loops: Animation.Infinite
-      NumberAnimation { to: 4;  duration: 2600; easing.type: Easing.InOutSine }
-      NumberAnimation { to: -5; duration: 3100; easing.type: Easing.InOutSine }
-      NumberAnimation { to: 2;  duration: 1900; easing.type: Easing.InOutSine }
-      NumberAnimation { to: 0;  duration: 2400; easing.type: Easing.InOutSine }
-    }
+    onRunningChanged: if (!running) { drift.x = 0; drift.y = 0; breath.value = 1 }
   }
 
   // Not readonly: the Behavior below animates the change.
@@ -84,13 +85,26 @@ Item {
   // A radial falloff, not a disc: it reaches zero inside its own bounds so
   // there is no edge anywhere. This is what spills light onto the wallpaper
   // and onto the windows below the orb when it is out.
-  Shape {
-    id: halo
+  // The breath lives on this wrapper, with NO Behavior: a smoothed property
+  // restarts a 70ms animation on every 50ms step and keeps the renderer at
+  // 60 frames for nothing. The level (fast, real) keeps its smoothing on the
+  // shape inside.
+  Item {
+    id: breathWrap
     anchors.centerIn: parent
     width: orb.haloD
     height: orb.haloD
+    scale: breath.value
+  Shape {
+    id: halo
+    anchors.fill: parent
     preferredRendererType: Shape.CurveRenderer
-    opacity: orb.mode === "idle" ? 0.55 : 0.95
+    // Cached: the gradient is rasterised once and the breath scales a
+    // texture. Without this the shape was re-rendered on every frame of the
+    // float, which is what a free idle orb cost 6% of a core on.
+    layer.enabled: true
+    layer.smooth: true
+    opacity: (orb.mode === "idle" && !orb.bright) ? 0.55 : 1.0
     Behavior on opacity { NumberAnimation { duration: 400 } }
 
     // The breath: a slow swell on the whole halo. Speaking rides the level on
@@ -98,7 +112,7 @@ Item {
     // The pulse: the whole halo swells with the level -- the mic while it
     // listens, the speaker while it talks. Squared, so quiet stays quiet and
     // a loud word lands.
-    scale: (1 + orb.level * orb.level * 0.9) * breath.value
+    scale: 1 + orb.level * orb.level * 0.9
     Behavior on scale { NumberAnimation { duration: 70 } }
 
     ShapePath {
@@ -115,17 +129,11 @@ Item {
       PathRectangle { x: 0; y: 0; width: orb.haloD; height: orb.haloD }
     }
   }
+  }
 
   QtObject {
     id: breath
     property real value: 1
-    // 4.2s in, out. Only while asked to breathe, or while awake.
-    SequentialAnimation on value {
-      running: orb.alive && (orb.breathe || orb.mode !== "idle")
-      loops: Animation.Infinite
-      NumberAnimation { to: 1.07; duration: 2100; easing.type: Easing.InOutSine }
-      NumberAnimation { to: 1.0;  duration: 2100; easing.type: Easing.InOutSine }
-    }
   }
 
   // ------------------------------------------------------------- hearing
@@ -196,12 +204,12 @@ Item {
     width: d
     height: d
     preferredRendererType: Shape.CurveRenderer
-    opacity: orb.mode === "idle" ? (orb.poked ? 0.6 : 0.0) : (orb.mode === "thinking" || orb.mode === "working") ? 0.9 : 0.35 + orb.level * 0.5
+    opacity: orb.mode === "idle" ? (orb.poked ? 0.6 : orb.bright ? 0.4 : 0.0) : (orb.mode === "thinking" || orb.mode === "working") ? 0.9 : 0.35 + orb.level * 0.5
     Behavior on opacity { NumberAnimation { duration: 400 } }
     scale: 1 + orb.level * 0.35
     Behavior on scale { NumberAnimation { duration: 90 } }
     RotationAnimation on rotation {
-      running: orb.busy
+      running: orb.busy || (orb.alive && orb.bright)
       loops: Animation.Infinite
       from: ring.reverse ? 360 : 0
       to: ring.reverse ? 0 : 360
@@ -260,6 +268,9 @@ Item {
     width: orb.size
     height: orb.size
     preferredRendererType: Shape.CurveRenderer
+    layer.enabled: true
+    layer.smooth: true
+    layer.textureSize: Qt.size(orb.size * 2, orb.size * 2)
     scale: 1 + orb.level * 0.55
     Behavior on scale { NumberAnimation { duration: 70 } }
 

@@ -349,14 +349,19 @@ Item {
     id: pill
     visible: turnItem.user
 
-    // Full width and no chip: the question is a labelled block ("YOU", in
-    // the panel's you-colour) on the same glass as the answer under it, the
-    // way the orb mock lays the transcript out.
-    width: turnItem.width
-    x: 0
+    // Yours sit on the RIGHT, in a tinted glass chip, so the two voices in
+    // the transcript read apart at a glance; the "YOU" label rides inside.
+    width: Math.min(turnItem.width * 0.85,
+                    Math.max(said.implicitWidth, shots.implicitWidth) + 24)
+    x: turnItem.width - width - 12
     height: asked.implicitHeight + 16
-    radius: 0
-    color: Theme.transparent
+    radius: 10
+    // The one blunted corner points back at the composer the message came
+    // from, the way the notification cards enter from the edge they arrived on.
+    bottomRightRadius: 3
+    color: Theme.alpha(Theme.sapphire, 0.10)
+    border.width: 1
+    border.color: Theme.alpha(Theme.sapphire, 0.22)
 
     // The question's own rail, and the mirror of the answer's spine: an answer
     // hangs off a rail at x=0 that breathes while it is being written, so a
@@ -402,7 +407,7 @@ Item {
         // still pay for a line of height.
         visible: text !== ""
         text: turnItem.turn ? turnItem.turn.text : ""
-        color: Theme.subtext0
+        color: Theme.text
         readOnly: true
         activeFocusOnPress: false
         wrapMode: TextEdit.Wrap

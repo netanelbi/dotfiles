@@ -30,7 +30,26 @@ PanelWindow {
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
   exclusionMode: ExclusionMode.Ignore
   color: "transparent"
-  anchors { top: true; bottom: true; left: true; right: true }
+
+  anchors { top: true; left: true; bottom: true; right: true }
+  // The surface is the whole screen, always. A smaller box that grew and
+  // shrank around the orb was tried for CPU: the compositor takes a frame or
+  // two to apply a resize, and in those frames the orb drew at the wrong
+  // offset -- beside the pill on pop-out, and out from under the pointer
+  // mid-drag. The saving was ~1.5% of a core; not worth a creature that
+  // slips out of your hand.
+  readonly property real winX: 0
+  readonly property real winY: 0
+  readonly property real lx: ox
+  readonly property real ly: oy
+
+  // True for the length of any animated move, so the surface stays full
+  // screen until the orb has landed.
+  property bool moving: false
+  Timer {
+    id: settle
+    onTriggered: overlay.moving = false
+  }
 
   // Out for a voice exchange, or out because it is FREE. While the panel is
   // open the orb is docked at the panel's input row instead, so this surface
@@ -55,6 +74,13 @@ PanelWindow {
     property real y: -1
     property bool pinned: false
   }
+  function forget() { mem.x = -1; mem.y = -1; mem.pinned = false; mem.screenName = ""; pinned = false }
+  function monDebug() {
+    var f = Hyprland.focusedMonitor, m = overlay.screen ? Hyprland.monitorFor(overlay.screen) : null
+    return (f && f.lastIpcObject ? f.lastIpcObject.name : "?") + "/" + (m && m.lastIpcObject ? m.lastIpcObject.name : "?")
+      + (f === m ? "=same" : "=diff") + " pinned=" + pinned
+  }
+  function memInfo() { return mem.screenName + ":" + Math.round(mem.x) + "," + Math.round(mem.y) + (mem.pinned ? "*" : "") }
   function remember() {
     if (!shown || !wantOut) return
     mem.screenName = overlay.screen ? overlay.screen.name : ""
@@ -70,15 +96,34 @@ PanelWindow {
     return null
   }
 
+  // The screen whose monitor has focus, by monitor name.
+  function focusedScreen() {
+    var focused = Hyprland.focusedMonitor
+    if (!focused) return null
+    var screens = Quickshell.screens
+    for (var i = 0; i < screens.length; i++) {
+      var m = Hyprland.monitorFor(screens[i])
+      if (m && m.name === focused.name) return screens[i]
+    }
+    return null
+  }
+
   onWantOutChanged: {
     if (wantOut) {
       hide.stop()
+      if (shown) { leave.restart(); return }   // caught mid-flight home: turn around
       if (!shown) {
-        // Pop out: appear where it is (the pill, or the panel's input row
-        // as the panel closes), then fly to the spot.
+        // Pop out: from the pill on the monitor with focus (or from the
+        // panel's input row as the panel closes), then fly to the spot. The
+        // screen is chosen HERE and the pill looked up BY NAME: a screen just
+        // assigned is not what the getter returns until the window has moved.
         Hyprland.refreshToplevels()
         pinned = false
         var d = dock()
+        if (!inPanel) {
+          var fs = focusedScreen()
+          if (fs) { overlay.screen = fs; d = dockFor(fs.name) }
+        }
         if (inPanel && OriClient.panelDock.screen !== "") {
           var s = screenNamed(OriClient.panelDock.screen)
           if (s) overlay.screen = s
@@ -94,68 +139,69 @@ PanelWindow {
       // else into the pill -- then vanish there. The panel is built lazily on
       // open, so its dock point is read a beat later.
       inPanel = OriClient.panelOpen
-      if (inPanel) goPanel.restart()
+      if (inPanel) { goPanel.tries = 0; goPanel.restart() }
       else { var h = dock(); place(h.x, h.y, 700); hide.restart() }
     }
   }
+  // Into the panel. The panel is built lazily on open and reports its input
+  // row a beat later, so this waits for it (up to ~1s). On the same screen
+  // the orb flies into the row; on another screen it simply fades out here
+  // while the panel's own orb pops in over there. Never the pill.
   Timer {
     id: goPanel
-    interval: 150
+    interval: 120
+    repeat: true
+    property int tries: 0
     onTriggered: {
       var mine = overlay.screen ? overlay.screen.name : ""
-      var h = OriClient.panelDock.screen === mine ? OriClient.panelDock : overlay.dock()
-      overlay.place(h.x, h.y, 700)
+      var d = OriClient.panelDock
+      if (d.screen === "" && ++tries < 8) return
+      running = false; tries = 0
+      if (d.screen === mine) { OriClient.orbInFlight = true; overlay.place(d.x, d.y, 700) }
       hide.restart()
     }
   }
   Timer {
     id: hide
     interval: 720
-    onTriggered: overlay.shown = false
+    onTriggered: { overlay.shown = false; OriClient.orbInFlight = false }
   }
-  Timer {
+  // Not a timer: a frame clock. The surface takes a few frames to map after
+  // it is shown, and a glide started on a timer had the orb visibly away from
+  // the pill by the time the first frame landed. Two drawn frames at the pill,
+  // then it leaves.
+  FrameAnimation {
     id: leave
-    interval: 80
+    running: false
+    property int drawn: 0
+    onRunningChanged: if (running) drawn = 0
     onTriggered: {
+      drawn++
+      if (drawn < 2) return
+      running = false
+      go()
+    }
+    function go() {
       var mine = overlay.screen ? overlay.screen.name : ""
       var p
       if (mem.x >= 0 && mem.screenName === mine) {
         // Back to where it was. A spot it was put in stays even over the
-        // focused window; a spot it chose itself is re-checked.
-        overlay.pinned = mem.pinned
-        p = overlay.pinned ? overlay.clamp(mem.x, mem.y) : overlay.avoidFocus(overlay.clamp(mem.x, mem.y))
+        // focused window; a spot it chose itself is re-checked. The spot is
+        // read BEFORE the pin is restored: restoring it writes the memory.
+        var mx = mem.x, my = mem.y, pinnedThere = mem.pinned
+        overlay.pinned = pinnedThere
+        p = pinnedThere ? overlay.clamp(mx, my) : overlay.avoidFocus(overlay.clamp(mx, my))
       } else {
         p = overlay.outSpot()
       }
-      overlay.place(p.x, p.y, 700)
+      // A soft start, so it is seen LEAVING the pill rather than already gone.
+      overlay.place(p.x, p.y, 900, Easing.InOutCubic)
     }
   }
 
-  // ...and it keeps you company: when your focus moves to another monitor,
-  // a free, idle orb crosses over and finds a spot there. (A surface cannot
-  // slide between outputs, so it re-appears rather than flies.)
-  Connections {
-    target: Hyprland
-    function onFocusedMonitorChanged() {
-      if (!overlay.shown || !OriClient.orbFree || overlay.voice.state !== "hidden") return
-      var focused = Hyprland.focusedMonitor
-      if (!focused) return
-      var screens = Quickshell.screens
-      for (var i = 0; i < screens.length; i++) {
-        if (Hyprland.monitorFor(screens[i]) !== focused) continue
-        if (screens[i] === overlay.screen) return
-        overlay.screen = screens[i]
-        overlay.pinned = false
-        crossOver.restart()
-        return
-      }
-    }
-  }
-  Timer {
-    id: crossOver
-    interval: 120
-    onTriggered: { Hyprland.refreshToplevels(); var p = overlay.outSpot(); overlay.place(p.x, p.y, 0) }
-  }
+  // It never moves itself between monitors. It leaves the pill on the screen
+  // with focus, and after that only a throw (crossTo) or the pill takes it
+  // to another one.
 
   // A creature keeps off the window you turn to: when focus moves, it moves.
   Connections {
@@ -191,19 +237,30 @@ PanelWindow {
   property real ox: 200
   property real oy: 120
   property int moveMs: 700
-  Behavior on ox { NumberAnimation { duration: overlay.moveMs; easing.type: Easing.OutCubic } }
-  Behavior on oy { NumberAnimation { duration: overlay.moveMs; easing.type: Easing.OutCubic } }
+  // An instant move (ms = 0) bypasses the Behavior entirely: a zero-length
+  // animation does not land before the next glide starts, so the glide set
+  // off from wherever the orb was last -- the other monitor's pill, once.
+  property int moveEase: Easing.OutCubic
+  Behavior on ox { enabled: overlay.moveMs > 0; NumberAnimation { id: oxAnim; duration: overlay.moveMs; easing.type: overlay.moveEase } }
+  Behavior on oy { enabled: overlay.moveMs > 0; NumberAnimation { id: oyAnim; duration: overlay.moveMs; easing.type: overlay.moveEase } }
 
-  function place(x, y, ms) {
+  function place(x, y, ms, ease) {
+    moveEase = ease === undefined ? Easing.OutCubic : ease
     moveMs = ms
+    // An instant move also ends any glide in flight: a Behavior that is
+    // merely disabled lets its running animation keep writing the property,
+    // which steered a throw sideways.
+    if (ms === 0) { oxAnim.stop(); oyAnim.stop() }
     ox = x
     oy = y
+    if (ms > 0) { moving = true; settle.interval = ms + 60; settle.restart() }
   }
 
-  function dock() {
-    var d = OriClient.orbDocks[overlay.screen ? overlay.screen.name : ""]
+  function dockFor(name) {
+    var d = OriClient.orbDocks[name]
     return d ? d : { x: overlay.sw / 2, y: 17 }
   }
+  function dock() { return dockFor(overlay.screen ? overlay.screen.name : "") }
 
   // The focused monitor's origin, so a window's global `at` becomes local.
   function monitorOrigin() {
@@ -258,12 +315,37 @@ PanelWindow {
   // spot into the top-left corner.
   readonly property real sw: overlay.screen ? overlay.screen.width : overlay.width
   readonly property real sh: overlay.screen ? overlay.screen.height : overlay.height
+  readonly property int pad: 26
   function clamp(x, y) {
-    var pad = 70
     return { x: Math.max(pad, Math.min(overlay.sw - pad, x)),
-             y: Math.max(60, Math.min(overlay.sh - pad, y)) }
+             y: Math.max(pad, Math.min(overlay.sh - pad, y)) }
   }
 
+  // ------------------------------------------------------------ monitors
+  // Which monitor holds a GLOBAL point, from Hyprland's own layout.
+  function monitorAt(gx, gy) {
+    var vals = Hyprland.monitors.values
+    for (var i = 0; i < vals.length; i++) {
+      var o = vals[i].lastIpcObject
+      if (!o || o.disabled) continue
+      var w = o.width / (o.scale || 1), h = o.height / (o.scale || 1)
+      if (gx >= o.x && gx < o.x + w && gy >= o.y && gy < o.y + h)
+        return { name: o.name, x: o.x, y: o.y, w: w, h: h }
+    }
+    return null
+  }
+  // Move this surface to another monitor, keeping the orb at the same
+  // GLOBAL point. A surface cannot straddle two outputs, so the crossing is
+  // a cut at the edge -- the orb vanishes on one screen and appears at the
+  // matching edge of the next.
+  function crossTo(m, gx, gy) {
+    var scr = screenNamed(m.name)
+    if (!scr) return false
+    overlay.screen = scr
+    place(gx - m.x, gy - m.y, 0)
+    return true
+  }
+  function fling(vx, vy) { throwVx = vx; throwVy = vy; pinned = true; fly.running = true }
   // The focused window is off limits: a spot inside it is pushed out through
   // the nearest edge. When it is the whole screen, its top-right corner.
   function avoidFocus(p) {
@@ -340,8 +422,8 @@ PanelWindow {
     // click sends it home. The only input this surface takes.
     MouseArea {
       id: hoverZone
-      x: overlay.ox - width / 2
-      y: overlay.oy - height / 2
+      x: overlay.lx - width / 2
+      y: overlay.ly - height / 2
       width: 120
       height: 120
       hoverEnabled: true
@@ -357,13 +439,17 @@ PanelWindow {
       onPressed: function (mouse) {
         if (mouse.button !== Qt.LeftButton) return
         fly.running = false
-        gx = hoverZone.x + mouse.x - overlay.ox
-        gy = hoverZone.y + mouse.y - overlay.oy
+        // Grip offset in SCREEN coordinates, so it survives the surface
+        // growing from the small box to the full screen mid-drag.
+        gx = hoverZone.x + mouse.x + overlay.winX - overlay.ox
+        gy = hoverZone.y + mouse.y + overlay.winY - overlay.oy
         moved = false; vx = 0; vy = 0; lastT = Date.now()
       }
       onPositionChanged: function (mouse) {
         if (!pressed) return
-        var nx = hoverZone.x + mouse.x - gx, ny = hoverZone.y + mouse.y - gy
+        var nx = hoverZone.x + mouse.x + overlay.winX - gx, ny = hoverZone.y + mouse.y + overlay.winY - gy
+        // A click is not a drag: nothing moves until the hand has.
+        if (!moved && Math.hypot(nx - overlay.ox, ny - overlay.oy) < 6) return
         var now = Date.now(), dt = Math.max(1, now - lastT)
         // Smoothed px/ms; the newest sample weighs most.
         vx = vx * 0.6 + (nx - overlay.ox) / dt * 0.4
@@ -400,12 +486,21 @@ PanelWindow {
         var dt = Math.min(frameTime, 0.05)
         var x = overlay.ox + overlay.throwVx * dt
         var y = overlay.oy + overlay.throwVy * dt
-        var lo = 70, top = 60, rx = overlay.sw - 70, by = overlay.sh - 70
+        // Past an edge with a monitor beyond it: cross over and keep flying.
+        if (x < 0 || x > overlay.sw || y < 0 || y > overlay.sh) {
+          var o = overlay.monitorOrigin()
+          var m = overlay.monitorAt(o.x + x, o.y + y)
+          if (m && overlay.screen && m.name !== overlay.screen.name) {
+            overlay.crossTo(m, o.x + x, o.y + y)
+            return
+          }
+        }
+        var lo = overlay.pad, top = overlay.pad, rx = overlay.sw - overlay.pad, by = overlay.sh - overlay.pad
         if (x < lo) { x = lo; overlay.throwVx = -overlay.throwVx * 0.45 }
         if (x > rx) { x = rx; overlay.throwVx = -overlay.throwVx * 0.45 }
         if (y < top) { y = top; overlay.throwVy = -overlay.throwVy * 0.45 }
         if (y > by) { y = by; overlay.throwVy = -overlay.throwVy * 0.45 }
-        var drag = Math.pow(0.12, dt)   // ~88% of the speed gone per second
+        var drag = Math.pow(0.42, dt)   // ~58% of the speed gone per second: a hard throw crosses a screen
         overlay.throwVx *= drag
         overlay.throwVy *= drag
         overlay.place(x, y, 0)
@@ -415,8 +510,8 @@ PanelWindow {
 
     Orb {
       id: orb
-      x: overlay.ox - width / 2
-      y: overlay.oy - height / 2
+      x: overlay.lx - width / 2
+      y: overlay.ly - height / 2
       size: 34
       alive: overlay.shown
       breathe: true
@@ -435,8 +530,8 @@ PanelWindow {
     // A small word under the orb: what it is doing. And under that, while a
     // tool runs, what it is running.
     Text {
-      x: overlay.ox - width / 2
-      y: overlay.oy + 60
+      x: overlay.lx - width / 2
+      y: overlay.ly + 60
       text: "ori · " + overlay.verb
       color: orb.tint
       opacity: (overlay.voice.state === "done" || overlay.verb === "here") ? 0 : 0.85
@@ -449,8 +544,8 @@ PanelWindow {
       Behavior on opacity { NumberAnimation { duration: 200 } }
     }
     Text {
-      x: overlay.ox - width / 2
-      y: overlay.oy + 74
+      x: overlay.lx - width / 2
+      y: overlay.ly + 74
       width: Math.min(implicitWidth, 320)
       text: overlay.detail
       visible: overlay.detail !== "" && overlay.voice.state !== "done"
@@ -471,8 +566,8 @@ PanelWindow {
         && (overlay.voice.state === "working" || overlay.voice.state === "transcribing")
       width: Math.min(420, capText.implicitWidth + 40)
       height: capText.implicitHeight + 20
-      x: toRight ? overlay.ox + 66 : overlay.ox - 66 - width
-      y: overlay.oy - height / 2
+      x: toRight ? overlay.lx + 66 : overlay.lx - 66 - width
+      y: overlay.ly - height / 2
       opacity: on ? 1 : 0
       Behavior on opacity { NumberAnimation { duration: 250 } }
 

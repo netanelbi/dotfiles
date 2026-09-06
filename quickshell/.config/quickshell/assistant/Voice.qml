@@ -77,8 +77,10 @@ Scope {
         var focused = Hyprland.focusedMonitor
         var screens = Quickshell.screens
         if (focused) {
-            for (var i = 0; i < screens.length; i++)
-                if (Hyprland.monitorFor(screens[i]) === focused) return screens[i]
+            for (var i = 0; i < screens.length; i++) {
+                var m = Hyprland.monitorFor(screens[i])
+                if (m && m.name === focused.name) return screens[i]
+            }
         }
         return screens.length > 0 ? screens[0] : null
     }
@@ -100,8 +102,8 @@ Scope {
             // turn" -- the session keeps running, its speech is simply cut.
             stopSpeech()
         }
-        // Leaving the pill: go out on the monitor with focus. Already out
-        // (free): stay exactly where it is, whatever screen that is.
+        // Leaving the pill: out on the monitor with focus. Already out (free):
+        // it stays on whatever screen it is on -- it never moves itself.
         if (state === "hidden" && !OriClient.orbFree) {
             var s = focusedScreen()
             if (s) overlay.screen = s
@@ -267,11 +269,26 @@ Scope {
             return OriClient.orbFree ? "free" : "docked"
         }
 
+        // Throw it from a script, px/s: qs ipc call voice fling 1500 0
+        function fling(vx: string, vy: string): string {
+            if (!overlay.shown) return "not out"
+            overlay.fling(parseFloat(vx), parseFloat(vy))
+            return "flung"
+        }
+
+        // Drop the remembered spot; the next time out it picks one itself.
+        function forget(): string {
+            overlay.forget()
+            return "forgot"
+        }
+
         // Where the orb is and whether Ori's voice is on the speaker.
         function orb(): string {
             return voice.state + " talking=" + OriClient.oriTalking
                 + " at=" + Math.round(overlay.ox) + "," + Math.round(overlay.oy)
-                + " level=" + voice.level.toFixed(2) + " play=" + voice.playLevels.length
+                + " level=" + voice.level.toFixed(2) + " shown=" + overlay.shown
+                + " mem=" + overlay.memInfo()
+                + " mon=" + overlay.monDebug() + " play=" + voice.playLevels.length
                 + " screen=" + (overlay.screen ? overlay.screen.name : "none")
                 + " panelDock=" + OriClient.panelDock.screen + ":" + Math.round(OriClient.panelDock.x) + "," + Math.round(OriClient.panelDock.y)
         }
@@ -407,12 +424,6 @@ Scope {
         target: OriClient
         // Let out from anywhere (the dock click, the keybind, ipc): it leaves
         // from the pill on the monitor that has focus.
-        function onOrbFreeChanged() {
-            if (OriClient.orbFree && state === "hidden") {
-                var s = focusedScreen()
-                if (s) overlay.screen = s
-            }
-        }
         function onBusyChanged() {
             // busy falling is the turn settling. Speech usually ends before
             // that; this is the no-speech exit. The speech exit is below.

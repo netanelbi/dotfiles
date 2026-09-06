@@ -297,4 +297,16 @@ hl.layer_rule({
     name  = "ori-glass",
     match = { namespace = "^quickshell-assistant$" },
     blur = true, ignore_alpha = 0.2,
+    -- Hyprland animates the panel in and out, at the desktop's own speed and
+    -- curve, from the edge it is docked to. The panel draws no motion of its
+    -- own: two animations on one surface fought each other.
+    animation = "slide left",
+})
+
+-- The orb's surface grows and shrinks around the orb as it moves; it must not
+-- be animated by the compositor, or every change looks like a new arrival.
+hl.layer_rule({
+    name  = "ori-orb",
+    match = { namespace = "^quickshell-ori-orb$" },
+    no_anim = true,
 })
