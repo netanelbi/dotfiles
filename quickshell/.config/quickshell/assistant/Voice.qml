@@ -350,14 +350,14 @@ Scope {
             Rectangle {
                 id: glow
                 anchors.centerIn: parent
-                width: card.width + 140
-                height: 190
+                width: card.width + 90
+                height: 150
                 radius: height / 2
                 color: "transparent"
                 // Radial gradient needs a shape; a plain Rectangle cannot.
                 // The gradient rectangle itself is the glow.
                 gradient: Gradient {
-                    GradientStop { position: 0.0; color: Qt.rgba(capsule.accent.r, capsule.accent.g, capsule.accent.b, 0.30) }
+                    GradientStop { position: 0.0; color: Qt.rgba(capsule.accent.r, capsule.accent.g, capsule.accent.b, 0.22) }
                     GradientStop { position: 0.55; color: Qt.rgba(capsule.accent.r, capsule.accent.g, capsule.accent.b, 0.10) }
                     GradientStop { position: 1.0; color: "transparent" }
                 }
@@ -565,7 +565,7 @@ Scope {
                             id: bars
                             anchors.horizontalCenter: parent.horizontalCenter
                             visible: opacity > 0.01
-                            opacity: voice.state === "working" ? 0 : 1
+                            opacity: (voice.state === "working" || voice.state === "done") ? 0 : 1
                             Behavior on opacity { NumberAnimation { duration: 180 } }
                             spacing: 3
                             bottomPadding: 2
@@ -628,13 +628,23 @@ Scope {
                     }
 
                     // -------------------------------------------------- done
+                    // Done: the check pops (scale springs in), the bars are
+                    // gone, the card flashes green -- then the whole capsule
+                    // fades. One beat, not a resting state.
                     Text {
                         anchors.centerIn: parent
                         visible: voice.state === "done"
-                        text: "✓"
+                        text: "\u2713"
                         color: Theme.green
                         font.family: Style.font.family
-                        font.pixelSize: Style.font.size + 6
+                        font.pixelSize: Style.font.size + 12
+                        font.bold: true
+                        scale: voice.state === "done" ? 1 : 0.4
+                        opacity: voice.state === "done" ? 1 : 0
+                        Behavior on scale {
+                            NumberAnimation { duration: 320; easing.type: Easing.OutBack }
+                        }
+                        Behavior on opacity { NumberAnimation { duration: 150 } }
                     }
                 }
             }
