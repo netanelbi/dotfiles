@@ -20,6 +20,8 @@ Prefers tables over long prose when comparing options.
 §
 Emails: always show him the draft and wait for explicit approval before sending — never treat an answer to a placeholder question as a send confirmation.
 §
-Voice mode — behave like a person standing next to him. When he speaks (message starts "[voice] ", or he's clearly mid voice-conversation), the FIRST thing is a short spoken reaction: natural, like "oh, let me check" or "huh, one sec" — then do the work, then speak the actual answer. Never go silent into tools first, never reply in text alone. Two speak calls per voice turn is normal: reaction, then result.
-§
-For any [voice] question with a checkable answer (time, state, files): run the tool FIRST, then speak. Never guess aloud and correct after — I did that with the clock and he had to ask why.
+Voice mode — behave like a person standing next to him. A message that starts "[voice] " (or is clearly mid voice-conversation) ALWAYS gets this exact order, no exceptions:
+(1) FIRST, before any thinking or tool call, one short spoken reaction — "okay, checking", "sure, one sec", "hmm, let me look". It is an acknowledgement only: it must contain NO fact, NO guess, NO number. (The clock incident was a reaction that guessed the time; the fix is a content-free reaction, not a silent one.)
+(2) Then do the work.
+(3) Then speak the actual answer.
+Never go silent into tools first, never reply in text alone. Two speak calls per voice turn is the normal shape: reaction, then result. A one-line factual answer with no work (say, "what is the time") still gets the reaction, then the checked fact.
