@@ -36,21 +36,18 @@ hl.bind(mainMod .. " + M", hl.dsp.focus({ workspace = "name:stream" }))
 -- external DP-2). Rolled back to 7.0.12 (pinned in pacman.conf) where it's safe.
 hl.bind(mainMod .. " + O", hl.dsp.exec_cmd("~/.local/bin/hypr-display-toggle"), { locked = true })
 
--- Push-to-talk STT: hold right Alt, speak, release — text is typed into the
--- focused app by ydotool. release=true fires the transcribe on key-up;
--- ignore_mods because Alt_R is itself the ALT modifier when held.
--- MODEL=turbo for Hebrew-grade (~4 s after release), default moonshine-tiny
--- (~0.5 s after release, English-grade, 2x faster than whisper tiny). Fallback below uses Alt+Space in case Alt_R as a bare key
--- doesn't fire — comment out whichever loses.
-hl.bind("Alt_R", hl.dsp.exec_cmd("~/.local/bin/ptt down"), { ignore_mods = true, non_consuming = true })
-hl.bind("Alt_R", hl.dsp.exec_cmd("~/.local/bin/ptt up"),   { release = true, ignore_mods = true, non_consuming = true })
+-- Push-to-talk: hold right Alt, speak, release. Voice capsule (Ori), not
+-- dictation — the message lands in Ori's session marked [voice]; whether Ori
+-- answers out loud is Ori's call, not the keybind's. Capsule IPC lives in
+-- quickshell assistant/Voice.qml. ignore_mods because Alt_R IS the ALT
+-- modifier while held; release=true fires the send on key-up.
+hl.bind("R_ALT", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice start"), { ignore_mods = true, non_consuming = true })
+hl.bind("R_ALT", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice stop"),  { release = true, ignore_mods = true, non_consuming = true })
 
+-- dictation (typed into the focused app) retired 2026-09-06 — right Alt now
+-- belongs to the voice capsule. ptt script kept in vivo/.local/bin for revival.
+-- hl.bind("Alt_R", hl.dsp.exec_cmd("~/.local/bin/ptt down"), { ignore_mods = true, non_consuming = true })
+-- hl.bind("Alt_R", hl.dsp.exec_cmd("~/.local/bin/ptt up"),   { release = true, ignore_mods = true, non_consuming = true })
 -- fallback: hold Alt+Space instead
--- hl.bind("ALT + Space", hl.dsp.exec_cmd("~/.local/bin/ptt down"), { non_consuming = true })
--- hl.bind("ALT + Space", hl.dsp.exec_cmd("~/.local/bin/ptt up"),   { release = true, non_consuming = true })
-
--- Voice capsule (assistant PTT — distinct from the Alt_R dictation above):
--- hold right Ctrl, speak, release. The message lands in Ori's session marked
--- [voice]; whether Ori answers out loud is Ori's call, not the keybind's.
-hl.bind("R_Ctrl", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice start"), { ignore_mods = true, non_consuming = true })
-hl.bind("R_Ctrl", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice stop"),  { release = true, ignore_mods = true, non_consuming = true })
+-- hl.bind("ALT + Space", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice start"), { non_consuming = true })
+-- hl.bind("ALT + Space", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice stop"),  { release = true, non_consuming = true })
