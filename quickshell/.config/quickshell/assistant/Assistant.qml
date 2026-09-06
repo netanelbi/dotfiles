@@ -78,6 +78,11 @@ Scope {
       return OriClient.busy ? "busy" : OriClient.warm ? "warm" : "cold"
     }
 
+    // What the notice strip says right now, for scripts and tests.
+    function notice(): string {
+      return OriClient.error !== "" ? "error: " + OriClient.error : OriClient.notice
+    }
+
     // The last assistant turn as plain text, so `ask` + `answer` is a usable
     // pair from a script: ask, poll status until it leaves "busy", read this.
     function answer(): string {

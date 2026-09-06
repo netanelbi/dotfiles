@@ -360,6 +360,11 @@ export class Conversation {
     this.st = emptyState();
   }
 
+  /** A line for the panel's notice strip, from outside the event stream. */
+  notice(text: string): void {
+    this.emit({ t: "notice", convId: this.convId, text });
+  }
+
   /* ---------------------------------------------------------------- *
    * reading
    * ---------------------------------------------------------------- */

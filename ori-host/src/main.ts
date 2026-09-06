@@ -190,6 +190,10 @@ class Agent implements PoolConv {
     return this.conv.snapshot() as Snapshot;
   }
 
+  notice(text: string): void {
+    this.conv.notice(text);
+  }
+
   killChild(why: string): void {
     const child = this.#child;
     if (!child) return;
@@ -970,7 +974,11 @@ export class Host {
         return;
 
       case "restart":
+        // The child goes; the conversation stays. The next message spawns a
+        // fresh pi, which re-reads the prompt files -- and the panel is told,
+        // because a command that changes nothing on screen looks like a no-op.
         agent.killChild("/restart");
+        agent.notice("restarted: the next message starts a fresh pi with the current prompt files");
         return;
     }
   }
