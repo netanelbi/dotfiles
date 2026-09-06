@@ -69,10 +69,14 @@ Rectangle {
     return n
   }
 
-  color: Theme.mantle
+  // Denser than the card it sits on: a list is read, and glass under glass
+  // would let the transcript show through the rows.
+  color: Theme.alpha(Theme.mantle, 0.94)
+  border.width: 1
+  border.color: Theme.alpha(root.accent, 0.35)
   opacity: 0
   visible: opacity > 0
-  radius: 6
+  radius: 10
 
   Behavior on opacity {
     NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }

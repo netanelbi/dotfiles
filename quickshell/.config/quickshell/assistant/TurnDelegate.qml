@@ -349,15 +349,14 @@ Item {
     id: pill
     visible: turnItem.user
 
-    width: Math.min(turnItem.width * 0.85,
-                    Math.max(said.implicitWidth, shots.implicitWidth) + 24)
-    x: turnItem.width - width
+    // Full width and no chip: the question is a labelled block ("YOU", in
+    // the panel's you-colour) on the same glass as the answer under it, the
+    // way the orb mock lays the transcript out.
+    width: turnItem.width
+    x: 0
     height: asked.implicitHeight + 16
-    radius: 10
-    // The one blunted corner points back at the composer the message came
-    // from, the way the notification cards enter from the edge they arrived on.
-    bottomRightRadius: 3
-    color: Theme.surface1
+    radius: 0
+    color: Theme.transparent
 
     // The question's own rail, and the mirror of the answer's spine: an answer
     // hangs off a rail at x=0 that breathes while it is being written, so a
@@ -387,6 +386,15 @@ Item {
                 leftMargin: 12; rightMargin: 12; topMargin: 8 }
       spacing: 6
 
+      Text {
+        text: "YOU"
+        color: Theme.sapphire
+        font.family: Style.font.panelMono
+        font.pixelSize: Style.font.panelMeta - 2
+        font.letterSpacing: 3
+        renderType: Text.QtRendering
+      }
+
       TextEdit {
         id: said
         width: parent.width
@@ -394,7 +402,7 @@ Item {
         // still pay for a line of height.
         visible: text !== ""
         text: turnItem.turn ? turnItem.turn.text : ""
-        color: Theme.text
+        color: Theme.subtext0
         readOnly: true
         activeFocusOnPress: false
         wrapMode: TextEdit.Wrap
@@ -523,6 +531,16 @@ Item {
       x: 14
       width: parent.width - 14
       spacing: 6
+
+      Text {
+        text: "ORI"
+        color: turnItem.accent
+        font.family: Style.font.panelMono
+        font.pixelSize: Style.font.panelMeta - 2
+        font.letterSpacing: 3
+        renderType: Text.QtRendering
+        Behavior on color { ColorAnimation { duration: Style.anim.colorDuration } }
+      }
 
       // ------------------------------------------------------------ status
       // ONE row at the head of every assistant turn, and it is the same row for

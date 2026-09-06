@@ -3,6 +3,7 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Services.Pipewire
 
 // The panel's data source, and NOTHING else.
 //
@@ -98,6 +99,71 @@ Singleton {
   // per monitor.
   property bool panelOpen: false
   property bool unread: false
+
+  // ---- the orb ----
+  // Voice.qml owns the exchange and writes these; the bar dock and the panel's
+  // input row read them, because the orb is one creature drawn by three
+  // windows and they have to agree on what it is doing.
+  //   hidden | listening | transcribing | working | speaking | done
+  property string voiceState: "hidden"
+  property real voiceLevel: 0
+  // FREE: the orb lives out on the screen, docked in nothing -- a creature on
+  // the desktop that drifts, keeps off the focused window and off the pointer,
+  // and only goes home to the pill when told (SUPER+SHIFT+A, `voice free`).
+  property bool orbFree: false
+  // What the mic heard, shown beside the orb while the turn runs.
+  property string voiceInterim: ""
+  // Where the docked orb sits on each screen, in that screen's logical px,
+  // keyed by screen name. Written by Bar.qml (one bar per monitor), read by
+  // the overlay so the orb can leave from and return to the pill.
+  property var orbDocks: ({})
+  // Where the panel's input-row orb sits, in its screen's logical px, while
+  // the panel is open. Written by the panel; the overlay flies here when the
+  // panel opens and leaves from here when it closes.
+  property var panelDock: ({ screen: "", x: 0, y: 0 })
+  function setOrbDock(screenName, x, y) {
+    var d = {}
+    for (var k in root.orbDocks) d[k] = root.orbDocks[k]
+    d[String(screenName)] = { x: x, y: y }
+    root.orbDocks = d
+  }
+
+  // Is Ori's voice ACTUALLY coming out of the speaker right now. The speak
+  // tool's own done-message rides pi's follow-up queue, which is held for as
+  // long as the turn is busy -- a 2s utterance inside a 15s blocking tool call
+  // left `speakJob` in the list for 15s. The sound itself does not wait on the
+  // queue: kokoro plays through PipeWire as a stream named
+  // `alsa_playback.kokoro-npu`, and PipeWire announces every stream the moment
+  // it appears and the moment it goes. Event-driven, exact, and no change to pi
+  // or the extension.
+  readonly property bool oriTalking: {
+    var vals = Pipewire.nodes.values
+    for (var i = 0; i < vals.length; i++) {
+      var n = vals[i]
+      if (n.isStream && String(n.name).indexOf("alsa_playback.kokoro-npu") === 0) return true
+    }
+    return false
+  }
+  // WORKING, with a hold: a tool is running, or one ran less than a second
+  // ago. Between two tool calls `activeTool` is empty for a few frames, and
+  // the orb flicked blue on every one of them -- a turn that runs six
+  // commands is one stretch of work, not six.
+  readonly property bool working: root.busy && (root.activeTool !== "" || root.workHeld)
+  property bool workHeld: false
+  // The last tool named, kept through the hold so the label does not blank.
+  property string lastTool: ""
+  onActiveToolChanged: {
+    if (root.activeTool !== "") { root.lastTool = root.activeTool; root.workHeld = true; workHold.stop() }
+    else workHold.restart()
+  }
+  onBusyChanged: if (!root.busy) { root.workHeld = false; workHold.stop() }
+  Timer {
+    id: workHold
+    interval: 1000
+    onTriggered: root.workHeld = false
+  }
+  readonly property string workTool: root.activeTool !== "" ? root.activeTool : root.lastTool
+
   // Right-click on the bar cell pins it shut. Not persisted and not host state:
   // it is a preference about one widget, and the widget is instantiated once
   // per monitor, so the two copies have to agree on it somewhere.

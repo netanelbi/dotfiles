@@ -103,7 +103,12 @@ PanelWindow {
   WlrLayershell.namespace: "quickshell-assistant"
   WlrLayershell.layer: WlrLayer.Top
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
-  exclusionMode: ExclusionMode.Ignore
+  // It makes space for itself. Open, the surface reserves its width and
+  // Hyprland re-tiles the windows beside it -- a tile, not an overlay (the
+  // user's ask, after the floating version sat on top of the terminal it was
+  // meant to be read next to). Closed, the reservation drops the same frame
+  // and the windows take the room back while the card slides out.
+  exclusionMode: panel.opened ? ExclusionMode.Auto : ExclusionMode.Ignore
 
   // LEFT, not right. The right edge is where this shell already puts things
   // that interrupt you -- notification popups stack there. The assistant is
@@ -138,6 +143,19 @@ PanelWindow {
 
   Behavior on revealed {
     NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
+  }
+
+  // The input-row orb's centre on the screen, for the overlay's flight in and
+  // out. The surface sits at the screen's left edge, under the bar's reserved
+  // strip; everything else is card geometry.
+  readonly property real orbDockX: card.x + composer.x + caret.x + caret.width / 2
+  readonly property real orbDockY: Style.bar.marginTop + Style.bar.height
+    + card.y + composer.y + caret.y + caret.height / 2
+  Binding {
+    target: OriClient
+    property: "panelDock"
+    when: panel.opened
+    value: ({ screen: panel.screen ? panel.screen.name : "", x: panel.orbDockX, y: panel.orbDockY })
   }
 
   // Only the card takes clicks; the empty strip beside it stays click-through so
@@ -311,7 +329,28 @@ PanelWindow {
     }
   }
 
-  // ------------------------------------------------------------------- card
+  // ------------------------------------------------------------------- glow
+  // The soft light the mock's card sits in: three rings behind the card, each
+  // wider and fainter than the last. Cheap -- no layer, no shader -- and it
+  // follows the card's x, so it slides in and out with it.
+  Repeater {
+    model: 3
+    Rectangle {
+      required property int index
+      readonly property int grow: [3, 8, 16][index]
+      x: card.x - grow
+      y: card.y - grow
+      width: card.width + 2 * grow
+      height: card.height + 2 * grow
+      radius: card.radius + grow
+      color: Theme.transparent
+      border.width: grow
+      border.color: Theme.alpha(panel.accent, [0.14, 0.07, 0.035][index])
+      opacity: card.opacity
+      Behavior on border.color { ColorAnimation { duration: Style.anim.colorDuration } }
+    }
+  }
+
   Rectangle {
     id: card
 
@@ -319,27 +358,28 @@ PanelWindow {
     // it reads as a console resting on the desktop rather than a sidebar welded
     // to it. The surface behind it is still fixed-size -- only the card moves.
     width: panel.panelWidth
-    height: Math.round(parent.height * 0.78)
+    // Full height: with the surface reserving its width it is a tile beside
+    // the windows, and a tile runs the height of the workspace.
+    height: parent.height - 16
     anchors.verticalCenter: parent.verticalCenter
     // Slides in from the left edge it is anchored to.
     x: 16 - (1 - panel.revealed) * (width + 32)
     opacity: panel.revealed
 
-    color: Theme.base
-    radius: 16
-    border.width: 2
+    // Glass: a translucent crust over the compositor's blur (layer rule on
+    // this namespace in hyprland.lua), so the windows under it become soft
+    // colour rather than readable text. Same glass as the orb mock's panel.
+    color: Theme.alpha(Theme.base, 0.6)
+    radius: 12
+    border.width: 1
     // The edge of the card is the furthest-away readout there is: dim when
     // nothing is happening, lit in the accent of whatever is. Kept neutral for
     // effort on purpose -- Netanel tried the effort heat scale here and asked
     // for it on the composer edge alone; the full-card flash at every cycle
     // was louder than the signal.
     border.color: OriClient.busy || OriClient.error !== ""
-      ? panel.accent : Theme.alpha(Theme.sapphire, 0.4)
+      ? Theme.alpha(panel.accent, 0.9) : Theme.alpha(panel.accent, 0.5)
     clip: true
-
-    Behavior on border.color {
-      ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
-    }
 
     // ---------------------------------------------------------------- header
     // Every full-bleed strip below is inset by the border width and carries the
@@ -351,7 +391,7 @@ PanelWindow {
       anchors { top: parent.top; left: parent.left; right: parent.right
                 margins: card.border.width }
       height: 44
-      color: Theme.surface0
+      color: Theme.transparent
       topLeftRadius: card.radius - card.border.width
       topRightRadius: card.radius - card.border.width
 
@@ -364,19 +404,34 @@ PanelWindow {
       }
 
       Text {
+        id: title
         anchors { left: mark.right; leftMargin: 10; verticalCenter: parent.verticalCenter }
-        text: "Ori"
-        color: Theme.text
+        text: "ORI"
+        color: panel.accent
         font.family: Style.font.panelMono
-        font.pixelSize: Style.font.panelBody
-        font.weight: Style.font.boldWeight
+        font.pixelSize: Style.font.panelMeta - 1
+        font.letterSpacing: 3
         renderType: Text.QtRendering
+        Behavior on color { ColorAnimation { duration: Style.anim.colorDuration } }
+      }
+
+      // The hairline that runs from the title toward the meta, fading out.
+      Rectangle {
+        anchors { left: title.right; right: pathText.left; leftMargin: 12; rightMargin: 12
+                  verticalCenter: parent.verticalCenter }
+        height: 1
+        gradient: Gradient {
+          orientation: Gradient.Horizontal
+          GradientStop { position: 0.0; color: Theme.alpha(panel.accent, 0.6) }
+          GradientStop { position: 1.0; color: Theme.alpha(panel.accent, 0.0) }
+        }
       }
 
       // Where it runs. This is the whole "it manages this machine" claim, and
       // it belongs where a terminal agent puts its working directory: on the
       // chrome, permanently, not in an about box.
       Text {
+        id: pathText
         anchors { right: newBtn.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
         text: OriClient.workdir
         color: Theme.overlay0
@@ -416,7 +471,7 @@ PanelWindow {
       Rectangle {
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
         height: 1
-        color: Theme.surface1
+        color: Theme.alpha(panel.accent, 0.15)
       }
     }
 
@@ -1328,12 +1383,17 @@ PanelWindow {
     // ------------------------------------------------------------------ speak
     // Speech gets its own strip, separate from the tray: "you are being
     // spoken to" is a different sentence from "a task is running", and both
-    // can be true at once. Yellow, breathing, gone the moment it ends.
+    // can be true at once. Yellow, breathing, gone the moment it ends -- and
+    // "ends" is the SOUND ending (OriClient.oriTalking, the kokoro stream in
+    // PipeWire), not the job leaving the list. The job's done-message rides
+    // pi's follow-up queue and arrives at the next tool boundary, which left
+    // this strip up for the length of whatever blocking call came after a
+    // two-second sentence.
     Rectangle {
       id: speakStrip
       anchors { left: parent.left; right: parent.right; bottom: tray.top
                 leftMargin: 10; rightMargin: 10; bottomMargin: 4 }
-      height: OriClient.speakJob ? 24 : 0
+      height: OriClient.oriTalking ? 24 : 0
       visible: height > 0
       color: Theme.alpha(Theme.yellow, 0.10)
       radius: 6
@@ -1517,17 +1577,30 @@ PanelWindow {
     // -------------------------------------------------------------- composer
     Rectangle {
       id: composer
+      // An inset box, not a strip: the orb mock's input row. Rounded, a
+      // hairline in the accent, breathing room from the card edge.
       anchors { left: parent.left; right: parent.right; bottom: footer.top
-                leftMargin: card.border.width; rightMargin: card.border.width }
+                leftMargin: 12; rightMargin: 12; bottomMargin: 10 }
       // Grows with the draft up to a ceiling, then the field scrolls. The card
       // is a fixed size, so this only moves the boundary between the two panes.
       height: Math.min(entry.implicitHeight, 120) + 20
-      color: Theme.surface0
-      // No border tint here either: the effort readout lives in the footer --
-      // the level's own word carrying the colour -- after the full-card border
-      // flash AND a tinted field edge were both tried and disliked. The field
-      // stays quiet.
-      border.width: 0
+      radius: 8
+      color: Theme.alpha(Theme.mantle, 0.72)
+      border.width: 1
+      border.color: Theme.alpha(panel.accent, entry.activeFocus ? 0.55 : 0.30)
+      Behavior on border.color { ColorAnimation { duration: Style.anim.quick } }
+
+      // The key hint, where the mock keeps it.
+      Text {
+        anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
+        text: "ENTER · ESC"
+        visible: entry.text === "" && entry.implicitHeight < 40
+        color: Theme.overlay0
+        font.family: Style.font.panelMono
+        font.pixelSize: Style.font.panelMeta - 2
+        font.letterSpacing: 2
+        renderType: Text.QtRendering
+      }
 
       Behavior on height {
         NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
@@ -1537,17 +1610,33 @@ PanelWindow {
       // which is the only affordance this panel needs for "the keyboard is
       // here" -- the layer surface takes focus on demand, so that is a real
       // question and not a decorative one.
-      Text {
+      // The orb, docked at the input row while the panel is open -- this is
+      // where it lives instead of the pill, and where it wakes when you speak
+      // with the panel up. Bright while the cursor is in the field, which is
+      // the only affordance this panel needs for "the keyboard is here".
+      Orb {
         id: caret
-        anchors { left: parent.left; leftMargin: 12; top: parent.top; topMargin: 10 }
-        text: "⟩"
-        color: entry.activeFocus ? panel.accent : Theme.overlay0
-        font.family: Style.font.panelMono
-        font.pixelSize: Style.font.panelBody
-        renderType: Text.QtRendering
+        anchors { left: parent.left; leftMargin: 4; top: parent.top; topMargin: 2 }
+        size: 9
+        alive: panel.opened
+        breathe: false
+        level: OriClient.voiceLevel
+        // It comes OUT here when the panel opens -- the other end of the hole
+        // it left in the pill.
+        scale: panel.opened ? 1 : 0
+        Behavior on scale { NumberAnimation { duration: 520; easing.type: Easing.OutBack } }
+        floating: panel.opened
+        mode: OriClient.voiceState === "listening" ? "listening"
+            : (OriClient.oriTalking || OriClient.voiceState === "speaking") ? "speaking"
+            : OriClient.voiceState === "done" ? "done"
+            : OriClient.working ? "working"
+            : (OriClient.busy || OriClient.voiceState === "transcribing") ? "thinking"
+            : OriClient.error !== "" ? "failed"
+            : "idle"
+        opacity: entry.activeFocus || mode !== "idle" ? 1 : 0.6
 
-        Behavior on color {
-          ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+        Behavior on opacity {
+          NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
         }
       }
 
@@ -1559,7 +1648,7 @@ PanelWindow {
       // visible edge scrolls just enough to bring the line into view.
       Flickable {
         id: entryScroll
-        anchors { fill: parent; leftMargin: 30; rightMargin: 12; topMargin: 10; bottomMargin: 10 }
+        anchors { fill: parent; leftMargin: 38; rightMargin: 100; topMargin: 10; bottomMargin: 10 }
         contentWidth: width
         contentHeight: entry.implicitHeight
         clip: true
@@ -1598,7 +1687,11 @@ PanelWindow {
           // While a turn runs the field is refused, so it says what the key
           // that DOES do something is, rather than inviting a message that
           // would be dropped.
-          text: OriClient.busy ? "ctrl+c to stop" : "ask anything — / for commands"
+          // Spoken with the panel up: what the mic heard lands here, where a
+          // typed message would have been.
+          text: OriClient.voiceState === "listening" ? "listening…"
+              : OriClient.voiceInterim !== "" && OriClient.voiceState !== "hidden" ? OriClient.voiceInterim
+              : OriClient.busy ? "ctrl+c to stop" : "ask anything — / for commands"
           color: Theme.overlay0
           font.family: Style.font.panelFamily
           font.pixelSize: Style.font.panelBody
@@ -1747,7 +1840,7 @@ PanelWindow {
       anchors { left: parent.left; right: parent.right; bottom: parent.bottom
                 margins: card.border.width }
       height: 24
-      color: Theme.mantle
+      color: Theme.alpha(Theme.mantle, 0.6)
       bottomLeftRadius: card.radius - card.border.width
       bottomRightRadius: card.radius - card.border.width
 

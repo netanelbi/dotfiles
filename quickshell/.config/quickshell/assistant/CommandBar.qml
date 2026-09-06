@@ -144,8 +144,10 @@ Rectangle {
   // inside it may.
   implicitHeight: Math.min(hint.implicitHeight + 14 + root.matches.length * 26 + 8, 220)
 
-  color: Theme.mantle
-  radius: 6
+  color: Theme.alpha(Theme.mantle, 0.94)
+  border.width: 1
+  border.color: Theme.alpha(root.accent, 0.35)
+  radius: 10
   opacity: root.open ? 1 : 0
   visible: opacity > 0
 

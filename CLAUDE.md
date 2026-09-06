@@ -69,6 +69,7 @@ stow -D package_name
 | `CTRL + ALT + W` | Terminal in ~/Work |
 | `SUPER + D` | Launcher (quickshell) |
 | `SUPER + A` | Toggle the assistant panel (Ori) |
+| `SUPER + SHIFT + A` | Let the orb out to live on the desktop / call it home to the bar |
 | `SUPER + Q` | Close the assistant panel if it is up, else close the window |
 | `SUPER + SHIFT + Q` | Exit Hyprland |
 | `SUPER + F` | Toggle floating |
@@ -321,6 +322,38 @@ Example:
     "escape": false
 }
 ```
+
+## The orb (Ori's body)
+
+One `assistant/Orb.qml`, drawn in three places: docked at the left end of the
+bar's centre pill (`widgets/OrbDock.qml`), out on the screen while you talk
+(`assistant/OrbOverlay.qml`, a full-screen click-through Overlay layer whose only
+input region is a ring around the orb), and at the panel's input row. `Voice.qml`
+owns the exchange and publishes `voiceState/voiceLevel/voiceInterim` on
+`OriClient`; the bar publishes each screen's dock point via `OriClient.setOrbDock`.
+
+It has a FREE mode (`SUPER + SHIFT + A`, left-click the orb in the pill,
+`qs ipc call voice free on|off|toggle`, `OriClient.orbFree`): it stays out on
+the desktop with nothing to do, roams the screen every 10-20 s, moves off a
+window the moment it gets focus, crosses to the monitor that takes focus, and
+only goes home when told (right-click it, click its nest in the pill, or the
+key). Drag it and it stays put where you left it, focused window or not
+(`pinned`). It remembers its spot across trips home and shell reloads
+(`PersistentProperties` "ori-orb-place"). Voice happens wherever it is. Opening
+the panel flies it into the input row (`OriClient.panelDock`); closing the
+panel lets it back out from there.
+
+Rules, all from the user: voice never opens the panel; the orb never sits over
+the FOCUSED window (biggest other window on the workspace, else the focused
+window's top-right corner); the pointer entering its ring pushes it away; Ori's
+answer is spoken, not written -- the orb only pulses. The panel reserves space
+(`ExclusionMode.Auto` while open), so it is a tile, not an overlay.
+
+**Speech is detected from PipeWire, not from pi.** kokoro plays through a stream
+node named `alsa_playback.kokoro-npu`; `OriClient.oriTalking` is true while it
+exists. The speak tool's own done-message rides pi's follow-up queue and lands at
+the next tool boundary, so `speakJob` lingers for the length of any blocking call
+after a sentence -- do not drive "speaking" or the speak strip from it.
 
 ## Troubleshooting
 

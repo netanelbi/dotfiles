@@ -84,8 +84,8 @@ hl.config({
         rounding = 10,
         blur = {
             enabled = true,
-            size    = 3,
-            passes  = 1,
+            size    = 6,
+            passes  = 2,
         },
         shadow = {
             enabled      = true,
@@ -223,6 +223,8 @@ hl.bind("XF86Bluetooth", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call em
 -- Calculator (live results)
 hl.bind(mainMod .. " + K", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call calc toggle"))
 hl.bind(mainMod .. " + A", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call assistant toggle"))
+-- Let the orb out to live on the desktop, or call it home to the bar.
+hl.bind(mainMod .. " + SHIFT + A", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice free toggle"))
 
 -- Resize cycle (tiled: 33%->50%->67%, floating: 90% centered)
 -- Percent sizes have no typed equivalent in the 0.55+ Lua dispatchers (x/y are
@@ -287,4 +289,12 @@ hl.window_rule({
     match = { workspace = "special:magic" },
     size         = "80% 80%",
     border_color = "rgba(f9e2afee) rgba(f9e2afee)",
+})
+
+-- Ori's panel is glass: blur what is under it, but only where it paints (the
+-- surface is transparent around the card, and the mask keeps that click-through).
+hl.layer_rule({
+    name  = "ori-glass",
+    match = { namespace = "^quickshell-assistant$" },
+    blur = true, ignore_alpha = 0.2,
 })

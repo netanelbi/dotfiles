@@ -1,14 +1,14 @@
 import QtQuick
-import QtQuick.Effects
 import Quickshell
+import Quickshell.Hyprland
 import Quickshell.Io
-import Quickshell.Wayland
 import ".."
 
-// Voice mode: the capsule. A second surface for talking to Ori, held to a
-// different contract than the panel -- the panel is something you turn TO and
-// read; the capsule is something that happens AROUND you. It appears when you
-// start speaking, shows what stage the exchange is in, and goes away.
+// Voice mode. Talking to Ori is the orb, not a panel: the spirit docked in the
+// bar's centre pill pops out when you hold the key, hears you, thinks, speaks,
+// and flies back. The transcript panel never opens for voice. What is heard is
+// shown beside the orb for a moment; what Ori answers is spoken, not written.
+// (The panel keeps every turn regardless, for later.)
 //
 //   qs ipc call voice start        hold-to-talk: keybind on PRESS
 //   qs ipc call voice stop         keybind on RELEASE -- transcribe, send
@@ -22,8 +22,13 @@ import ".."
 //   ── OriClient.ask("[voice] " + text) -- the MARKER is the whole contract:
 //      the session sees the message came by voice and decides itself when to
 //      speak. Nothing here forces speech; speak.ts owns the one-utterance lock.
-//   ── OriClient.busy / OriClient.speakJob drive the working / speaking states,
-//      so the capsule is a pure observer of the session it sent into.
+//   ── OriClient.busy drives working; OriClient.oriTalking (the kokoro stream
+//      in PipeWire, see OriClient) drives speaking -- so the orb follows the
+//      sound itself, not pi's follow-up queue.
+//
+// This file owns the exchange and its processes. The orb itself is drawn by
+// OrbOverlay (out on the screen), OrbDock (in the bar) and the panel's input
+// row, all reading the state published on OriClient.
 //
 // Recorder and transcriber follow the proven ptt script's shapes: pw-record is
 // SIGTERMed (it finalises the wav trailer on TERM, hence the 500 ms settle
@@ -34,16 +39,17 @@ Scope {
 
     // ------------------------------------------------------------- state
     // hidden → listening → transcribing → working → speaking → done → hidden.
-    // "working" lasts as long as the turn does -- a long tool run keeps the
-    // capsule as a small breathing dot, out of the way until there is speech.
+    // "working" lasts as long as the turn does; speaking comes and goes inside
+    // it as often as Ori talks (react first, work, then say the answer).
     property string state: "hidden"
-    // True while the capsule itself spawned the speech (wake), as opposed to
+    // True while the orb itself spawned the speech (wake), as opposed to
     // relaying the session's speak tool. Barge-in and the exit path tell them
     // apart.
     property bool wakeSpeech: false
-    // Live RMS levels, oldest first, newest last -- the waveform feeds off the
-    // tail of this. Capped at the bar count so it never grows unbounded.
+    // Live RMS levels, oldest first, newest last. Capped so it never grows
+    // unbounded.
     property var levels: []
+    readonly property real liveLevel: levels.length > 0 ? levels[levels.length - 1] : 0
     // What was heard, shown while the turn runs so a mishear is visible
     // immediately (fix: cancel and press again).
     property string interim: ""
@@ -51,6 +57,31 @@ Scope {
     readonly property int barCount: 32
     readonly property string rmsPy: String(Qt.resolvedUrl("voice-rms.py")).replace(/^file:\/\//, "")
     readonly property string wav: "/tmp/ori-voice.wav"
+
+    // The level the orb pulses on: the mic while you talk, the SPEAKER while
+    // Ori does. Playback is captured from the sink's monitor for exactly as
+    // long as kokoro's stream exists (see playRec), so the pulse is the real
+    // waveform of the voice, not a rhythm made up to look like one.
+    property var playLevels: []
+    readonly property real playLevel: playLevels.length > 0 ? playLevels[playLevels.length - 1] : 0
+    readonly property real level: state === "speaking" ? playLevel : liveLevel
+
+    // Published for the other two perches (bar dock, panel input row).
+    Binding { target: OriClient; property: "voiceState"; value: voice.state }
+    Binding { target: OriClient; property: "voiceLevel"; value: voice.level }
+    Binding { target: OriClient; property: "voiceInterim"; value: voice.interim }
+
+    // The orb leaves the pill on whichever monitor has focus -- the same rule
+    // the panel and the launchers use. Only re-targeted while hidden.
+    function focusedScreen() {
+        var focused = Hyprland.focusedMonitor
+        var screens = Quickshell.screens
+        if (focused) {
+            for (var i = 0; i < screens.length; i++)
+                if (Hyprland.monitorFor(screens[i]) === focused) return screens[i]
+        }
+        return screens.length > 0 ? screens[0] : null
+    }
 
     function start() {
         // Idempotent, like ptt down: a duplicate down while recording is a no-op.
@@ -69,12 +100,16 @@ Scope {
             // turn" -- the session keeps running, its speech is simply cut.
             stopSpeech()
         }
+        // Leaving the pill: go out on the monitor with focus. Already out
+        // (free): stay exactly where it is, whatever screen that is.
+        if (state === "hidden" && !OriClient.orbFree) {
+            var s = focusedScreen()
+            if (s) overlay.screen = s
+        }
         wakeSpeech = false
         interim = ""
-        levels = []
-        var i = 0
         var zeros = []
-        for (i = 0; i < barCount; i++) zeros.push(0)
+        for (var i = 0; i < barCount; i++) zeros.push(0)
         levels = zeros
         state = "listening"
         rms.exec(rms.command)
@@ -113,27 +148,36 @@ Scope {
             stopSpeech()
             unstage.restart()
         } else {
-            // "working": the turn keeps running in the session, the capsule
+            // "working": the turn keeps running in the session, the orb
             // just stops watching it.
             unstage.restart()
         }
     }
 
-    // Reminders and scripts: pop up, speak, fade. Speech here is the capsule's
+    // Reminders and scripts: pop up, speak, fly home. Speech here is the orb's
     // own spawn -- same shape speak.ts uses, so the NPU path is identical.
     //
     // A wake arriving while another wake is speaking cannot just re-exec the
     // waker: in 0.3.1 exec() on a running Process SIGTERMs the old child and
     // only starts the new command once that old child's exit lands -- and that
-    // same exit fires onExited, which would finish() the capsule before the
-    // new utterance ever showed. So the replacement text is queued here and
-    // started from that exit instead (waker.onExited).
+    // same exit fires onExited, which would finish() before the new utterance
+    // ever showed. So the replacement text is queued here and started from
+    // that exit instead (waker.onExited).
     property string pendingWake: ""
 
     function wake(text) {
         if (state === "listening" || state === "transcribing")
             cancel()
-        stopSpeech()
+        if (state === "hidden" && !OriClient.orbFree) {
+            var s = focusedScreen()
+            if (s) overlay.screen = s
+        }
+        // Cut the SESSION's speech only if it is actually playing. The cut is
+        // a pkill on the kokoro command line, which would take the wake's own
+        // child with it if it landed a beat late -- so when a cut is needed,
+        // the new utterance waits for it (wakeAfterCut).
+        var cut = state === "speaking" && !wakeSpeech && OriClient.oriTalking
+        if (cut) stopSpeech()
         wakeSpeech = true
         interim = ""
         state = "speaking"
@@ -144,8 +188,15 @@ Scope {
         pendingWake = ""
         waker.command = ["kokoro-npu", "say",
                          "--voice", "bm_lewis", "--lang", "en-us", "--speed", "1", String(text)]
-        waker.exec(waker.command)
+        if (cut) wakeAfterCut.restart()
+        else waker.exec(waker.command)
         return "waking"
+    }
+
+    Timer {
+        id: wakeAfterCut
+        interval: 200
+        onTriggered: if (wakeSpeech && state === "speaking") waker.exec(waker.command)
     }
 
     function stopSpeech() {
@@ -173,9 +224,8 @@ Scope {
     }
 
     function finish() {
-        // No "done" display -- the card simply fades away slowly from
-        // wherever it is. doneTimer only flips the state once the fade
-        // has run.
+        // The check pops, then the orb flies home (OrbOverlay times the
+        // flight off this state); doneTimer flips to hidden once it has landed.
         state = "done"
         doneTimer.restart()
     }
@@ -199,7 +249,7 @@ Scope {
             return "cancelled"
         }
 
-        // Reminders, scripts, anything: make the capsule speak.
+        // Reminders, scripts, anything: make the orb speak.
         //   qs ipc call voice wake "meeting in five minutes"
         function wake(text: string): string {
             return voice.wake(text)
@@ -207,6 +257,23 @@ Scope {
 
         function status(): string {
             return voice.state
+        }
+
+        // Let it out, or call it home: on | off | toggle.
+        //   qs ipc call voice free toggle
+        function free(mode: string): string {
+            var m = String(mode)
+            OriClient.orbFree = m === "on" ? true : m === "off" ? false : !OriClient.orbFree
+            return OriClient.orbFree ? "free" : "docked"
+        }
+
+        // Where the orb is and whether Ori's voice is on the speaker.
+        function orb(): string {
+            return voice.state + " talking=" + OriClient.oriTalking
+                + " at=" + Math.round(overlay.ox) + "," + Math.round(overlay.oy)
+                + " level=" + voice.level.toFixed(2) + " play=" + voice.playLevels.length
+                + " screen=" + (overlay.screen ? overlay.screen.name : "none")
+                + " panelDock=" + OriClient.panelDock.screen + ":" + Math.round(OriClient.panelDock.x) + "," + Math.round(OriClient.panelDock.y)
         }
     }
 
@@ -272,13 +339,13 @@ Scope {
         onExited: transcribe()
     }
 
-    // The capsule's own speech (wake only).
+    // The orb's own speech (wake only).
     Process {
         id: waker
         onExited: {
             // The exit of a replaced wake starts the queued utterance instead
-            // of finishing the capsule. If the user barged in while it was
-            // queued (state moved on), the queued text is simply dropped.
+            // of finishing. If the user barged in while it was queued (state
+            // moved on), the queued text is simply dropped.
             if (pendingWake !== "") {
                 var t = pendingWake
                 pendingWake = ""
@@ -297,44 +364,77 @@ Scope {
         command: ["pkill", "-f", "kokoro-npu say"]
     }
 
+    // ------------------------------------------------------------- playback
+    // What Ori sounds like, as a level: pw-record on the default sink's
+    // monitor, tailed by the same RMS script the mic uses. Both run only while
+    // kokoro's stream is up; the wav is wiped first so the tail never replays
+    // the previous utterance. SIGTERM lands on pw-record itself (exec).
+    readonly property string playWav: "/tmp/ori-play.wav"
+    Process {
+        id: playRec
+        command: ["sh", "-c", "rm -f \"$0\"; exec pw-record -P '{ stream.capture.sink = true }' --rate 16000 --channels 1 --format s16 \"$0\"", voice.playWav]
+    }
+    Process {
+        id: playRms
+        command: ["python3", voice.rmsPy, voice.playWav]
+        stdout: SplitParser {
+            onRead: function (line) {
+                var v = parseFloat(String(line))
+                if (isNaN(v)) return
+                var next = voice.playLevels.concat([v])
+                if (next.length > voice.barCount) next = next.slice(next.length - voice.barCount)
+                voice.playLevels = next
+            }
+        }
+    }
+    Connections {
+        target: OriClient
+        function onOriTalkingChanged() {
+            if (OriClient.oriTalking) {
+                voice.playLevels = []
+                playRec.exec(playRec.command)
+                playRms.exec(playRms.command)
+            } else {
+                playRms.signal(15)
+                playRec.signal(15)
+                voice.playLevels = []
+            }
+        }
+    }
+
     // ------------------------------------------------------------- session
     Connections {
         target: OriClient
+        // Let out from anywhere (the dock click, the keybind, ipc): it leaves
+        // from the pill on the monitor that has focus.
+        function onOrbFreeChanged() {
+            if (OriClient.orbFree && state === "hidden") {
+                var s = focusedScreen()
+                if (s) overlay.screen = s
+            }
+        }
         function onBusyChanged() {
-            // busy falling is the turn settling. Speech usually starts before
-            // that (the speak tool call is mid-turn), so this is the no-speech
-            // exit; the speech exit lives in onSpeakJobChanged.
+            // busy falling is the turn settling. Speech usually ends before
+            // that; this is the no-speech exit. The speech exit is below.
             if (!OriClient.busy && state === "working")
                 finish()
         }
-        function onSpeakJobChanged() {
-            if (OriClient.speakJob) {
+        // The SOUND, not the job list: PipeWire announces kokoro's stream the
+        // moment it opens and the moment it closes. The speak row in the panel
+        // reads the same flag, so both agree to the frame.
+        function onOriTalkingChanged() {
+            if (OriClient.oriTalking) {
                 // Never override an exchange the user is mid-way through --
                 // barge-in only flows one way: their press cuts the speech.
                 if (state === "working") state = "speaking"
             } else if (state === "speaking" && !wakeSpeech) {
-                // Speech is only one step of a turn. speakJob clears the
-                // moment the utterance ends, but the session usually keeps
-                // working after it -- so unless busy has fallen too, this is
-                // a return to watching, not an exit.
+                // Speech is only one step of a turn: unless busy has fallen
+                // too, this is a return to watching, not an exit.
                 if (OriClient.busy)
                     state = "working"
                 else
                     finish()
             }
-        }
-    }
-
-    // State-entry choreography: from hidden the card springs in; between live
-    // states a small scale pop makes the morph read as deliberate, not drifted.
-    Connections {
-        target: voice
-        function onStateChanged() {
-            if (voice.state === "hidden") {
-                card.scale = 0.90
-                return
-            }
-            statePop.restart()
         }
     }
 
@@ -355,495 +455,16 @@ Scope {
         onTriggered: state = "hidden"
     }
 
+    // Check (0-600ms), flight home (600-1300ms), then gone.
     Timer {
         id: doneTimer
-        interval: 1000
+        interval: 1400
         onTriggered: state = "hidden"
     }
 
     // ------------------------------------------------------------- surface
-    PanelWindow {
-        id: capsule
-
-        // Overlay, not Top: the capsule must sit over the bar and the panel
-        // both -- it appears while you are doing something else, so it does
-        // not get to be hidden behind them. It takes no keyboard at all; the
-        // click path below is the only direct input. Frosted glass comes from
-        // Hyprland (layerrule blur on this namespace, machine.lua), which is
-        // why the card alpha sits well below 1.
-        WlrLayershell.namespace: "quickshell-voice"
-        WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-        exclusionMode: ExclusionMode.Ignore
-        color: "transparent"
-
-        anchors {
-            top: true
-            left: true
-            right: true
-        }
-        // Full-span surface, card centered inside it -- a layer surface that
-        // resizes waits a configure round trip per frame (the slideshow that
-        // hit the notification popups), so the surface never changes shape.
-        // Input follows the mask, not the surface: without it the whole strip
-        // ate clicks even where nothing is drawn.
-        implicitHeight: 190
-        margins.top: 52
-        mask: Region { item: capsule.shown ? cardZone : null }
-
-        readonly property bool shown: voice.state !== "hidden"
-        // The state's accent, decided once -- every glow, border, bar and
-        // label reads this, so a state change repaints the whole capsule in
-        // one move.
-        readonly property color accent: {
-            if (voice.state === "listening") return Theme.lavender
-            if (voice.state === "transcribing") return Theme.mauve
-            if (voice.state === "working") return Theme.blue
-            if (voice.state === "speaking") return Theme.green
-            return Theme.green
-        }
-
-        // Live level, for the listening glow: the light answers the voice.
-        readonly property real liveLevel:
-            voice.levels.length > 0 ? voice.levels[voice.levels.length - 1] : 0
-        // How brightly the ambient pool burns, per state. Working is the stage
-        // the owner most wants to SEE, so it is the strongest light in the
-        // room; listening rides the voice itself. Kept at or below 1: Item
-        // opacity clamps, and the numbers below are the honest mix.
-        readonly property real glowStrength: {
-            if (voice.state === "working") return 1.0
-            if (voice.state === "listening") return 0.62 + 0.30 * liveLevel
-            if (voice.state === "speaking") return 0.85
-            if (voice.state === "transcribing") return 0.72
-            return 0.5
-        }
-        // How far the pool spreads past the card, per state.
-        readonly property int glowPad: voice.state === "working" ? 150 : 90
-
-        // Windows have no opacity of their own (the surface is or is not);
-        // the fade lives on this stage item, which holds the card.
-        Item {
-            id: stage
-            anchors.fill: parent
-            opacity: capsule.shown ? 1 : 0
-            visible: opacity > 0.001
-            Behavior on opacity {
-                NumberAnimation { duration: voice.state === "done" ? 900 : 200; easing.type: Easing.OutCubic }
-            }
-
-            // Live tool intent under the card while the session works:
-            // the same one-line descriptions the panel rail shows. OriClient
-            // empties activeTool between tool calls and on settle, so this is
-            // hidden for those stretches -- nothing stale is ever shown.
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 10
-                width: Math.min(parent.width - 60, 620)
-                text: OriClient.activeTool
-                visible: voice.state === "working" && text !== ""
-                opacity: 0.75
-                color: Theme.text
-                font.family: Style.font.family
-                font.pixelSize: Style.font.size
-                elide: Text.ElideMiddle
-                horizontalAlignment: Text.AlignHCenter
-                Behavior on opacity { NumberAnimation { duration: 200 } }
-            }
-
-            // Ambient glow: a soft radial pool of the state colour behind the
-            // card, breathing slowly. This is what makes the capsule read as
-            // a light source rather than a sticker. Two layers: the WRAPPER
-            // carries the per-state strength (Behaviour-able, so a state change
-            // crossfades the light instead of snapping it); the inner rect
-            // carries the breath itself.
-            Item {
-                id: glowWrap
-                anchors.centerIn: parent
-                width: card.width + capsule.glowPad
-                height: voice.state === "working" ? 190 : 150
-                opacity: capsule.glowStrength
-                Behavior on opacity { NumberAnimation { duration: Style.anim.opacityDuration * 2; easing.type: Easing.OutQuad } }
-                Behavior on width { NumberAnimation { duration: Style.anim.slow; easing.type: Easing.OutCubic } }
-                Behavior on height { NumberAnimation { duration: Style.anim.slow; easing.type: Easing.OutCubic } }
-
-                Rectangle {
-                    id: glow
-                    anchors.fill: parent
-                    radius: height / 2
-                    color: "transparent"
-                    // Radial gradient needs a shape; a plain Rectangle cannot.
-                    // The gradient rectangle itself is the glow.
-                    gradient: Gradient {
-                        GradientStop { position: 0.0; color: Qt.rgba(capsule.accent.r, capsule.accent.g, capsule.accent.b, 0.30) }
-                        GradientStop { position: 0.55; color: Qt.rgba(capsule.accent.r, capsule.accent.g, capsule.accent.b, 0.13) }
-                        GradientStop { position: 1.0; color: "transparent" }
-                    }
-                    SequentialAnimation on opacity {
-                        running: capsule.shown
-                        loops: Animation.Infinite
-                        NumberAnimation { to: 0.68; duration: Style.anim.breath / 2; easing.type: Easing.InOutSine }
-                        NumberAnimation { to: 1.0; duration: Style.anim.breath / 2; easing.type: Easing.InOutSine }
-                    }
-                }
-            }
-
-            // Done: one soft bloom of the accent before the stage fade takes
-            // the capsule away -- a last breath of light, not a green flash.
-            // Gated on done, so it never runs while hidden.
-            Rectangle {
-                id: bloom
-                anchors.centerIn: parent
-                width: card.width + 60
-                height: 130
-                radius: height / 2
-                color: "transparent"
-                opacity: 0
-                visible: opacity > 0.001
-                gradient: Gradient {
-                    GradientStop { position: 0.0; color: Qt.rgba(capsule.accent.r, capsule.accent.g, capsule.accent.b, 0.34) }
-                    GradientStop { position: 1.0; color: "transparent" }
-                }
-                SequentialAnimation on opacity {
-                    running: voice.state === "done"
-                    NumberAnimation { to: 1.0; duration: 260; easing.type: Easing.OutCubic }
-                    NumberAnimation { to: 0.0; duration: 640; easing.type: Easing.InQuad }
-                }
-            }
-
-            MouseArea {
-                id: cardZone
-                visible: capsule.shown
-                anchors.centerIn: parent
-                width: card.width
-                height: card.height
-                onClicked: voice.cancel()
-
-                Rectangle {
-                    id: card
-
-                    // Widths are per-state and animated, so the morph IS the
-                    // state change. Height and y stay fixed.
-                    readonly property int wideWidth: 460
-                    readonly property int midWidth: 320
-                    readonly property int dotWidth: 210
-
-                    width: {
-                        if (voice.state === "listening") return wideWidth
-                        if (voice.state === "transcribing") return midWidth
-                        if (voice.state === "working") return wideWidth
-                        if (voice.state === "speaking") return midWidth
-                        return dotWidth
-                    }
-                    // OutBack on a wide element reads as wobble; the pop
-                    // comes from the glow and scale instead.
-                    Behavior on width {
-                        NumberAnimation { duration: 320; easing.type: Easing.OutCubic }
-                    }
-
-                    height: 76
-                    radius: height / 2
-                    x: (parent.width - width) / 2
-                    y: (parent.height - height) / 2
-
-                    // Glass: translucent crust over the compositor blur. A
-                    // faint vertical falloff (lighter at the top) buys the
-                    // depth a flat fill cannot -- light falls onto glass.
-                    gradient: Gradient {
-                        GradientStop { position: 0.0; color: Theme.alpha(Theme.crust, 0.62) }
-                        GradientStop { position: 1.0; color: Theme.alpha(Theme.crust, 0.80) }
-                    }
-                    border.width: 1
-                    border.color: Theme.alpha(capsule.accent, 0.55)
-                    Behavior on border.color {
-                        ColorAnimation { duration: Style.anim.colorDuration }
-                    }
-
-                    // Thinking: the border itself breathes blue, on the shell's
-                    // one breath period. A pulse, not a spinner -- the card is
-                    // alive while it waits.
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: parent.radius
-                        color: "transparent"
-                        border.width: 2
-                        border.color: Theme.blue
-                        visible: voice.state === "working"
-                        SequentialAnimation on opacity {
-                            running: voice.state === "working"
-                            loops: Animation.Infinite
-                            NumberAnimation { to: 0.9; duration: Style.anim.breath / 2; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 0.22; duration: Style.anim.breath / 2; easing.type: Easing.InOutSine }
-                        }
-                    }
-
-                    layer.enabled: true
-                    layer.effect: MultiEffect {
-                        shadowEnabled: true
-                        shadowBlur: 0.9
-                        shadowVerticalOffset: 10
-                        shadowColor: Qt.rgba(0, 0, 0, 0.45)
-                        blurMax: 32
-                    }
-
-                    // Scale is DRIVEN, not bound: entering from hidden the card
-                    // springs up from 0.90 through the pop; every later state
-                    // change re-runs the pop, so each morph lands deliberate.
-                    scale: 0.90
-                    SequentialAnimation {
-                        id: statePop
-                        NumberAnimation { target: card; property: "scale"; to: 1.035; duration: 130; easing.type: Easing.OutCubic }
-                        NumberAnimation { target: card; property: "scale"; to: 1.0; duration: 220; easing.type: Easing.InOutQuad }
-                    }
-
-                    // ------------------------------------------------ shine
-                    // A soft highlight sweeping the card while something is
-                    // alive -- listening or speaking. Cheap, but motion is
-                    // what separates "alive" from "notification".
-                    Rectangle {
-                        id: shine
-                        visible: voice.state === "listening" || voice.state === "speaking"
-                        width: 120
-                        height: parent.height - 20
-                        radius: width / 2
-                        y: (parent.height - height) / 2
-                        x: -width
-                        gradient: Gradient {
-                            orientation: Gradient.Horizontal
-                            GradientStop { position: 0.0; color: "transparent" }
-                            GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.07) }
-                            GradientStop { position: 1.0; color: "transparent" }
-                        }
-                        SequentialAnimation on x {
-                            running: shine.visible
-                            loops: Animation.Infinite
-                            PauseAnimation { duration: 900 }
-                            NumberAnimation { to: card.width + 10; duration: 1300; easing.type: Easing.InOutQuad }
-                            PauseAnimation { duration: 2400 }
-                            NumberAnimation { to: -shine.width; duration: 1 }
-                        }
-                    }
-
-                    // -------------------------------------------------- ear
-                    // Mic glyph wrapped in pulse rings while listening. The
-                    // rings breathe on a clock; the glyph itself swells with
-                    // the live level, so the icon is a level meter too.
-                    Item {
-                        id: mic
-                        visible: voice.state === "listening"
-                        width: 54
-                        height: parent.height
-                        anchors.left: parent.left
-                        anchors.leftMargin: 20
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        readonly property real level: {
-                            var n = voice.levels.length
-                            return n > 0 ? voice.levels[n - 1] : 0
-                        }
-
-                        // Rings expand and fade. Three of them, on periods
-                        // that never settle into one beat and staggered
-                        // entries -- two equal rings read as a metronome,
-                        // three offset ones read as ripples.
-                        Repeater {
-                            model: 3
-
-                            Rectangle {
-                                required property int index
-
-                                readonly property real period: [1700, 2150, 2550][index]
-                                readonly property real offset: [0, 850, 1550][index]
-                                readonly property real reach: [1.9, 2.15, 1.75][index]
-
-                                anchors.centerIn: parent
-                                width: 30
-                                height: 30
-                                radius: 15
-                                color: "transparent"
-                                border.width: 1.5
-                                border.color: Theme.alpha(Theme.lavender, 0.5)
-                                scale: 1
-                                opacity: 0
-                                SequentialAnimation on scale {
-                                    loops: Animation.Infinite
-                                    running: mic.visible
-                                    PauseAnimation { duration: offset }
-                                    NumberAnimation { to: reach; duration: period; easing.type: Easing.OutQuad }
-                                    NumberAnimation { to: 1.0; duration: 1 }
-                                }
-                                SequentialAnimation on opacity {
-                                    loops: Animation.Infinite
-                                    running: mic.visible
-                                    PauseAnimation { duration: offset }
-                                    NumberAnimation { to: 0.65; duration: period * 0.22; easing.type: Easing.OutQuad }
-                                    NumberAnimation { to: 0.0; duration: period * 0.78; easing.type: Easing.InQuad }
-                                    NumberAnimation { to: 0.0; duration: 1 }
-                                }
-                            }
-                        }
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "󰍭"
-                            color: Theme.lavender
-                            font.family: Style.font.family
-                            font.pixelSize: 22
-                            // Scale, not font size: resizing a font re-shapes
-                            // the glyph every frame and jitters.
-                            scale: 1 + 0.25 * mic.level
-                            Behavior on scale { NumberAnimation { duration: 90 } }
-                        }
-                    }
-
-                    // ------------------------------------------------- stack
-                    // The centre column: a small-caps state word on top, the
-                    // sound strip (or, in working, the heard sentence) under
-                    // it. Bars and text never share a row -- that overlap was
-                    // the occlusion bug.
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 8
-
-                        // Working shows WHAT WAS HEARD as the main line --
-                        // a mishear is visible the moment it happens, and the
-                        // bars get out of the way entirely.
-                        Text {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            visible: opacity > 0.01
-                            opacity: voice.state === "working" ? 1 : 0
-                            Behavior on opacity { NumberAnimation { duration: 180 } }
-                            width: card.width - 100
-                            text: voice.interim
-                            color: Theme.text
-                            font.family: Style.font.family
-                            font.pixelSize: Style.font.size + 2
-                            elide: Text.ElideMiddle
-                            horizontalAlignment: Text.AlignHCenter
-                        }
-
-                        Row {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            spacing: 7
-
-                            // The thinking pulse: a small orb breathing beside
-                            // the word, so working has a heartbeat, not just a
-                            // label. The only dot in the capsule -- working
-                            // owns it, and it breathes on the shell's one
-                            // breath period.
-                            Rectangle {
-                                visible: voice.state === "working"
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 6
-                                height: 6
-                                radius: 3
-                                color: Theme.blue
-                                opacity: 0.35
-                                SequentialAnimation on opacity {
-                                    running: voice.state === "working"
-                                    loops: Animation.Infinite
-                                    NumberAnimation { to: 1.0; duration: Style.anim.breath / 2; easing.type: Easing.InOutSine }
-                                    NumberAnimation { to: 0.35; duration: Style.anim.breath / 2; easing.type: Easing.InOutSine }
-                                }
-                            }
-
-                            Text {
-                                text: {
-                                    if (voice.state === "listening") return "LISTENING"
-                                    if (voice.state === "transcribing") return "TRANSCRIBING"
-                                    if (voice.state === "working") return "THINKING"
-                                    if (voice.state === "speaking") return "SPEAKING"
-                                    return ""
-                                }
-                                // The mapping returns "" outside the four live
-                                // states, so this shows in working too -- THINKING
-                                // sits under the heard sentence in the Column.
-                                visible: text !== ""
-                                color: capsule.accent
-                                opacity: 0.9
-                                font.family: Style.font.family
-                                font.pixelSize: 10
-                                font.letterSpacing: 3
-                                font.bold: true
-                            }
-                        }
-
-                        Row {
-                            id: bars
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            visible: opacity > 0.01
-                            opacity: (voice.state === "working" || voice.state === "done") ? 0 : 1
-                            Behavior on opacity { NumberAnimation { duration: 180 } }
-                            spacing: 3
-                            bottomPadding: 2
-
-                            property int tick: 0
-
-                            Timer {
-                                interval: 80
-                                running: voice.state === "speaking" || voice.state === "transcribing"
-                                repeat: true
-                                onTriggered: bars.tick++
-                            }
-
-                            Repeater {
-                                model: 36
-
-                                Rectangle {
-                                    required property int index
-
-                                    width: 4
-                                    radius: 2
-
-                                    // Centre-out gradient: pink core to lavender
-                                    // rim when listening, green core when
-                                    // speaking. Same geometry, different light.
-                                    readonly property real midDist:
-                                        Math.abs(index - 17.5) / 17.5
-                                    color: {
-                                        if (voice.state === "speaking")
-                                            return Qt.tint(Theme.green, Qt.rgba(Theme.teal.r, Theme.teal.g, Theme.teal.b, midDist * 0.7))
-                                        if (voice.state === "listening")
-                                            return Qt.tint(Theme.pink, Qt.rgba(Theme.lavender.r, Theme.lavender.g, Theme.lavender.b, midDist * 0.75))
-                                        return Theme.mauve
-                                    }
-
-                                    readonly property real liveLevel: {
-                                        var from = voice.levels.length - 36
-                                        if (voice.state === "listening" && from >= 0)
-                                            return voice.levels[from + index]
-                                        return 0
-                                    }
-                                    readonly property real animLevel: {
-                                        var t = bars.tick / 5
-                                        if (voice.state === "speaking") {
-                                            var env = 1 - 0.45 * midDist
-                                            // A slow phrase swell over the fast
-                                            // shimmer: a few seconds of energy, a
-                                            // dip, then on again -- the cadence of
-                                            // someone talking, not a steady motor.
-                                            var phrase = 0.35 + 0.65 * Math.pow(Math.abs(Math.sin(t / 5.3 + 0.9)), 1.4)
-                                            return env * phrase * (0.30 + 0.55 * Math.abs(Math.sin(t + index * 0.7) * Math.sin(t / 2.6 + index)))
-                                        }
-                                        // Transcribing: one pulse travelling the
-                                        // strip, unmistakably "processing".
-                                        var w = Math.sin(t - index * 0.42)
-                                        return 0.10 + 0.55 * Math.pow(Math.max(0, w), 2)
-                                    }
-                                    height: 6 + 44 * (voice.state === "listening" ? liveLevel : animLevel)
-                                    Behavior on height {
-                                        NumberAnimation { duration: 100; easing.type: Easing.OutQuad }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // -------------------------------------------------- done
-                    // Nothing -- a finish is a slow fade of the whole
-                    // capsule, not a green flash.
-                }
-            }
-        }
+    OrbOverlay {
+        id: overlay
+        voice: voice
     }
 }
