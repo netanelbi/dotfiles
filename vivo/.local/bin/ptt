@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# ptt — push-to-talk STT.
+#   ptt down   start recording (call on key PRESS)
+#   ptt up     stop, transcribe, type the text into the focused app (key RELEASE)
+# Wire into Hyprland, e.g. right Alt:
+#   bind  = , R_Alt, exec, /tmp/ptt down
+#   bindr = , R_Alt, exec, /tmp/ptt up
+#   MODEL=turbo for Hebrew-grade (but ~4 s round trip), default tiny.
+set -u
+wav=/tmp/ptt-utterance.wav
+
+down() {
+  # idempotent: a duplicate down while already recording is ignored
+  if [ -f /tmp/ptt.pid ] && kill -0 "$(cat /tmp/ptt.pid 2>/dev/null)" 2>/dev/null; then
+    echo "$(date +%T.%3N) down: already recording" >> /tmp/ptt-debug.log
+    return
+  fi
+  rm -f "$wav" /tmp/ptt.pid
+  nohup pw-record --rate 16000 --channels 1 --format s16 "$wav" \
+    </dev/null >/tmp/ptt-rec.log 2>&1 &
+  echo $! > /tmp/ptt.pid
+  echo "$(date +%T.%3N) down pid=$!" >> /tmp/ptt-debug.log
+}
+
+up() {
+  pid=$(cat /tmp/ptt.pid 2>/dev/null) || { echo "$(date +%T.%3N) up: no pidfile" >> /tmp/ptt-debug.log; return; }
+  rm -f /tmp/ptt.pid          # first: so a duplicate up no-ops
+  echo "$(date +%T.%3N) up: killing $pid" >> /tmp/ptt-debug.log
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  sleep 0.5                      # let pw-record finalize the wav trailer
+  # < 0.3 s of audio is a tap, not speech — don't type garbage
+  dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$wav" 2>/dev/null || echo 0)
+  # a stuck recorder makes marathon wavs — never transcribe those
+  awk -v d="$dur" 'BEGIN{exit !(d <= 60)}' || { rm -f "$wav"; echo "$(date +%T) [discarded ${dur}s]" >> /tmp/ptt-history.log; exit 0; }
+  awk -v d="$dur" 'BEGIN{exit !(d >= 0.3)}' || { rm -f "$wav"; exit 0; }
+  cp "$wav" /tmp/ptt-last.wav   # diagnostic copy
+  text=$(WHISPER_ATTN_CPU=1 whisper-npu transcribe "$wav" --model "${MODEL:-moonshine-v2-medium}" \
+         --lang "${STT_LANG:-he,en}" --no-daemon 2>/dev/null)
+  rm -f "$wav"
+  # repetition guard: degenerate output loops one phrase forever — cut it and
+  # cap the length, or ydotool types garbage into the focused window forever
+  text=$(printf '%s' "$text" | awk '{
+    n = split($0, w, " "); out = ""; delete c
+    for (i = 1; i <= n; i++) {
+      tri = (i >= 3) ? tolower(w[i-2] " " w[i-1] " " w[i]) : ""
+      if (tri != "" && ++c[tri] > 2) break
+      out = out (i > 1 ? " " : "") w[i]
+    }
+    if (length(out) > 400) out = substr(out, 1, 400)
+    print out
+  }')
+  echo "$(date +%T) [$dur s] $text" >> /tmp/ptt-history.log
+  [ -n "$text" ] && ydotool type -- "$text"
+  exit 0
+}
+
+case "${1:-down}" in
+  down) down ;;
+  up)   up ;;
+  *)    echo "usage: ptt down|up" ;;
+esac
