@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -302,7 +303,9 @@ Scope {
         // Overlay, not Top: the capsule must sit over the bar and the panel
         // both -- it appears while you are doing something else, so it does
         // not get to be hidden behind them. It takes no keyboard at all; the
-        // click path below is the only direct input.
+        // click path below is the only direct input. Frosted glass comes from
+        // Hyprland (layerrule blur on this namespace, machine.lua), which is
+        // why the card alpha sits well below 1.
         WlrLayershell.namespace: "quickshell-voice"
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
@@ -317,11 +320,20 @@ Scope {
         // Full-span surface, card centered inside it -- a layer surface that
         // resizes waits a configure round trip per frame (the slideshow that
         // hit the notification popups), so the surface never changes shape.
-        implicitHeight: 160
-        // Below the bar: the bar is exclusive, the capsule starts under it.
+        implicitHeight: 190
         margins.top: 52
 
         readonly property bool shown: voice.state !== "hidden"
+        // The state's accent, decided once -- every glow, border, bar and
+        // label reads this, so a state change repaints the whole capsule in
+        // one move.
+        readonly property color accent: {
+            if (voice.state === "listening") return Theme.lavender
+            if (voice.state === "transcribing") return Theme.mauve
+            if (voice.state === "working") return Theme.mauve
+            if (voice.state === "speaking") return Theme.green
+            return Theme.green
+        }
 
         // Windows have no opacity of their own (the surface is or is not);
         // the fade lives on this stage item, which holds the card.
@@ -330,147 +342,294 @@ Scope {
             anchors.fill: parent
             opacity: capsule.shown ? 1 : 0
             visible: opacity > 0.001
-            Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+            Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
-        MouseArea {
-            id: cardZone
-            anchors.centerIn: parent
-            width: card.width
-            height: card.height
-            onClicked: {
-                if (voice.state === "listening" || voice.state === "transcribing")
-                    voice.cancel()
-                else if (voice.state === "speaking")
-                    voice.cancel()
-                else
-                    voice.cancel()
+            // Ambient glow: a soft radial pool of the state colour behind the
+            // card, breathing slowly. This is what makes the capsule read as
+            // a light source rather than a sticker.
+            Rectangle {
+                id: glow
+                anchors.centerIn: parent
+                width: card.width + 140
+                height: 190
+                radius: height / 2
+                color: "transparent"
+                // Radial gradient needs a shape; a plain Rectangle cannot.
+                // The gradient rectangle itself is the glow.
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: Qt.rgba(capsule.accent.r, capsule.accent.g, capsule.accent.b, 0.30) }
+                    GradientStop { position: 0.55; color: Qt.rgba(capsule.accent.r, capsule.accent.g, capsule.accent.b, 0.10) }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
+                SequentialAnimation on opacity {
+                    running: capsule.shown
+                    loops: Animation.Infinite
+                    NumberAnimation { to: 0.65; duration: 1600; easing.type: Easing.InOutSine }
+                    NumberAnimation { to: 1.0; duration: 1600; easing.type: Easing.InOutSine }
+                }
+                Behavior on width { NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
             }
 
-            Rectangle {
-                id: card
+            MouseArea {
+                id: cardZone
+                anchors.centerIn: parent
+                width: card.width
+                height: card.height
+                onClicked: voice.cancel()
 
-                // Widths are per-state and animated, so the morph IS the state
-                // change -- the capsule breathes wider to listen, shrinks to a
-                // dot to wait. Height and y stay fixed; only x and width move.
-                readonly property int wideWidth: 420
-                readonly property int narrowWidth: 190
+                Rectangle {
+                    id: card
 
-                width: {
-                    if (voice.state === "listening") return wideWidth
-                    if (voice.state === "transcribing") return wideWidth
-                    if (voice.state === "speaking") return 240
-                    return narrowWidth
-                }
-                Behavior on width {
-                    NumberAnimation { duration: 350; easing.type: Easing.OutBack }
-                }
+                    // Widths are per-state and animated, so the morph IS the
+                    // state change. Height and y stay fixed.
+                    readonly property int wideWidth: 460
+                    readonly property int midWidth: 320
+                    readonly property int dotWidth: 210
 
-                height: 64
-                radius: height / 2
-                x: (parent.width - width) / 2
-                y: (parent.height - height) / 2
-
-                color: Theme.alpha(Theme.crust, 0.92)
-                border.width: 1
-                border.color: {
-                    if (voice.state === "listening") return Theme.alpha(Theme.lavender, 0.8)
-                    if (voice.state === "speaking") return Theme.alpha(Theme.green, 0.7)
-                    return Theme.alpha(Theme.mauve, 0.6)
-                }
-                Behavior on border.color {
-                    ColorAnimation { duration: Style.anim.colorDuration }
-                }
-
-                scale: voice.state === "hidden" ? 0.92 : 1
-                Behavior on scale {
-                    NumberAnimation { duration: 220; easing.type: Easing.OutBack }
-                }
-
-                // ------------------------------------------------- waveform
-                // Listening: the real RMS stream. Every other state animates
-                // the same bars from a clock -- the visual grammar ("this
-                // strip of light is the sound") stays identical while the
-                // source changes.
-                Row {
-                    id: bars
-                    anchors.centerIn: parent
-                    spacing: 3
-
-                    property int tick: 0
-
-                    Timer {
-                        interval: 90
-                        running: voice.state === "speaking" || voice.state === "transcribing"
-                        repeat: true
-                        onTriggered: bars.tick++
+                    width: {
+                        if (voice.state === "listening") return wideWidth
+                        if (voice.state === "transcribing") return midWidth
+                        if (voice.state === "working") return wideWidth
+                        if (voice.state === "speaking") return midWidth
+                        return dotWidth
+                    }
+                    Behavior on width {
+                        NumberAnimation { duration: 380; easing.type: Easing.OutBack }
                     }
 
-                    Repeater {
-                        model: voice.barCount
+                    height: 76
+                    radius: height / 2
+                    x: (parent.width - width) / 2
+                    y: (parent.height - height) / 2
 
-                        Rectangle {
-                            required property int index
+                    // Glass: translucent crust over the compositor blur.
+                    color: Theme.alpha(Theme.crust, 0.72)
+                    border.width: 1
+                    border.color: Theme.alpha(capsule.accent, 0.55)
+                    Behavior on border.color {
+                        ColorAnimation { duration: Style.anim.colorDuration }
+                    }
 
-                            width: 4
-                            radius: 2
-                            color: {
-                                if (voice.state === "listening") return Theme.lavender
-                                if (voice.state === "speaking") return Theme.green
-                                return Theme.mauve
+                    layer.enabled: true
+                    layer.effect: MultiEffect {
+                        shadowEnabled: true
+                        shadowBlur: 0.9
+                        shadowVerticalOffset: 10
+                        shadowColor: Qt.rgba(0, 0, 0, 0.45)
+                        blurMax: 32
+                    }
+
+                    scale: voice.state === "hidden" ? 0.90 : 1
+                    Behavior on scale {
+                        NumberAnimation { duration: 300; easing.type: Easing.OutBack }
+                    }
+
+                    // ------------------------------------------------ shine
+                    // A soft highlight sweeping the card while something is
+                    // alive -- listening or speaking. Cheap, but motion is
+                    // what separates "alive" from "notification".
+                    Rectangle {
+                        id: shine
+                        visible: voice.state === "listening" || voice.state === "speaking"
+                        width: 120
+                        height: parent.height - 20
+                        radius: width / 2
+                        y: (parent.height - height) / 2
+                        x: -width
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0.0; color: "transparent" }
+                            GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.07) }
+                            GradientStop { position: 1.0; color: "transparent" }
+                        }
+                        SequentialAnimation on x {
+                            running: shine.visible
+                            loops: Animation.Infinite
+                            PauseAnimation { duration: 900 }
+                            NumberAnimation { to: card.width + 10; duration: 1300; easing.type: Easing.InOutQuad }
+                            PauseAnimation { duration: 2400 }
+                            NumberAnimation { to: -shine.width; duration: 1 }
+                        }
+                    }
+
+                    // -------------------------------------------------- ear
+                    // Mic glyph wrapped in pulse rings while listening. The
+                    // rings breathe on a clock; the glyph itself swells with
+                    // the live level, so the icon is a level meter too.
+                    Item {
+                        id: mic
+                        visible: voice.state === "listening"
+                        width: 54
+                        height: parent.height
+                        anchors.left: parent.left
+                        anchors.leftMargin: 20
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        readonly property real level: {
+                            var n = voice.levels.length
+                            return n > 0 ? voice.levels[n - 1] : 0
+                        }
+
+                        // Rings expand and fade on phase offsets.
+                        Repeater {
+                            model: 2
+
+                            Rectangle {
+                                required property int index
+                                anchors.centerIn: parent
+                                width: 30
+                                height: 30
+                                radius: 15
+                                color: "transparent"
+                                border.width: 1.5
+                                border.color: Theme.alpha(Theme.lavender, 0.5)
+                                scale: 1
+                                opacity: 0
+                                SequentialAnimation on scale {
+                                    loops: Animation.Infinite
+                                    running: mic.visible
+                                    PauseAnimation { duration: index * 700 }
+                                    NumberAnimation { to: 1.9; duration: 1400; easing.type: Easing.OutQuad }
+                                    NumberAnimation { to: 1.0; duration: 1 }
+                                }
+                                SequentialAnimation on opacity {
+                                    loops: Animation.Infinite
+                                    running: mic.visible
+                                    PauseAnimation { duration: index * 700 }
+                                    NumberAnimation { to: 0.7; duration: 300 }
+                                    NumberAnimation { to: 0.0; duration: 1100; easing.type: Easing.InQuad }
+                                    NumberAnimation { to: 0.0; duration: 1 }
+                                }
                             }
-                            Behavior on color {
-                                ColorAnimation { duration: Style.anim.colorDuration }
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "󰍭"
+                            color: Theme.lavender
+                            font.family: Style.font.family
+                            font.pixelSize: 22 + 6 * mic.level
+                            Behavior on font.pixelSize { NumberAnimation { duration: 90 } }
+                        }
+                    }
+
+                    // ------------------------------------------------- stack
+                    // The centre column: a small-caps state word on top, the
+                    // sound strip (or, in working, the heard sentence) under
+                    // it. Bars and text never share a row -- that overlap was
+                    // the occlusion bug.
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 8
+
+                        // Working shows WHAT WAS HEARD as the main line --
+                        // a mishear is visible the moment it happens, and the
+                        // bars get out of the way entirely.
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            visible: voice.state === "working"
+                            width: card.width - 120
+                            text: voice.interim
+                            color: Theme.text
+                            font.family: Style.font.family
+                            font.pixelSize: Style.font.size + 1
+                            elide: Text.ElideMiddle
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: {
+                                if (voice.state === "listening") return "LISTENING"
+                                if (voice.state === "transcribing") return "TRANSCRIBING"
+                                if (voice.state === "working") return "THINKING"
+                                if (voice.state === "speaking") return "SPEAKING"
+                                return "DONE"
+                            }
+                            visible: voice.state !== "working"
+                            color: capsule.accent
+                            opacity: 0.9
+                            font.family: Style.font.family
+                            font.pixelSize: 10
+                            font.letterSpacing: 3
+                            font.bold: true
+                        }
+
+                        Row {
+                            id: bars
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            visible: voice.state !== "working"
+                            spacing: 3
+                            bottomPadding: 2
+
+                            property int tick: 0
+
+                            Timer {
+                                interval: 80
+                                running: voice.state === "speaking" || voice.state === "transcribing"
+                                repeat: true
+                                onTriggered: bars.tick++
                             }
 
-                            readonly property real liveLevel: {
-                                var from = voice.levels.length - voice.barCount
-                                if (voice.state === "listening" && from >= 0)
-                                    return voice.levels[from + index]
-                                return 0
-                            }
-                            readonly property real animLevel: {
-                                var t = bars.tick / 6 + index * 0.55
-                                if (voice.state === "speaking")
-                                    return 0.35 + 0.65 * Math.abs(Math.sin(t) * Math.sin(t / 2.3 + 1))
-                                if (voice.state === "transcribing")
-                                    return 0.15 + 0.2 * Math.abs(Math.sin(t))
-                                // working / done: one slow breath, near-flat
-                                return 0.12 + 0.06 * Math.sin(t / 3)
-                            }
-                            height: 6 + 40 * (voice.state === "listening" ? liveLevel : animLevel)
-                            Behavior on height {
-                                NumberAnimation { duration: 110; easing.type: Easing.OutQuad }
+                            Repeater {
+                                model: 36
+
+                                Rectangle {
+                                    required property int index
+
+                                    width: 4
+                                    radius: 2
+
+                                    // Centre-out gradient: pink core to lavender
+                                    // rim when listening, green core when
+                                    // speaking. Same geometry, different light.
+                                    readonly property real midDist:
+                                        Math.abs(index - 17.5) / 17.5
+                                    color: {
+                                        if (voice.state === "speaking")
+                                            return Qt.tint(Theme.green, Qt.rgba(Theme.teal.r, Theme.teal.g, Theme.teal.b, midDist * 0.7))
+                                        if (voice.state === "listening")
+                                            return Qt.tint(Theme.pink, Qt.rgba(Theme.lavender.r, Theme.lavender.g, Theme.lavender.b, midDist * 0.75))
+                                        return Theme.mauve
+                                    }
+
+                                    readonly property real liveLevel: {
+                                        var from = voice.levels.length - 36
+                                        if (voice.state === "listening" && from >= 0)
+                                            return voice.levels[from + index]
+                                        return 0
+                                    }
+                                    readonly property real animLevel: {
+                                        var t = bars.tick / 5
+                                        if (voice.state === "speaking") {
+                                            var env = 1 - 0.45 * midDist
+                                            return env * (0.30 + 0.55 * Math.abs(Math.sin(t + index * 0.7) * Math.sin(t / 2.6 + index)))
+                                        }
+                                        // Transcribing: one pulse travelling the
+                                        // strip, unmistakably "processing".
+                                        var w = Math.sin(t - index * 0.42)
+                                        return 0.10 + 0.55 * Math.pow(Math.max(0, w), 2)
+                                    }
+                                    height: 6 + 44 * (voice.state === "listening" ? liveLevel : animLevel)
+                                    Behavior on height {
+                                        NumberAnimation { duration: 100; easing.type: Easing.OutQuad }
+                                    }
+                                }
                             }
                         }
                     }
-                }
 
-                // -------------------------------------------------- labels
-                // What was heard, shown once transcribed and kept while the
-                // turn runs -- a mishear is visible the moment it happens.
-                Text {
-                    anchors.centerIn: parent
-                    width: card.width - 48
-                    visible: voice.state === "working"
-                    text: voice.interim
-                    color: Theme.text
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.size
-                    elide: Text.ElideMiddle
-                    horizontalAlignment: Text.AlignHCenter
-                }
-
-                // State word, for the two states without text of their own.
-                Text {
-                    anchors.centerIn: parent
-                    visible: voice.state === "done"
-                    text: "✓"
-                    color: Theme.green
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.size + 4
+                    // -------------------------------------------------- done
+                    Text {
+                        anchors.centerIn: parent
+                        visible: voice.state === "done"
+                        text: "✓"
+                        color: Theme.green
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.size + 6
+                    }
                 }
             }
-        }
         }
     }
 }
