@@ -292,7 +292,7 @@ Scope {
 
     Timer {
         id: doneTimer
-        interval: 1400
+        interval: 550
         onTriggered: state = "hidden"
     }
 
@@ -330,7 +330,7 @@ Scope {
         readonly property color accent: {
             if (voice.state === "listening") return Theme.lavender
             if (voice.state === "transcribing") return Theme.mauve
-            if (voice.state === "working") return Theme.mauve
+            if (voice.state === "working") return Theme.blue
             if (voice.state === "speaking") return Theme.green
             return Theme.green
         }
@@ -409,6 +409,23 @@ Scope {
                     border.color: Theme.alpha(capsule.accent, 0.55)
                     Behavior on border.color {
                         ColorAnimation { duration: Style.anim.colorDuration }
+                    }
+
+                    // Thinking: the border itself breathes blue. A pulse, not
+                    // a spinner -- the card is alive while it waits.
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
+                        color: "transparent"
+                        border.width: 1.5
+                        border.color: Theme.blue
+                        visible: voice.state === "working"
+                        SequentialAnimation on opacity {
+                            running: voice.state === "working"
+                            loops: Animation.Infinite
+                            NumberAnimation { to: 0.85; duration: 700; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 0.15; duration: 700; easing.type: Easing.InOutSine }
+                        }
                     }
 
                     layer.enabled: true
@@ -628,23 +645,18 @@ Scope {
                     }
 
                     // -------------------------------------------------- done
-                    // Done: the check pops (scale springs in), the bars are
-                    // gone, the card flashes green -- then the whole capsule
-                    // fades. One beat, not a resting state.
-                    Text {
-                        anchors.centerIn: parent
-                        visible: voice.state === "done"
-                        text: "\u2713"
+                    // Done is not a resting state -- one green flash across
+                    // the card and the capsule is already fading out.
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
                         color: Theme.green
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.size + 12
-                        font.bold: true
-                        scale: voice.state === "done" ? 1 : 0.4
-                        opacity: voice.state === "done" ? 1 : 0
-                        Behavior on scale {
-                            NumberAnimation { duration: 320; easing.type: Easing.OutBack }
+                        opacity: 0
+                        SequentialAnimation on opacity {
+                            running: voice.state === "done"
+                            NumberAnimation { to: 0.30; duration: 90 }
+                            NumberAnimation { to: 0.0; duration: 260; easing.type: Easing.OutQuad }
                         }
-                        Behavior on opacity { NumberAnimation { duration: 150 } }
                     }
                 }
             }

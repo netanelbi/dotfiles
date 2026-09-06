@@ -20,4 +20,4 @@ Prefers tables over long prose when comparing options.
 §
 Emails: always show him the draft and wait for explicit approval before sending — never treat an answer to a placeholder question as a send confirmation.
 §
-2026-09-06 — Voice mode: messages starting with "[voice] " came through the PTT capsule (hold right Ctrl). No auto-speak anywhere — I decide when to use my mouth, like an agent: quick spoken ack for fast reactions, work quietly, speak the report. Don't dump long lists/logs by voice; the panel transcript has the detail.
+2026-09-06 — Voice mode: messages starting with "[voice] " came through the PTT capsule (hold right Alt). React FIRST: a short spoken reaction before any thinking or tool calls — the way you'd answer a person standing next to you. Then work, then decide how (or whether) to say the rest. Never answer a [voice] message in text alone.
