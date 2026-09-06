@@ -367,7 +367,6 @@ Scope {
                     NumberAnimation { to: 0.65; duration: 1600; easing.type: Easing.InOutSine }
                     NumberAnimation { to: 1.0; duration: 1600; easing.type: Easing.InOutSine }
                 }
-                Behavior on width { NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
             }
 
             MouseArea {
@@ -393,8 +392,10 @@ Scope {
                         if (voice.state === "speaking") return midWidth
                         return dotWidth
                     }
+                    // OutBack on a wide element reads as wobble; the pop
+                    // comes from the glow and scale instead.
                     Behavior on width {
-                        NumberAnimation { duration: 380; easing.type: Easing.OutBack }
+                        NumberAnimation { duration: 320; easing.type: Easing.OutCubic }
                     }
 
                     height: 76
@@ -508,8 +509,11 @@ Scope {
                             text: "󰍭"
                             color: Theme.lavender
                             font.family: Style.font.family
-                            font.pixelSize: 22 + 6 * mic.level
-                            Behavior on font.pixelSize { NumberAnimation { duration: 90 } }
+                            font.pixelSize: 22
+                            // Scale, not font size: resizing a font re-shapes
+                            // the glyph every frame and jitters.
+                            scale: 1 + 0.25 * mic.level
+                            Behavior on scale { NumberAnimation { duration: 90 } }
                         }
                     }
 
@@ -527,7 +531,9 @@ Scope {
                         // bars get out of the way entirely.
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            visible: voice.state === "working"
+                            visible: opacity > 0.01
+                            opacity: voice.state === "working" ? 1 : 0
+                            Behavior on opacity { NumberAnimation { duration: 180 } }
                             width: card.width - 120
                             text: voice.interim
                             color: Theme.text
@@ -558,7 +564,9 @@ Scope {
                         Row {
                             id: bars
                             anchors.horizontalCenter: parent.horizontalCenter
-                            visible: voice.state !== "working"
+                            visible: opacity > 0.01
+                            opacity: voice.state === "working" ? 0 : 1
+                            Behavior on opacity { NumberAnimation { duration: 180 } }
                             spacing: 3
                             bottomPadding: 2
 
