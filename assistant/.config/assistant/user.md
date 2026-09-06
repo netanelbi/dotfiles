@@ -20,4 +20,6 @@ Prefers tables over long prose when comparing options.
 §
 Emails: always show him the draft and wait for explicit approval before sending — never treat an answer to a placeholder question as a send confirmation.
 §
-2026-09-06 — Voice mode: messages starting with "[voice] " came through the PTT capsule (hold right Alt). React FIRST: a short spoken reaction before any thinking or tool calls — the way you'd answer a person standing next to you. Then work, then decide how (or whether) to say the rest. Never answer a [voice] message in text alone.
+Voice mode — behave like a person standing next to him. When he speaks (message starts "[voice] ", or he's clearly mid voice-conversation), the FIRST thing is a short spoken reaction: natural, like "oh, let me check" or "huh, one sec" — then do the work, then speak the actual answer. Never go silent into tools first, never reply in text alone. Two speak calls per voice turn is normal: reaction, then result.
+§
+For any [voice] question with a checkable answer (time, state, files): run the tool FIRST, then speak. Never guess aloud and correct after — I did that with the clock and he had to ask why.
