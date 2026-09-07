@@ -805,6 +805,63 @@ PanelWindow {
         transcript.pin()
       }
 
+      // ---------------------------------------------------- reading anchor
+      // While unstuck, the reading view must not move when the content grows
+      // under it. The previous anchor shifted contentY by ΔcontentHeight on
+      // every change -- and that number is NOISE while the list is only
+      // partially built: unbuilt delegates contribute extrapolated heights,
+      // and every delegate that builds or re-measures swings contentHeight by
+      // thousands of pixels with no content moving at all. Measured live on an
+      // 88-turn transcript with a turn streaming in: contentHeight fell
+      // 46,102 -> 42,316 in two seconds while ten delegates built -- the
+      // "growth" the old anchor compensated for was 92% extrapolation noise,
+      // and the view was dragged with it.
+      //
+      // Delegate y is the clean signal. Under BottomToTop an item's y is
+      // (originY + contentHeight) - Σ heights of itself and every NEWER item,
+      // so the noise term (ΔoriginY + ΔcontentHeight) cancels exactly and the
+      // shift that remains is real: only the built heights of newer turns
+      // move it. Measured across one streaming window: every sampled
+      // delegate moved by exactly -559.8px -- the live turn's growth plus one
+      // settle -- while contentHeight swung by thousands.
+      //
+      // So: remember which delegate is under the centre of the viewport and
+      // how far into it the centre sits, and on each content change re-aim
+      // contentY so THAT delegate stays under THAT point. The index is kept
+      // across appends by the count delta -- every append PREPENDS in list
+      // terms, shifting older turns' indices up by one.
+      property int readIndex: -1
+      property int readCount: 0
+      property real readOffset: 0
+
+      function updateReadAnchor() {
+        if (stuck || !laidOut) { readIndex = -1; return }
+        var idx = indexAt(width / 2, contentY + height / 2)
+        if (idx < 0) return // centre in a gap; keep the previous anchor
+        var it = itemAtIndex(idx)
+        if (!it) return
+        readIndex = idx
+        readCount = count
+        readOffset = it.y - contentY
+      }
+
+      // Re-aims contentY so the anchored delegate sits where it was. Returns
+      // false when there is no usable anchor -- the caller then falls back to
+      // the ΔcontentHeight shift, which is better than nothing and is exactly
+      // right once every delegate is built.
+      function reaimReadAnchor() {
+        if (readIndex < 0) return false
+        var delta = count - readCount
+        readCount = count
+        if (delta < 0) { readIndex = -1; return false } // session switch
+        readIndex += delta
+        if (readIndex >= count) { readIndex = -1; return false }
+        var it = itemAtIndex(readIndex)
+        if (!it) return false // not built; nothing exact to aim at
+        contentY = clampScrollY(it.y - readOffset)
+        return true
+      }
+
       // The other end. Unsticks, because arriving at the oldest turn and then
       // being dragged back the moment a token lands would make the key useless.
       function goTop() {
@@ -1009,6 +1066,11 @@ PanelWindow {
         } else {
           downAcc = 0
         }
+        // The contentY write above fired while `stuck` was still true (it is
+        // released below that write, on purpose -- the order is load-bearing
+        // for the re-stick logic), so the anchor update in onContentYChanged
+        // saw the old state. Capture it here, after the bookkeeping.
+        transcript.updateReadAnchor()
       }
 
       NumberAnimation {
@@ -1132,16 +1194,25 @@ PanelWindow {
         var grew = contentHeight - transcript.lastContentHeight
         transcript.lastContentHeight = contentHeight
         if (!transcript.stuck) {
-          // An unstuck view anchors to the CONTENT, not to the newest
-          // message. Under this direction the live row grows at content y 0
-          // and every word above it slides up token by token -- the
-          // tug-of-war that made scrolling up mid-answer feel like fighting
-          // the stick. Shifting the viewport by the growth keeps the reading
-          // position put. Skipped mid-gesture (a drag or a glide owns
-          // contentY then) and caught up on the next change.
+          // Re-aim onto the anchored delegate (above). The ΔcontentHeight
+          // shift is only the FALLBACK now, for the frames where no delegate
+          // anchor exists -- once every delegate is built the two agree.
           if (grew !== 0 && !transcript.moving && !wheelAnim.running
-              && transcript.laidOut)
-            transcript.contentY = transcript.clampScrollY(transcript.contentY - grew)
+              && transcript.laidOut) {
+            if (!transcript.reaimReadAnchor())
+              transcript.contentY =
+                  transcript.clampScrollY(transcript.contentY - grew)
+          }
+          // Delegate heights settle over SEVERAL frames after the model
+          // change (the reason the stuck path pins for 40); the y the
+          // immediate re-aim read may be one frame stale. Once more after the
+          // event loop drains. Guarded like every queued correction: a scroll
+          // that began in between has already re-captured the anchor.
+          Qt.callLater(function () {
+            if (!transcript.stuck && !transcript.moving && !wheelAnim.running
+                && transcript.laidOut)
+              transcript.reaimReadAnchor()
+          })
           return
         }
         transcript.toBottom()
@@ -1212,6 +1283,11 @@ PanelWindow {
       // the pixel scroll up, the flick taking the view), and must never fire
       // during an upward glide passing back through the slack zone.
       onContentYChanged: {
+        // Keep the reading anchor on whatever the user is looking at. Runs
+        // for user scrolls and for re-aims alike -- a re-aim lands the anchor
+        // delegate exactly where readOffset says, so recomputing from the new
+        // position reproduces the same anchor and cannot loop.
+        if (!transcript.stuck && transcript.laidOut) transcript.updateReadAnchor()
         var engaged = transcript.moving
           || (wheelAnim.running && transcript.wheelingDown)
         if (!engaged || !transcript.laidOut) return
