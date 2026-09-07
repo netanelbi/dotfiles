@@ -36,13 +36,28 @@
 #    coords -- so the comparison needs no per-monitor bookkeeping.
 
 shell_pid=$(pgrep -f "quickshell .*-p $HOME/.config/quickshell" | head -1)
+read -r cx cy <<<"$(hyprctl cursorpos | tr -d ',')"
+
+# BOARDS FIRST: each board is its own layer surface named after it
+# (quickshell-board-<name>), so a cursor hit maps straight to an IPC close.
+# This runs before the panel check -- a board over the panel is the board the
+# finger is pointing at.
+while read -r layer_line; do
+    name=$(sed -n 's/.*namespace: quickshell-board-\([^,]*\),.*/\1/p' <<<"$layer_line")
+    [[ -z "$name" ]] && continue
+    xywh=$(sed -n 's/.*xywh: \([0-9]\+ [0-9]\+ [0-9]\+ [0-9]\+\).*/\1/p' <<<"$layer_line")
+    read -r bx by bw bh <<<"$xywh"
+    if (( cx >= bx && cx < bx + bw && cy >= by && cy < by + bh )); then
+        exec qs -p ~/.config/quickshell ipc call board close "$name"
+    fi
+done < <(hyprctl layers 2>/dev/null | grep "namespace: quickshell-board-.*pid: $shell_pid")
+
 layer_line=$(hyprctl layers 2>/dev/null |
     grep "namespace: quickshell-assistant, pid: $shell_pid")
 
 if [[ -n "$shell_pid" && -n "$layer_line" ]]; then
     xywh=$(sed -n 's/.*xywh: \([0-9]\+ [0-9]\+ [0-9]\+ [0-9]\+\).*/\1/p' <<<"$layer_line")
     read -r px py pw ph <<<"$xywh"
-    read -r cx cy <<<"$(hyprctl cursorpos | tr -d ',')"
     if (( cx >= px && cx < px + pw && cy >= py && cy < py + ph )); then
         exec qs -p ~/.config/quickshell ipc call assistant close
     fi

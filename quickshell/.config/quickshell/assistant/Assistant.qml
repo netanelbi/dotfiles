@@ -27,6 +27,11 @@ Scope {
   // must reach it whether or not the panel has ever been opened.
   Voice { }
 
+  // The board: a floating card scripts can render QML or HTML onto. Always
+  // mounted -- its IpcHandler must exist before the panel is ever opened --
+  // but it draws nothing while closed.
+  Board { }
+
   LazyLoader {
     id: loader
     // `activeAsync` would let the first SUPER+A open onto a half-built window;
