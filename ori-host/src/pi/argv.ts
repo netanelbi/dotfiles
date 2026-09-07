@@ -88,6 +88,11 @@ export const EXTENSIONS: readonly string[] = [
   // Text-to-speech. kokoro-npu streams to the speakers itself; the tool spawns
   // it detached and returns the pid, so a spoken reply never blocks the turn.
   "~/Development/Personal/my-pi/extensions/speak.ts",
+
+  // Spoken replies on typed messages. A state file
+  // ($XDG_RUNTIME_DIR/ori-voice-mode) is the toggle -- the extension reads it
+  // every turn, so /voice flips it without touching this list again.
+  "~/Development/Personal/my-pi/extensions/voice-mode.ts",
 ];
 
 export const DEFAULT_PROVIDER = "ollama";

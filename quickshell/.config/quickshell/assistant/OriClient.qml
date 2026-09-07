@@ -191,6 +191,34 @@ Singleton {
     } catch (e) { root.speakPlaying = false; root.speakQueued = 0 }
   }
 
+  // Voice mode: typed messages get spoken too. The state is the same file the
+  // voice-mode extension reads every turn, so this toggle needs no host and no
+  // restart -- touch/rm lands on the NEXT turn. Watched like speak state, so a
+  // toggle from anywhere (shell, another session) lights this up live.
+  property bool voiceMode: false
+  readonly property string voiceModeFile: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/ori-voice-mode"
+  FileView {
+    id: voiceModeState
+    path: root.voiceModeFile
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.voiceMode = true
+    onFileChanged: reload()
+    onLoadFailed: root.voiceMode = false
+  }
+  Process {
+    id: voiceModeProc
+    command: ["sh", "-c", root.voiceMode ? "rm -f '" + root.voiceModeFile + "'" : "touch '" + root.voiceModeFile + "'"]
+  }
+  function toggleVoiceMode() {
+    // Reload first: watchChanges may lag a beat behind a shell-made change, and
+    // toggling on stale state would write the opposite of what is on screen.
+    voiceModeState.reload()
+    voiceMode = !voiceMode
+    voiceModeProc.command = ["sh", "-c", root.voiceMode ? "touch '" + root.voiceModeFile + "'" : "rm -f '" + root.voiceModeFile + "'"]
+    voiceModeProc.running = true
+  }
+
   // Right-click on the bar cell pins it shut. Not persisted and not host state:
   // it is a preference about one widget, and the widget is instantiated once
   // per monitor, so the two copies have to agree on it somewhere.

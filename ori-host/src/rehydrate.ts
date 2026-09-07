@@ -78,6 +78,11 @@ export function rehydrate(entries: readonly unknown[], deps: RehydrateDeps): Tur
 
     switch (m["role"]) {
       case "user": {
+        // Extension-injected reminders (voice-mode) ride in user messages with
+        // a customType set. They are for the model, never the transcript -- and
+        // unlike bg_process_done they are RECORDED, so without this skip every
+        // rehydrate renders them as if the user had typed them.
+        if (text(m["customType"]) !== "") break;
         // A question always ends the answer above it, tool loop or not.
         open = null;
         // Attached images do NOT come back. The file holds base64 data, while

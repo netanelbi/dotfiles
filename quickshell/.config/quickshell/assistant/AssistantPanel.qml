@@ -1697,7 +1697,7 @@ PanelWindow {
 
       // The key hint, where the mock keeps it.
       Text {
-        anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
+        anchors { right: parent.right; rightMargin: 44; verticalCenter: parent.verticalCenter }
         text: "ENTER · ESC"
         visible: entry.text === "" && entry.implicitHeight < 40
         color: Theme.overlay0
@@ -1705,6 +1705,28 @@ PanelWindow {
         font.pixelSize: Style.font.panelMeta - 2
         font.letterSpacing: 2
         renderType: Text.QtRendering
+      }
+
+      // The voice-mode toggle. Lit when typed messages get spoken; the state is
+      // OriClient's file watch, the click is a plain touch/rm -- no host round
+      // trip, in effect from the next message. Left of the key hint so the
+      // hint keeps its corner.
+      Text {
+        id: voiceToggle
+        anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
+        text: "🔊"
+        font.pixelSize: Style.font.panelBody
+        renderType: Text.QtRendering
+        opacity: OriClient.voiceMode ? 1 : 0.35
+        color: OriClient.voiceMode ? Theme.accent : Theme.overlay0
+        Behavior on opacity { NumberAnimation { duration: Style.anim.quick } }
+
+        MouseArea {
+          anchors.fill: parent
+          anchors.margins: -8
+          cursorShape: Qt.PointingHandCursor
+          onClicked: OriClient.toggleVoiceMode()
+        }
       }
 
       Behavior on height {
