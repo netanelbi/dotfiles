@@ -109,6 +109,9 @@ PanelWindow {
       id: centerIsland
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.verticalCenter: parent.verticalCenter
+      // An unread answer breathes around the whole pill -- the state has to
+      // read from across the room, and a 10px orb cannot carry it alone.
+      aura: OriClient.unread
 
       // CENTER SECTION -- waybar's "modules-center", in its order:
       //   clock, hyprland/language, custom/capslock, pulseaudio#mic,
@@ -275,6 +278,29 @@ PanelWindow {
   component Island: Rectangle {
     id: island
     default property alias content: islandRow.data
+
+    // The unread aura: a sky ring breathing just outside the pill while an
+    // answer sits unread. Only the centre island sets it (OriClient.unread).
+    // It runs one opacity animation while unread -- unread is temporary by
+    // construction (cleared the moment the panel opens) -- and paints nothing
+    // at all otherwise, so the bar keeps its no-idle-cost rule.
+    property bool aura: false
+
+    Rectangle {
+      anchors { fill: parent; margins: -4 }
+      radius: island.radius + 4
+      color: "transparent"
+      border.color: Theme.sky
+      border.width: 1.5
+      visible: island.aura
+      opacity: 0
+      SequentialAnimation on opacity {
+        running: island.aura
+        loops: Animation.Infinite
+        NumberAnimation { to: 0.8; duration: 900; easing.type: Easing.OutQuad }
+        NumberAnimation { to: 0.25; duration: 2100; easing.type: Easing.InQuad }
+      }
+    }
 
     readonly property bool empty: islandRow.implicitWidth <= 0
     // The row's offset inside the island (it is centred), for anyone who

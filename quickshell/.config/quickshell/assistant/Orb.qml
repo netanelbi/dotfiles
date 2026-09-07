@@ -18,9 +18,15 @@ import ".."
 Item {
   id: orb
 
-  // idle | listening | thinking | working | speaking | done | failed
+  // idle | listening | thinking | working | speaking | done | failed | ready
   // "thinking" is the model; "working" is a tool touching the machine, in
   // the shell's own mauve for that (Theme.accent).
+  // "ready" is an UNREAD ANSWER: the turn settled with the panel closed, and
+  // the docked orb holds the fact. The shell's unread language is sky (OriCell,
+  // OriVeil), so the orb speaks it too -- and a soft ring ping every few
+  // seconds says "something to read" without a clock running. The phase timer
+  // and the ring rotation both treat ready like idle: no permanent animation
+  // in the bar, only the ping.
   property string mode: "idle"
   // Live level 0..1: the voice while listening, the speech while speaking.
   property real level: 0
@@ -50,7 +56,8 @@ Item {
   Timer {
     interval: 50
     repeat: true
-    running: orb.alive && (orb.floating || orb.breathe || orb.mode !== "idle")
+    running: orb.alive && (orb.floating || orb.breathe
+          || (orb.mode !== "idle" && orb.mode !== "ready"))
     onTriggered: {
       orb.phase += 0.05
       var t = orb.phase
@@ -71,6 +78,7 @@ Item {
     : mode === "speaking"  ? Theme.lavender
     : mode === "done"      ? Theme.green
     : mode === "failed"    ? Theme.red
+    : mode === "ready"     ? Theme.sky
     : Theme.mauve
 
   readonly property bool busy: alive && (mode !== "idle" || poked)
@@ -152,6 +160,19 @@ Item {
     lastPing = now
     ping(level)
   }
+
+  // The ready ping: one soft ring every three seconds while an answer sits
+  // unread. Event-shaped (the same ring the voice uses) but on a slow clock,
+  // because "I have something for you" is the one state that must reach you
+  // across the room when you are not looking. A 3s timer that fires a 900ms
+  // animation is the whole cost -- between pings the docked orb is static.
+  Timer {
+    interval: 3000
+    repeat: true
+    running: orb.alive && orb.mode === "ready"
+    triggeredOnStart: true
+    onTriggered: orb.ping(0.4)
+  }
   property int pingSlot: 0
   function ping(strength) {
     var r = rings.itemAt(pingSlot % 4)
@@ -209,7 +230,10 @@ Item {
     scale: 1 + orb.level * 0.35
     Behavior on scale { NumberAnimation { duration: 90 } }
     RotationAnimation on rotation {
-      running: orb.busy || (orb.alive && orb.bright)
+      // "ready" is deliberately NOT busy for the rings: a permanently turning
+      // ring in the bar is the cost the shell refuses, and the ping already
+      // carries the state.
+      running: (orb.busy && orb.mode !== "ready") || (orb.alive && orb.bright)
       loops: Animation.Infinite
       from: ring.reverse ? 360 : 0
       to: ring.reverse ? 0 : 360

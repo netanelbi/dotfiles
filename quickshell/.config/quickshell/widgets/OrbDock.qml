@@ -63,11 +63,13 @@ Item {
     alive: !root.away
     breathe: false
     // At rest it still says what the session is doing, in the same colours
-    // the overlay uses: blue while a turn runs, lavender while it talks.
+    // the overlay uses: blue while a turn runs, lavender while it talks, sky
+    // while an answer sits unread -- the pinging state, Orb.qml's "ready".
     mode: OriClient.speaking ? "speaking"
         : OriClient.working ? "working"
         : OriClient.busy ? "thinking"
-        : OriClient.error !== "" ? "failed" : "idle"
+        : OriClient.error !== "" ? "failed"
+        : OriClient.unread ? "ready" : "idle"
     level: OriClient.speaking ? OriClient.voiceLevel : 0
     opacity: root.away ? 0 : (OriClient.unread ? 1 : 0.85)
     // Into the panel it shrinks into the hole; back out it grows from it.

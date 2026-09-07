@@ -412,7 +412,15 @@ Singleton {
     // celebration -- rule overshoot, glyph fill, scale, `unread` latched -- and
     // a heartbeat later the frame turned red. The turn itself now carries the
     // verdict, so ask it.
-    if (sock.connected && !root.lastTurnFailed()) root.settled()
+    if (sock.connected && !root.lastTurnFailed()) {
+      // An answer nobody is looking at is UNREAD. OriCell used to latch this;
+      // it is retired, and the orb's "ready" ping and the centre pill's aura
+      // both read the flag -- so the latch lives here, at the source: settled
+      // while the panel is closed means "something to read". The panel clears
+      // it the moment it opens (Assistant.qml).
+      if (!root.panelOpen) root.unread = true
+      root.settled()
+    }
   }
 
   /** Did the newest assistant turn end without finishing? Reads the row rather

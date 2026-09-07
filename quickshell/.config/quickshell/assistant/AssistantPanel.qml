@@ -196,12 +196,17 @@ PanelWindow {
   // long think still gets its word when the hold expires. Panel-local so the
   // orb keeps its own shorter rhythm.
   property string railTool: ""
-  readonly property string liveToolSafe: {
-    if (OriClient.activeTool !== "") {
-      railTool = OriClient.activeTool
+  readonly property string liveToolSafe:
+      OriClient.activeTool !== "" ? OriClient.activeTool : railTool
+  // The write lives in a HANDLER, not the binding: a binding that writes one
+  // of its own dependencies is a loop (measured -- the engine said so).
+  Connections {
+    target: OriClient
+    function onActiveToolChanged() {
+      if (OriClient.activeTool === "") return
+      panel.railTool = OriClient.activeTool
       railHold.restart()
     }
-    return OriClient.activeTool !== "" ? OriClient.activeTool : railTool
   }
   Timer { id: railHold; interval: 4000; onTriggered: panel.railTool = "" }
 
