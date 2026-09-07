@@ -822,7 +822,24 @@ Item {
               // switch over everything a turn did, so opening it to check a
               // single command unrolled twenty. Here you open the three that ran
               // between two paragraphs and the rest stays a count.
-              property bool open: false
+              //
+              //   0 = auto: OPEN while the turn runs, tally once it settles --
+              //       a run you are watching should read as the calls happening,
+              //       not as a number being rewritten under them (the owner:
+              //       "while you work i should see it open"). Compaction is the
+              //       SETTLE moment, not a mid-turn state.
+              //   1 = user opened the tally early;  -1 = user folded the calls
+              //   early. The hand wins over the auto-behaviour and is remembered
+              //   for the rest of the turn so the two cannot fight.
+              property int userChoice: 0
+              readonly property bool open:
+                  userChoice !== 0 ? userChoice > 0 : turnItem.pending
+              // Auto-open rows are COMPACT -- description only, one line per
+              // call -- so a run of calls reads as a list of intents, not a
+              // wall of commands (the owner: "description only ... show it if
+              // i expand"). Deliberately expanded rows show the commands.
+              readonly property bool rowsCompact:
+                  userChoice === 0 && turnItem.pending
 
               // ------------------------------------------------- the tally
               // What is over, as a number. Click it to see what the number was.
@@ -863,7 +880,7 @@ Item {
                 MouseArea {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: batch.open = true
+                  onClicked: batch.userChoice = 1
                 }
               }
 
@@ -901,6 +918,7 @@ Item {
                       call: piece.cs[batch.done[index]] || turnItem.noPiece
                       nowMs: turnItem.nowMs
                       breath: turnItem.breath
+                      compact: batch.rowsCompact
                     }
                   }
                 }
@@ -908,7 +926,7 @@ Item {
                 MouseArea {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: batch.open = false
+                  onClicked: batch.userChoice = -1
                 }
               }
 

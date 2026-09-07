@@ -39,6 +39,28 @@ const CAPTURE_SCRIPT =
 
 export const NO_IMAGE_EXIT = 3;
 
+/**
+ * The host's own environment is frozen at whatever moment systemd started it
+ * -- and the unit starts at LOGIN, before the compositor exists, so it often
+ * carries no WAYLAND_DISPLAY at all. `wl-paste` then cannot connect, exits
+ * 3, and every image paste dies as a SILENT "nothing on the clipboard"
+ * (measured -- the panel side was blameless). Detect the socket instead:
+ * XDG_RUNTIME_DIR is always ours, and the compositor's socket is the one
+ * file there named wayland-N.
+ */
+function childEnv(): Record<string, string> {
+  const env = { ...Bun.env } as Record<string, string>;
+  if (env["WAYLAND_DISPLAY"]) return env;
+  try {
+    const dir = env["XDG_RUNTIME_DIR"] || "/run/user/0";
+    const sock = require("node:fs")
+      .readdirSync(dir)
+      .find((f: string) => /^wayland-\d+$/.test(f));
+    if (sock) env["WAYLAND_DISPLAY"] = sock;
+  } catch {}
+  return env;
+}
+
 export interface ImageIo {
   run(argv: string[]): Promise<{ code: number; stdout: string }>;
   /** Byte length, or -1 when the file is not there. Separate from `read` so a
@@ -49,7 +71,7 @@ export interface ImageIo {
 
 export const defaultImageIo: ImageIo = {
   async run(argv) {
-    const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore" });
+    const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore", env: childEnv() });
     const stdout = await new Response(proc.stdout).text();
     const code = await proc.exited;
     return { code, stdout };

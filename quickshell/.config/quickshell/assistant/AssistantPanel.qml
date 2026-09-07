@@ -177,18 +177,37 @@ PanelWindow {
   // which is the distinction that matters when you look up mid-turn.
   readonly property color accent:
       OriClient.error !== "" ? Theme.red
-    : OriClient.activeTool !== "" ? Theme.accent
+    : liveToolSafe !== "" ? Theme.accent
     : OriClient.busy ? Theme.sapphire
     : OriClient.bgCount > 0 ? Theme.accent
     : OriClient.warm ? Theme.sapphire
     : Theme.inactive
 
-  // The verb, in the panel's own vocabulary. "thinking" and "answering" are
-  // different states and the difference is visible from across the room: one is
-  // silence, the other is text arriving.
+  // workTool is lastTool even when the hold has expired -- right for the orb,
+  // which gates on `working`, wrong for a fresh turn that is busy but has not
+  // run anything yet. Here the hold itself is part of the test.
+  readonly property string liveTool:
+      OriClient.activeTool !== "" || OriClient.workHeld ? String(OriClient.workTool || "") : ""
+
+  // The rail's OWN hold, longer than the orb's 1s: thinking between two calls
+  // regularly outlasts a second, and a verb that keeps falling through to
+  // "thinking"/"answering" and back reads as flicker (the owner said so).
+  // Four seconds holds the sentence through ordinary think gaps; a genuinely
+  // long think still gets its word when the hold expires. Panel-local so the
+  // orb keeps its own shorter rhythm.
+  property string railTool: ""
+  readonly property string liveToolSafe: {
+    if (OriClient.activeTool !== "") {
+      railTool = OriClient.activeTool
+      railHold.restart()
+    }
+    return OriClient.activeTool !== "" ? OriClient.activeTool : railTool
+  }
+  Timer { id: railHold; interval: 4000; onTriggered: panel.railTool = "" }
+
   readonly property string stateLabel:
       OriClient.error !== "" ? "error"
-    : OriClient.activeTool !== "" ? "running " + OriClient.activeTool.split(" ")[0]
+    : liveToolSafe !== "" ? "running " + liveToolSafe.split(" ")[0]
     : !OriClient.busy ? ""
     // Background work is NOT named here any more. It has a strip of its own
     // (BackgroundTray) directly above this one, because it is a different kind
@@ -197,11 +216,14 @@ PanelWindow {
     : (OriClient.liveTurn && OriClient.liveTurn.text !== "") ? "answering" : "thinking"
 
   // WHY it is running that, beside the verb that says it is running something.
-  // `activeTool` is the tool name and its one summarised argument joined by a
+  // `workTool` is the tool name and its one summarised argument joined by a
   // space, and summarizeArgs() prefers the `description` pi's tool-descriptions
   // extension makes every call carry -- so this is the sentence Ori wrote for
   // the call in flight. The panel had it all along and was throwing it away on
-  // `.split(" ")[0]`.
+  // `.split(" ")[0]`. It is workTool, not activeTool, so the verb HOLDS through
+  // the empty frames between two calls (same 1s hold the orb uses) instead of
+  // flicking to "thinking" mid-run; the busy guard keeps the hold from leaking
+  // past the end of the turn.
   //
   // Here, and not in the turn: this rail is the one place on the card that
   // cannot move. The transcript scrolls, a turn's own rows arrive and grow, but
@@ -210,9 +232,9 @@ PanelWindow {
   // transcript keeps the same sentence per call as a ToolLine, which is the
   // record; this is the readout.
   readonly property string stateDetail: {
-    if (OriClient.error !== "" || OriClient.activeTool === "") return ""
-    var cut = OriClient.activeTool.indexOf(" ")
-    return cut < 0 ? "" : OriClient.activeTool.substring(cut + 1)
+    if (OriClient.error !== "" || liveToolSafe === "") return ""
+    var cut = liveToolSafe.indexOf(" ")
+    return cut < 0 ? "" : liveToolSafe.substring(cut + 1)
   }
 
   Fmt { id: fmt }
@@ -308,6 +330,7 @@ PanelWindow {
     // what ties the two halves together -- delete `[Image 1]` and that image is
     // not sent.
     function onAttachedImage(n, path) {
+      console.warn("[probe] attachedImage fired:", n, path)
       var m = "[Image " + n + "]"
       if (entry.text !== "" && !/\s$/.test(entry.text)) m = " " + m
       entry.insert(entry.cursorPosition, m + " ")
