@@ -7,26 +7,45 @@
 # whatever window happened to be behind it -- destructive, and triggered by
 # muscle memory at exactly the moment the panel has your attention.
 #
+# Now the panel PUSHES windows instead of overlaying them, so its meaning has
+# changed: SUPER+Q closes ori only when the cursor is actually ON the panel.
+# Cursor anywhere else -- even with the panel open -- closes the focused
+# window as usual, because that window is no longer hidden under the panel;
+# it is tiled beside it and visible.
+#
 # A Hyprland submap would also work and is the "native" answer, but submaps do
 # not inherit: entering one disables every other bind, so a Quickshell crash
 # while the panel is open would strand the session in a map with almost no keys.
 # Not worth it to fix one bind.
 #
-# Instead: ask whether the panel's layer surface exists. `hyprctl layers` lists
-# it by namespace only while it is mapped (verified: 1 while open, 0 while
-# closed), which needs no IPC into Quickshell and no change to its QML.
+# Two conditions, both cheap:
 #
-# Matched by PID as well as by namespace, which is not paranoia: a SECOND
-# quickshell -- a scratch copy rendering a preview off-screen -- maps a layer
-# with the identical namespace on the same compositor. On a namespace-only
-# match SUPER+Q then talked to a shell that is not the panel, quietly did
-# nothing, and stopped closing windows altogether for as long as that copy was
-# alive. Which is exactly when someone is working on the panel and reaching for
-# SUPER+Q most.
+# 1. The panel's layer surface exists. `hyprctl layers` lists it by namespace
+#    only while it is mapped, which needs no IPC into Quickshell and no change
+#    to its QML. Matched by PID as well as by namespace, which is not paranoia:
+#    a SECOND quickshell -- a scratch copy rendering a preview off-screen --
+#    maps a layer with the identical namespace on the same compositor. On a
+#    namespace-only match SUPER+Q then talked to a shell that is not the
+#    panel, quietly did nothing, and stopped closing windows altogether for as
+#    long as that copy was alive. Which is exactly when someone is working on
+#    the panel and reaching for SUPER+Q most.
+#
+# 2. The cursor sits inside the panel's xywh. `hyprctl layers` reports the box
+#    in global layout coords (eDP-1 sits at 1920x0, so a box at x 0 is on
+#    DP-2), and `hyprctl cursorpos` reports the cursor in the same global
+#    coords -- so the comparison needs no per-monitor bookkeeping.
+
 shell_pid=$(pgrep -f "quickshell .*-p $HOME/.config/quickshell" | head -1)
-if [[ -n "$shell_pid" ]] &&
-   hyprctl layers 2>/dev/null | grep -q "namespace: quickshell-assistant, pid: $shell_pid"; then
-    exec qs -p ~/.config/quickshell ipc call assistant close
+layer_line=$(hyprctl layers 2>/dev/null |
+    grep "namespace: quickshell-assistant, pid: $shell_pid")
+
+if [[ -n "$shell_pid" && -n "$layer_line" ]]; then
+    xywh=$(sed -n 's/.*xywh: \([0-9]\+ [0-9]\+ [0-9]\+ [0-9]\+\).*/\1/p' <<<"$layer_line")
+    read -r px py pw ph <<<"$xywh"
+    read -r cx cy <<<"$(hyprctl cursorpos | tr -d ',')"
+    if (( cx >= px && cx < px + pw && cy >= py && cy < py + ph )); then
+        exec qs -p ~/.config/quickshell ipc call assistant close
+    fi
 fi
 
 # Hyprland 0.56+ parses the dispatch argument as Lua.
