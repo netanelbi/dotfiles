@@ -173,7 +173,38 @@ Singleton {
   // the fallback for speech the tool did not start (the orb's own wake).
   property bool speakPlaying: false
   property int speakQueued: 0
-  readonly property bool speaking: root.oriTalking || root.speakPlaying || root.speakQueued > 0
+  readonly property bool speakingRaw: root.oriTalking || root.speakPlaying || root.speakQueued > 0
+
+  // SPEAKING, with a hold, for the same reason `working` has one -- but the
+  // cost of flicking is far higher here. speak.ts says ONE LINE AT A TIME, so
+  // two speak calls in a turn are two separate lines with a whole LLM round
+  // trip between them, and every source reads false across that gap. Without
+  // the hold the orb flies home to the pill (700ms) and straight back out,
+  // and the pill closes and reopens its perch under it. Gated on `busy`, so a
+  // turn that ends silent cannot leave it stuck.
+  readonly property bool speaking: root.speakingRaw || (root.busy && root.speakHeld)
+  property bool speakHeld: false
+  onSpeakingRawChanged: {
+    if (root.speakingRaw) { root.speakHeld = true; speakHold.stop() }
+    else speakHold.restart()
+  }
+  Timer {
+    id: speakHold
+    interval: 3000
+    onTriggered: root.speakHeld = false
+  }
+  // ori-speak.json is only ever corrected by the extension's own publish(), so
+  // a pi killed mid-utterance leaves `playing: true` in the file forever. That
+  // used to be a wrong tint; now `speaking` decides whether the orb LIVES on
+  // the desktop, so it stranded the orb there with the pill perch shut and
+  // `orbFree` unable to help (wantOut is an OR). PipeWire is the ground truth:
+  // if the file claims speech and no kokoro stream has appeared for 15s -- far
+  // longer than any synthesis lead-in -- the file is lying, so drop it.
+  Timer {
+    interval: 15000
+    running: (root.speakPlaying || root.speakQueued > 0) && !root.oriTalking
+    onTriggered: { root.speakPlaying = false; root.speakQueued = 0 }
+  }
   FileView {
     id: speakState
     path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/ori-speak.json"
@@ -446,7 +477,7 @@ Singleton {
       // both read the flag -- so the latch lives here, at the source: settled
       // while the panel is closed means "something to read". The panel clears
       // it the moment it opens (Assistant.qml).
-      if (!root.panelOpen) root.unread = true
+      if (!root.panelOpen && !root.voiceMode) root.unread = true
       root.settled()
     }
   }
