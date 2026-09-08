@@ -89,6 +89,11 @@ export const EXTENSIONS: readonly string[] = [
   // it detached and returns the pid, so a spoken reply never blocks the turn.
   "~/Development/Personal/my-pi/extensions/speak.ts",
 
+  // Ephemeral per-request state that isn't speech: date/time for now. The
+  // `context` hook appends a tagged block before every LLM call — never
+  // persisted, appended at the end so the cached prefix is never busted.
+  "~/Development/Personal/my-pi/extensions/ambient.ts",
+
   // Spoken replies on typed messages. A state file
   // ($XDG_RUNTIME_DIR/ori-voice-mode) is the toggle -- the extension reads it
   // every turn, so /voice flips it without touching this list again.

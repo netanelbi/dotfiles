@@ -19,7 +19,8 @@
  * written down and points at the module the rule came from.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 
 import {
@@ -71,6 +72,18 @@ import { defaultUsageIo, OllamaUsage, type UsageIo } from "./usage";
  * behind a build; long enough that a command about to finish still gets to.
  */
 const STEER_DETACH_GRACE_MS = 300;
+
+/** True when the installed binary was written AFTER this process started, i.e.
+ * `bun run build` has run since. Only then does /restart need to take the whole
+ * host down; otherwise killing the pi child is enough and much cheaper.
+ * Fails CLOSED -- if the executable cannot be stat'd, keep the old behaviour. */
+function binaryIsStale(): boolean {
+  try {
+    return statSync(process.execPath).mtimeMs > Date.now() - process.uptime() * 1000;
+  } catch {
+    return false;
+  }
+}
 
 /** Set once the ori-sessions.json migration has run, so it is read exactly one
  *  time in the life of an index rather than on every start. */
@@ -974,6 +987,24 @@ export class Host {
         return;
 
       case "restart":
+        // Killing the child re-reads the PROMPT files, but not the EXTENSION
+        // list -- that is baked into this binary and passed to pi as -e flags.
+        // So after `bun run build` a plain /restart silently keeps running the
+        // old list, and a newly added extension never loads (a REMOVED one is
+        // worse: pi exits 1 on a missing -e path and the panel just says "pi
+        // exited"). If the installed binary is newer than this process, the
+        // whole host has to go. The restart is DETACHED and delayed so this
+        // turn reaches the panel first -- restarting the unit from inside the
+        // unit would cut the socket mid-reply.
+        if (binaryIsStale()) {
+          spawn(
+            "systemd-run",
+            ["--user", "--on-active=3", "--unit=ori-restart", "systemctl", "--user", "restart", "ori-agent"],
+            { stdio: "ignore", detached: true },
+          ).unref();
+          agent.notice("host binary is newer than this process -- restarting ori-agent in ~3s to pick up the extension list");
+          return;
+        }
         // The child goes; the conversation stays. The next message spawns a
         // fresh pi, which re-reads the prompt files -- and the panel is told,
         // because a command that changes nothing on screen looks like a no-op.

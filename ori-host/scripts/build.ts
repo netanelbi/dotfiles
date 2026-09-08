@@ -17,6 +17,8 @@
  */
 
 import { join } from "node:path";
+import { homedir } from "node:os";
+import { renameSync, rmSync, chmodSync } from "node:fs";
 
 const root = join(import.meta.dir, "..");
 const outfile = join(root, "dist", "ori-host");
@@ -42,3 +44,17 @@ if (!result.success) {
 
 const size = Bun.file(outfile).size;
 console.log(`built ${outfile} (${(size / 1024 / 1024).toFixed(1)} MB)`);
+
+// Install. The systemd unit execs ~/.local/bin/ori-host, NOT dist/ — a build
+// that stops at dist/ leaves the service running a stale binary until someone
+// remembers to copy by hand (which has already bitten once).
+const installed = join(homedir(), ".local", "bin", "ori-host");
+// ETXTBSY if the old binary is running (the host always is) — write beside it
+// and rename over it, which the kernel allows.
+const staging = installed + ".new";
+rmSync(staging, { force: true });
+await Bun.write(staging, Bun.file(outfile));
+renameSync(staging, installed);
+chmodSync(installed, 0o755); // Bun.write/rename leave 644 — a non-executable
+// install crashes the service with exec status 126 (has bitten once).
+console.log(`installed ${installed}`);
