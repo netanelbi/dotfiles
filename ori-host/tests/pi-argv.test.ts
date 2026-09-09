@@ -96,7 +96,7 @@ describe("buildArgv", () => {
   test("a missing prompt file is SKIPPED, not passed", () => {
     // The trap: pi tells a path from literal prompt text with existsSync(), so a
     // path that does not resolve is prepended to the system prompt as text.
-    const missing = `${HOME}/.config/assistant/memory.md`;
+    const missing = `${HOME}/.pi/agent/memory/MEMORY.md`;
     const argv = buildArgv(cfg({ exists: (p) => p !== missing }));
     const prompts = allAfter(argv, "--append-system-prompt");
     expect(prompts).toHaveLength(3);

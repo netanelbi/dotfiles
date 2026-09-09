@@ -47,9 +47,12 @@ export const SHIM_URL = "https://ollama.ncym.uk";
 export const PROMPT_FILES: readonly string[] = [
   "~/.config/assistant/soul.md",
   "~/.config/assistant/laptop.md",
-  "~/.config/assistant/memory.md",
-  // Who he is, as opposed to what this machine is. Written by the `memory`
-  // tool, same as memory.md -- see the extension for why the two are split.
+  // The memory extension's generated index: one line per pinned fact. The
+  // facts themselves live beside it, one file each, and are read on demand.
+  // $PI_MEMORY_DIR would move both; the default is what pi in a terminal uses
+  // too, so Ori and the terminal share one memory.
+  "~/.pi/agent/memory/MEMORY.md",
+  // Who he is, as opposed to what this machine is. Ori edits it directly.
   "~/.config/assistant/user.md",
 ];
 
@@ -70,9 +73,9 @@ export const EXTENSIONS: readonly string[] = [
   // is invisible to the client by construction.
   "~/Development/Personal/my-pi/extensions/shim-web.ts",
 
-  // Bounded, agent-owned memory: memory.md and user.md, with a cap that REFUSES
-  // an overflowing write and hands back the current entries, so consolidation
-  // happens in the same turn instead of never.
+  // Agent-owned memory: one fact per file, a capped index of the pinned ones
+  // that REFUSES an overflowing write and hands back the index, so
+  // consolidation happens in the same turn instead of never.
   "~/Development/Personal/my-pi/extensions/memory.ts",
 
   // Delegation. Each subagent is a separate pi process, so its context is

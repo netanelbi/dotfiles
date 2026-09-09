@@ -8,7 +8,6 @@ vivo unless it says otherwise.
 - Display: eDP-1, 1920x1200 physical at **scale 1.5** — so 1280x800 logical.
   Screenshots come out in physical pixels; a 460px panel measures ~690px in a
   grab. Do not "fix" a size based on a screenshot without dividing by 1.5.
-- **No sudo.** Not "avoid it" — the owner does not have it. Print the command.
 - GPU: AMD Strix Point (Radeon 890M), ROCm available for local inference.
 
 ## Traps that have already cost time
@@ -33,18 +32,11 @@ In `~/.local/bin` (the `scripts` and `vivo` stow packages):
 - `power-profile-cycle`, `tdp`, `fix-cpu-freq` — power and thermals
 - `vrgb` — keyboard RGB
 - `hypr-*-watch` — event-driven Hyprland state (never poll; the repo forbids it)
-- `recall <query>` — BM25 search over every past session and memory file on this
-  machine, **including my own**. My conversations are indexed under a `pi:`
-  project prefix, so `recall --project pi <query>` searches only what the owner
-  and I have said to each other, and a bare `recall <query>` also reaches his
-  Claude Code work. Add `--json` when I want to parse it, `--since 2026-08-01`
-  to bound it, and `recall around '#ID' -C 4` to expand a hit into its
-  surrounding messages.
-
-  This is the thing to reach for when he says "we discussed this before" or
-  when I half-remember a decision. My memory files hold what is always true;
-  this holds what was actually said, and it is cheap (~50-75ms) — cheaper than
-  guessing and much cheaper than being wrong.
+- `recall <query>` — BM25 search over every past session and memory file on
+  this machine, mine included (`--project pi` = only my own talks with the
+  owner). Reach for it when he says "we discussed this" or I half-remember a
+  decision; it is ~50ms. `--json` to parse, `--since 2026-08-01` to bound,
+  `recall around '#ID' -C 4` to expand a hit.
 - `bd` — beads issue tracker, works from any directory
 - `gws` — Google Workspace CLI (calendar/gmail/drive), work profile by default
 - `slk` — Slack CLI
@@ -52,8 +44,8 @@ In `~/.local/bin` (the `scripts` and `vivo` stow packages):
 
 ## Waking myself up
 
-There is no cron daemon here and I do not need one — systemd takes a one-shot
-timer with no unit file, so I can schedule my own work in a single command:
+systemd takes a one-shot timer with no unit file, so I can schedule my own
+work in a single command:
 
 ```bash
 # once, in 30 minutes
@@ -69,18 +61,25 @@ systemd-run --user --on-calendar='*:0/30' --unit=ori-watch \
 transcript and the bar mark goes bright, so the next time the owner looks it is
 waiting for them.
 
-**Never restart `ori-agent` yourself.** `systemctl --user restart ori-agent`
-kills the broker, and I run inside it -- so the bash call you made never
-returns, this turn dies mid-sentence, and the owner's panel is left holding a
-turn that can never settle. If a restart is genuinely needed, say so and let
-the owner run it. You do not need to anyway: the broker kills my process after
-ten minutes of silence, so the next question already gets a fresh one.
-
 Housekeeping, because a forgotten timer is worse than no timer:
 `systemctl --user list-timers` to see mine, `systemctl --user stop <unit>.timer`
 to cancel one, and `systemctl --user reset-failed <unit>` after a one-shot to
 clear its leftover unit. Name every recurring timer with `--unit=ori-*` so they
 are obviously mine and easy to sweep.
+
+## Restarting things
+
+- **Never restart `ori-agent` myself.** I run inside it, so the call never
+  returns and the turn dies mid-sentence. Say so and let the owner run it. Not
+  needed anyway: the host kills my pi process after ten minutes of silence.
+- **Quickshell is separate.** Restarting it does not touch my session. When it
+  is wedged, kill it and relaunch it in its own scope — a plain relaunch from my
+  shell puts it inside ori-agent's cgroup, and the next `ori-agent` restart
+  kills it too:
+
+  ```bash
+  pkill quickshell; systemd-run --user --scope quickshell -n -p ~/.config/quickshell
+  ```
 
 ## Talking to the shell I live in
 
