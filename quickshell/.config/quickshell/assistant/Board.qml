@@ -4,6 +4,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
 import ".."
+import "Md.js" as Md
 
 // The boards: floating cards the agent renders onto, by name, in any number,
 // on any monitor. It is the agent's own surface layer -- it spawns them,
@@ -77,6 +78,13 @@ Scope {
       if (String(q || "").trim() === "") return "refused: question needs <name> <q> [options]"
       var c = root.get(name)
       return c ? c.askQuestion(String(q), String(options || "")) : "error"
+    }
+
+    // A markdown file, rendered (headings, code, tables) and scrollable.
+    function md(name: string, path: string, title: string): string {
+      if (String(path || "").trim() === "") return "refused: md needs <name> <path> [title]"
+      var c = root.get(name)
+      return c ? c.showMd(String(path), String(title || "")) : "error"
     }
 
     function title(name: string, title: string): string {
@@ -164,6 +172,9 @@ Scope {
     property url qmlSource: ""
     property int qmlRev: 0
     property string html: ""
+    property string mdPath: ""
+    property string mdBuf: ""
+    property string mdHtml: ""
     property string question: ""
     property var options: []
     // The free-form field AS IT IS BEING TYPED.
@@ -202,6 +213,24 @@ Scope {
       board.mode = "html"
       board.open()
       return "showing html on " + board.name
+    }
+
+    // A markdown file, read + converted to styled rich text and rendered
+    // scrollable. Buffer-then-assign-once: never feed a rich/markdown text
+    // element incrementally, that wedges the engine (see SKILL.md).
+    function showMd(path: string, title: string): string {
+      if (String(path || "").trim() === "") return "refused: no md path"
+      board.mdPath = String(path)
+      board.mdBuf = ""
+      mdRead.buf = ""
+      var base = board.mdPath.split("/").pop()
+      board.title = String(title || "").trim() !== "" ? String(title).toUpperCase() : "📄 " + base.toUpperCase()
+      board.mode = "md"
+      board.open()
+      resize("680", "780")
+      mdRead.command = ["cat", "--", board.mdPath]
+      mdRead.running = true
+      return "showing " + path + " on " + board.name
     }
 
     function askQuestion(q: string, optionsCsv: string): string {
@@ -322,7 +351,7 @@ Scope {
       if (!OriClient.panelOpen) return 0
       var dock = OriClient.panelDock
       if (!board.screen || dock.screen !== board.screen.name) return 0
-      return 600
+      return 586
     }
 
     // Does rect (x, y, w, h) overlap any other OPEN board on this screen?
@@ -371,9 +400,9 @@ Scope {
       var rows = Math.floor((s.height - top - 40 + 12) / stepY)
       for (var r = 0; r < Math.max(1, rows); r++) {
         for (var c = 0; c < Math.max(1, cols); c++) {
-          var x = s.width - 36 - w - c * stepX
+          var x = minX + c * stepX
           var y = top + r * stepY
-          if (x < minX) break
+          if (x + w + 36 > s.width) break
           if (y + h + 40 > s.height) break
           if (!overlapsAny(x, y, w, h)) return Qt.point(x, y)
         }
@@ -452,6 +481,22 @@ Scope {
       }
     }
 
+    // Reads a markdown file into mdBuf; onExited converts + assigns ONCE.
+    Process {
+      id: mdRead
+      property string buf: ""
+      stdout: SplitParser { onRead: data => mdRead.buf += data + "\n" }
+      onExited: {
+        board.mdBuf = mdRead.buf
+        mdAssign.restart()
+      }
+    }
+    Timer {
+      id: mdAssign
+      interval: 250; repeat: false
+      onTriggered: board.mdHtml = Md.toHtml(board.mdBuf)
+    }
+
     // ------------------------------------------------------------ card
     Rectangle {
       id: card
@@ -460,7 +505,7 @@ Scope {
       width: board.cardWidth
       height: board.cardHeight
 
-      color: Theme.alpha(Theme.base, 0.72)
+      color: Theme.alpha(Theme.base, 0.88)
       radius: 12
       border.width: 1
       border.color: Theme.alpha(Theme.sapphire, 0.5)
@@ -622,6 +667,47 @@ Scope {
           color: Theme.text
           font.family: Style.font.panelFamily
           font.pixelSize: Style.font.panelBody - 3
+          wrapMode: Text.WordWrap
+          onLinkActivated: function (link) { Qt.openUrlExternally(link) }
+          MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.NoButton
+            cursorShape: parent.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.ArrowCursor
+          }
+        }
+      }
+
+      // Markdown file, converted by Md.js to styled rich text and rendered
+      // like the html card -- one-shot text assignment, wheel to scroll.
+      Flickable {
+        id: mdScroll
+        anchors { top: header.bottom; left: parent.left; right: parent.right; bottom: parent.bottom }
+        contentWidth: width
+        contentHeight: mdBody.height + 24
+        visible: board.mode === "md"
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+
+        // Flickable's native wheel step is timid; real steps per notch and
+        // 1:1 pixel tracking for touchpads (same rules as the panel scroll).
+        WheelHandler {
+          acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+          onWheel: function (ev) {
+            var dy = ev.pixelDelta.y !== 0 ? ev.pixelDelta.y : ev.angleDelta.y / 120 * 200
+            var max = Math.max(0, mdScroll.contentHeight - mdScroll.height)
+            mdScroll.contentY = Math.max(0, Math.min(max, mdScroll.contentY - dy))
+          }
+        }
+
+        Text {
+          id: mdBody
+          x: 16; y: 12
+          width: mdScroll.width - 32
+          text: board.mdHtml
+          textFormat: Text.RichText
+          color: Theme.text
+          font.family: Style.font.panelFamily
+          font.pixelSize: Style.font.panelBody - 2
           wrapMode: Text.WordWrap
           onLinkActivated: function (link) { Qt.openUrlExternally(link) }
           MouseArea {

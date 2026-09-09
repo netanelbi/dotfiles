@@ -253,13 +253,12 @@ PanelWindow {
   // moves for an afternoon, while the running total is what actually tells you
   // the conversation is getting heavy.
   readonly property string contextLabel: {
-    if (OriClient.usageTotal <= 0) return "—"
-    // `~` while the number is pi's post-compaction estimate: the readout says
-    // what it knows and admits it is not measured yet.
-    var out = (OriClient.usageEstimated ? "~" : "") + fmt.tokens(OriClient.usageTotal)
-    if (!OriClient.contextKnown) return out
+    // Percentage only. The absolute count and the tok/s readout were dropped
+    // for room: the gauge above the footer already says how full, and the
+    // footer's job is the modes now that voice lives here too.
+    if (!OriClient.contextKnown || OriClient.usageTotal <= 0) return "—"
     var pct = OriClient.contextFraction * 100
-    return out + " · " + (pct < 10 ? pct.toFixed(1) : String(Math.round(pct))) + "%"
+    return (pct < 10 ? pct.toFixed(1) : String(Math.round(pct))) + "%"
   }
 
   // ------------------------------------------------------------- frame clock
@@ -1697,7 +1696,7 @@ PanelWindow {
 
       // The key hint, where the mock keeps it.
       Text {
-        anchors { right: parent.right; rightMargin: 44; verticalCenter: parent.verticalCenter }
+        anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
         text: "ENTER · ESC"
         visible: entry.text === "" && entry.implicitHeight < 40
         color: Theme.overlay0
@@ -1705,28 +1704,6 @@ PanelWindow {
         font.pixelSize: Style.font.panelMeta - 2
         font.letterSpacing: 2
         renderType: Text.QtRendering
-      }
-
-      // The voice-mode toggle. Lit when typed messages get spoken; the state is
-      // OriClient's file watch, the click is a plain touch/rm -- no host round
-      // trip, in effect from the next message. Left of the key hint so the
-      // hint keeps its corner.
-      Text {
-        id: voiceToggle
-        anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
-        text: "🔊"
-        font.pixelSize: Style.font.panelBody
-        renderType: Text.QtRendering
-        opacity: OriClient.voiceMode ? 1 : 0.35
-        color: OriClient.voiceMode ? Theme.accent : Theme.overlay0
-        Behavior on opacity { NumberAnimation { duration: Style.anim.quick } }
-
-        MouseArea {
-          anchors.fill: parent
-          anchors.margins: -8
-          cursorShape: Qt.PointingHandCursor
-          onClicked: OriClient.toggleVoiceMode()
-        }
       }
 
       Behavior on height {
@@ -2076,14 +2053,38 @@ PanelWindow {
         renderType: Text.QtRendering
       }
 
+      // Voice mode, in the line the eye already reads for state -- and the one
+      // place that stays visible while a turn runs, which the orb is not: its
+      // tint means activity, so armed state drowned the moment Ori worked. A
+      // mouth, lit when typed messages get spoken, dim when not; a click flips.
+      Text {
+        id: voiceChip
+        anchors { right: ctxLabel.left; rightMargin: 10
+                  verticalCenter: parent.verticalCenter; verticalCenterOffset: 1 }
+        text: "👄"
+        renderType: Text.QtRendering
+        opacity: OriClient.voiceMode ? 1 : 0.35
+        font.pixelSize: Style.font.panelMeta + 2
+
+        Behavior on opacity { NumberAnimation { duration: Style.anim.quick } }
+
+        MouseArea {
+          anchors.fill: parent
+          anchors.margins: -8
+          cursorShape: Qt.PointingHandCursor
+          onClicked: OriClient.toggleVoiceMode()
+        }
+      }
+
       // Real numbers, in the order they become knowable: nothing before a
       // session exists, then the running token total once usage starts
       // streaming, then a percentage once the session has reported its window.
       // A window this shell has not been told is never guessed at.
       Text {
+        id: ctxLabel
         anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter
                   verticalCenterOffset: 1 }
-        text: panel.contextLabel + " ctx · " + panel.rateLabel
+        text: panel.contextLabel + " ctx"
         color: Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta

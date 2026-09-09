@@ -51,10 +51,12 @@ PanelWindow {
     onTriggered: overlay.moving = false
   }
 
-  // Out for a voice exchange, or out because it is FREE. While the panel is
-  // open the orb is docked at the panel's input row instead, so this surface
-  // has nothing to draw.
-  readonly property bool wantOut: (voice.state !== "hidden" || OriClient.orbFree) && !OriClient.panelOpen
+  // Out for a voice exchange, or out because it is FREE, or out because Ori is
+  // SPEAKING -- a session's speak tool counts: with the panel closed the mouth
+  // in the footer is not visible, and the orb is where the sound gets a body.
+  // While the panel is open the orb is docked at the panel's input row instead,
+  // so this surface has nothing to draw.
+  readonly property bool wantOut: (voice.state !== "hidden" || OriClient.orbFree || OriClient.speaking) && !OriClient.panelOpen
   // Drawn: wanted out, or still flying home.
   property bool shown: false
   visible: shown || stage.opacity > 0.001
@@ -387,6 +389,7 @@ PanelWindow {
   readonly property string mode:
       overlay.voice.state === "listening" ? "listening"
     : overlay.voice.state === "speaking" ? "speaking"
+    : (OriClient.speaking && overlay.voice.state === "hidden") ? "speaking"
     : overlay.voice.state === "done" ? "done"
     : overlay.voice.state === "transcribing" ? "thinking"
     : overlay.sessionWorking ? "working"
@@ -398,6 +401,7 @@ PanelWindow {
   readonly property string verb:
       overlay.voice.state === "listening" ? "listening"
     : overlay.voice.state === "speaking" ? "speaking"
+    : (OriClient.speaking && overlay.voice.state === "hidden") ? "speaking"
     : overlay.voice.state === "done" ? "done"
     : overlay.voice.state === "transcribing" ? "hearing"
     : overlay.sessionWorking ? OriClient.workTool.split(" ")[0]
@@ -528,33 +532,67 @@ PanelWindow {
     }
 
     // A small word under the orb: what it is doing. And under that, while a
-    // tool runs, what it is running.
-    Text {
+    // tool runs, what it is running. Each on a soft crust pill: backing beats
+    // an outline on a busy wallpaper, and a 9px hairline outline did not read
+    // over the beach photos at all.
+    Item {
+      id: verbTag
+      readonly property bool on: overlay.voice.state !== "done" && overlay.verb !== "here"
+      width: verbText.implicitWidth + 26
+      height: verbText.implicitHeight + 12
       x: overlay.lx - width / 2
-      y: overlay.ly + 60
-      text: "ori · " + overlay.verb
-      color: orb.tint
-      opacity: (overlay.voice.state === "done" || overlay.verb === "here") ? 0 : 0.85
-      font.family: Style.font.family
-      font.pixelSize: 9
-      font.letterSpacing: 3
-      font.capitalization: Font.AllUppercase
-      style: Text.Outline
-      styleColor: Theme.alpha(Theme.crust, 0.85)
+      y: overlay.ly + 58
+      opacity: on ? 0.95 : 0
       Behavior on opacity { NumberAnimation { duration: 200 } }
+
+      Rectangle {
+        anchors.fill: parent
+        radius: height / 2
+        color: Theme.alpha(Theme.base, 0.75)
+      }
+
+      Text {
+        id: verbText
+        anchors.centerIn: parent
+        text: "ori · " + overlay.verb
+        color: orb.tint
+        font.family: Style.font.family
+        font.pixelSize: 11
+        font.letterSpacing: 2
+        font.capitalization: Font.AllUppercase
+        style: Text.Raised
+        styleColor: Theme.alpha(Theme.crust, 0.9)
+      }
     }
-    Text {
+    Item {
+      id: detailTag
+      width: Math.min(detailText.implicitWidth, 320) + 22
+      height: detailText.implicitHeight + 10
       x: overlay.lx - width / 2
-      y: overlay.ly + 74
-      width: Math.min(implicitWidth, 320)
-      text: overlay.detail
+      y: verbTag.y + verbTag.height + 5
       visible: overlay.detail !== "" && overlay.voice.state !== "done"
-      color: Theme.subtext0
-      elide: Text.ElideMiddle
-      font.family: Style.font.panelMono
-      font.pixelSize: Style.font.tiny
-      style: Text.Outline
-      styleColor: Theme.alpha(Theme.crust, 0.85)
+      opacity: visible ? 1 : 0
+      Behavior on opacity { NumberAnimation { duration: 200 } }
+
+      Rectangle {
+        anchors.fill: parent
+        radius: height / 2
+        color: Theme.alpha(Theme.base, 0.75)
+      }
+
+      Text {
+        id: detailText
+        anchors.centerIn: parent
+        width: Math.min(implicitWidth, 300)
+        text: overlay.detail
+        color: Theme.subtext0
+        elide: Text.ElideMiddle
+        horizontalAlignment: Text.AlignHCenter
+        font.family: Style.font.panelMono
+        font.pixelSize: Style.font.tiny
+        style: Text.Raised
+        styleColor: Theme.alpha(Theme.crust, 0.9)
+      }
     }
 
     // What the mic heard, beside the orb on whichever side has room. A
@@ -581,17 +619,13 @@ PanelWindow {
         opacity: 0.85
       }
 
-      // A soft backing that fades out, not a card: the words need to read
-      // over whatever window is under them.
+      // A uniform soft backing, not a card: the words need to read over
+      // whatever window is under them. The old end-fades let the wallpaper
+      // bleed through exactly where the eye lands first.
       Rectangle {
         anchors.fill: parent
         radius: 12
-        gradient: Gradient {
-          orientation: Gradient.Horizontal
-          GradientStop { position: 0.0; color: Theme.alpha(Theme.crust, cap.toRight ? 0.9 : 0.0) }
-          GradientStop { position: 0.5; color: Theme.alpha(Theme.crust, 0.82) }
-          GradientStop { position: 1.0; color: Theme.alpha(Theme.crust, cap.toRight ? 0.0 : 0.9) }
-        }
+        color: Theme.alpha(Theme.base, 0.6)
       }
 
       Text {

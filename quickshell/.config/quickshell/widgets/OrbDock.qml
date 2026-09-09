@@ -13,10 +13,12 @@ import "../assistant"
 Item {
   id: root
 
-  // Out for voice: the perch closes up and the pill shrinks around the gap --
-  // the orb has LEFT, and the bar says so. Into the panel: the perch stays,
-  // and a dark hole is left where the orb was, until it comes back.
-  readonly property bool outVoice: (OriClient.voiceState !== "hidden" || OriClient.orbFree) && !OriClient.panelOpen
+  // Out for voice, for the free orb, or for Ori speaking: a session's speak
+  // tool pops the orb out with the panel closed, and the perch must close up
+  // for that too -- the orb cannot be in two places at once. Into the panel:
+  // the perch stays, and a dark hole is left where the orb was, until it
+  // comes back.
+  readonly property bool outVoice: (OriClient.voiceState !== "hidden" || OriClient.orbFree || OriClient.speaking) && !OriClient.panelOpen
   readonly property bool inPanel: OriClient.panelOpen
   readonly property bool away: outVoice || inPanel
 

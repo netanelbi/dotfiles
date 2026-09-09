@@ -64,7 +64,13 @@ Scope {
     // waveform of the voice, not a rhythm made up to look like one.
     property var playLevels: []
     readonly property real playLevel: playLevels.length > 0 ? playLevels[playLevels.length - 1] : 0
-    readonly property real level: state === "speaking" ? playLevel : liveLevel
+    readonly property real level:
+        // Speaking is speaking, whoever started it: the capsule's own exchange
+        // (state === "speaking") or the session's speak tool (oriTalking, which
+        // is just the kokoro stream on the sink). Without the second arm a
+        // session-spoken reply pops the orb out flat -- right colour, no life.
+        (state === "speaking" || (state === "hidden" && OriClient.oriTalking)) ? playLevel
+      : liveLevel
 
     // Published for the other two perches (bar dock, panel input row).
     Binding { target: OriClient; property: "voiceState"; value: voice.state }
