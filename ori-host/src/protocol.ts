@@ -215,6 +215,13 @@ export interface PeerRow {
   label?: string;
   /** The transcript path, which is how a row is joined to the session index. */
   sessionFile?: string;
+  /** This row is one of Ori's own conversations, i.e. a session this host owns. */
+  ori?: boolean;
+  /** 1-based, by start time, among Ori's LIVE conversations. Cosmetic: what the
+   *  row is addressed by is still `name`. */
+  instance?: number;
+  /** The conversation the panel is currently showing. */
+  active?: boolean;
   /** Epoch ms. */
   startedAt: number;
   endedAt?: number;

@@ -98,11 +98,34 @@ Rectangle {
         if (kids[k].alive) live.push(kids[k])
         else doneCount++
       }
+      // ORI IS ONE AGENT, not one per conversation it has ever held.
+      //
+      // Switching conversations parks the old one WITHOUT killing its child --
+      // deliberately, so a session mid-answer keeps answering -- so every
+      // conversation of the day was still alive and drew its own row. Four
+      // Oris, one of you.
+      //
+      // A parked conversation earns a row only by still doing something: it is
+      // mid-turn (then it genuinely is a second Ori working alongside the one
+      // you are talking to), or it has a delegate of its own still running
+      // (dropping it would orphan a live agent). Otherwise it is a session, and
+      // sessions belong to Ctrl+R.
+      if (top.ori && !top.active && !top.busy && live.length === 0) continue
       list.push({ row: top, depth: 0, done: doneCount })
       for (var j = 0; j < live.length; j++)
         list.push({ row: live[j], depth: 1, done: 0 })
     }
     return list
+  }
+
+  // Ori's conversations are prefixed and numbered, because they are all the
+  // same assistant in the same repo and the handle alone (`dotfiles-39162e`)
+  // says neither. Everything else is somebody else's agent and gets only its
+  // own name -- or its handle, when it has no name to give.
+  function displayName(r) {
+    var n = r.label || r.name
+    if (!r.ori) return n
+    return "Ori #" + (r.instance ? r.instance : "?") + " - " + n
   }
 
   // Denser than the card it sits on: a list is read, and glass under glass
@@ -275,21 +298,15 @@ Rectangle {
                   leftMargin: 14 + parent.depth * 16; rightMargin: 22; topMargin: 5 }
         // The tree mark is the indent's explanation. Without it a nested row
         // just looks misaligned.
-        // Handle first, name second. The handle is what you type at `peers
-        // send`, so it cannot be replaced by the name -- but a row that was
-        // only a handle said nothing about what the conversation IS.
-        //
-        // Capped here rather than trusted: an Ori conversation has no session
-        // name, so the host substitutes the label it derived for the resume
-        // picker, and that is the whole opening question up to 90 characters.
-        // Elide alone would let one row's title push the state line off screen.
-        text: (parent.depth > 0 ? "↳ " : "")
-            + parent.r.name
-            + (parent.r.label
-               ? "  “" + (parent.r.label.length > 44
-                          ? parent.r.label.slice(0, 44) + "…"
-                          : parent.r.label) + "”"
-               : "")
+        // Capped rather than trusted: an Ori conversation has no session name,
+        // so the host substitutes the label it derived for the resume picker,
+        // and that is the whole opening question up to 90 characters. Elide
+        // alone would let one row's title push the state line off screen.
+        text: {
+          var n = root.displayName(parent.r)
+          if (n.length > 52) n = n.slice(0, 52) + "…"
+          return (parent.depth > 0 ? "↳ " : "") + n
+        }
         color: parent.r.alive ? Theme.text : Theme.subtext0
         elide: Text.ElideRight
         font.family: Style.font.panelMono
@@ -306,7 +323,13 @@ Rectangle {
                   leftMargin: 14 + parent.depth * 16; rightMargin: 22; topMargin: 2 }
         text: {
           var bits = []
-          bits.push(parent.r.kind === "root" ? "root" : "delegate")
+          // "root" was a word out of the registry's vocabulary, not the
+          // user's, and on an Ori row the prefix already said it. What is worth
+          // naming is only what a row IS: one of Ori's, a delegate, or a pi
+          // running somewhere else on this machine.
+          if (parent.r.ori) bits.push(parent.r.active ? "current" : "parked")
+          else if (parent.r.kind === "root") bits.push("pi")
+          else bits.push("delegate")
           bits.push(root.stateWord(parent.r))
           var w = root.when(parent.r.startedAt, root.nonce)
           if (w) bits.push(w)

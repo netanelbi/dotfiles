@@ -50,6 +50,7 @@ import {
   type HostEvent,
   type ImageRef,
   type PeerRow,
+  type SessionEntry,
   type SlashCommand,
 } from "./protocol";
 import { rehydrate } from "./rehydrate";
@@ -710,19 +711,38 @@ export class Host {
    * task instead), and anything with no match is left alone.
    */
   #peerRows(): PeerRow[] {
-    const byFile = new Map<string, { label: string; busy: boolean }>();
-    for (const s of this.pool.list())
-      if (s.file) byFile.set(s.file, { label: s.label, busy: s.busy });
+    const byFile = new Map<string, SessionEntry>();
+    for (const s of this.pool.list()) if (s.file) byFile.set(s.file, s);
     if (byFile.size === 0) return this.catalog.peerRows;
-    return this.catalog.peerRows.map((r) => {
+    const activeSession = this.pool.active?.sessionId ?? "";
+
+    const rows = this.catalog.peerRows.map((r) => {
       const hit = r.sessionFile ? byFile.get(r.sessionFile) : undefined;
       if (!hit) return r;
       // `busy` is the host's own per-conversation flag, and it is the only
       // honest answer to "is this thing working". The registry cannot say: it
       // writes "running" at session_start and does not touch it again until
       // exit, so every parked-but-alive conversation reads as running there.
-      return { ...r, busy: hit.busy, label: r.label || hit.label || undefined };
+      //
+      // `ori` is what lets the panel tell Ori's own conversations from a
+      // terminal pi in another repo: this host owns a session index, and being
+      // in it IS the definition. Nothing about the name or the cwd is used.
+      return {
+        ...r,
+        ori: true,
+        busy: hit.busy,
+        active: hit.id === activeSession,
+        label: r.label || hit.label || undefined,
+      };
     });
+
+    // Instance numbers, oldest first, over the LIVE ones only. Numbering the
+    // dead too would leave the visible rows starting at #7 on a machine that
+    // has been up a while.
+    let n = 0;
+    for (const r of [...rows].filter((r) => r.ori && r.alive).sort((a, b) => a.startedAt - b.startedAt))
+      r.instance = ++n;
+    return rows;
   }
 
   /** True unless the pid is provably gone. EPERM means it exists. */
