@@ -174,6 +174,14 @@ export class Pool {
     return this.#slots.get(this.#activeId)?.conv ?? null;
   }
 
+  /** The live conversation holding this transcript, active or parked. */
+  findByFile(file: string): Conversation | null {
+    if (file === "") return null;
+    for (const slot of this.#slots.values())
+      if (slot.conv.sessionFile === file) return slot.conv;
+    return null;
+  }
+
   get activeId(): string {
     return this.#activeId;
   }

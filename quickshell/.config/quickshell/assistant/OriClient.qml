@@ -759,6 +759,9 @@ Singleton {
   // turn finishes in the background. The host does the rest.
   function newChat() { return root.send({ t: "new" }) }
   function resume(id) { return root.send({ t: "resume", sessionId: String(id) }) }
+  function renamePeer(peer, title) {
+    return root.send({ t: "rename_peer", peer: String(peer), title: String(title) })
+  }
   function activate(convId) { return root.send({ t: "activate", convId: String(convId) }) }
 
   function setPanelOpen(open) { root.panelOpen = open === true }

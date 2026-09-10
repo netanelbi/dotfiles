@@ -373,6 +373,9 @@ export type ClientCmd =
    *  never stop a running turn. See docs/specs/multi-session.md. */
   | { t: "new"; id?: string }
   | { t: "resume"; id?: string; sessionId: string }
+  /** Rename an agent from the agents view. `peer` is a PeerRow.name. Only
+   *  conversations this host owns can be renamed; see Host's handler. */
+  | { t: "rename_peer"; id?: string; peer: string; title: string }
   | { t: "activate"; id?: string; convId: string }
 
   /** Panel visibility, so the host can own the unread mark. */

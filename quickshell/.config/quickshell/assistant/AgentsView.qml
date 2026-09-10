@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import ".."
 
 // Ctrl+S: every pi session on this machine, as a tree.
@@ -187,6 +188,44 @@ Rectangle {
     return r.status || "idle"
   }
 
+  // ------------------------------------------------------------- renaming
+  // Ctrl+R here, where Ctrl+R in the chat panel is resume: this surface has no
+  // resume to offer -- it never switches conversation -- so the key is free,
+  // and "the list of things, R to rename one" is the gesture it already means
+  // elsewhere on this desktop.
+  //
+  // Only Ori's own conversations can be renamed: the host renames by sending
+  // pi's `set_session_name` to the child it holds, and it holds none for a
+  // terminal pi or a delegate. Saying so up front beats an ack that fails.
+  property bool renaming: false
+  readonly property var currentRow: root.rows.length > 0 && root.current < root.rows.length
+      ? root.rows[root.current].row : null
+  readonly property bool canRename: root.currentRow !== null && root.currentRow.ori === true
+
+  function beginRename() {
+    if (!root.canRename) {
+      OriClient.notice = "only Ori's own conversations can be renamed"
+      return
+    }
+    renameField.text = root.currentRow.label || ""
+    root.renaming = true
+    renameField.forceActiveFocus()
+    renameField.selectAll()
+  }
+
+  function commitRename() {
+    var t = renameField.text.trim()
+    var r = root.currentRow
+    root.renaming = false
+    root.forceActiveFocus()
+    if (t !== "" && r) OriClient.renamePeer(r.name, t)
+  }
+
+  function cancelRename() {
+    root.renaming = false
+    root.forceActiveFocus()
+  }
+
   Keys.onPressed: function (event) {
     switch (event.key) {
     case Qt.Key_Down:
@@ -198,6 +237,12 @@ Rectangle {
     case Qt.Key_K:
       root.current = Math.max(root.current - 1, 0)
       event.accepted = true
+      return
+    case Qt.Key_R:
+      if (event.modifiers & Qt.ControlModifier) {
+        root.beginRename()
+        event.accepted = true
+      }
       return
     case Qt.Key_Escape:
     case Qt.Key_Return:
@@ -214,10 +259,12 @@ Rectangle {
   Text {
     id: title
     anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
-    text: "agents  ·  "
-        + (root.upCount > 0 ? root.upCount + " up" : "none up")
-        + (root.workingCount > 0 ? "  ·  " + root.workingCount + " working" : "")
-        + "  ·  ↑↓ move   esc back"
+    text: root.renaming
+        ? "rename  ·  ⏎ save   esc cancel"
+        : "agents  ·  "
+          + (root.upCount > 0 ? root.upCount + " up" : "none up")
+          + (root.workingCount > 0 ? "  ·  " + root.workingCount + " working" : "")
+          + "  ·  ↑↓ move   ctrl+r rename   esc back"
     color: Theme.overlay0
     font.family: Style.font.panelMono
     font.pixelSize: Style.font.panelMeta
@@ -235,10 +282,44 @@ Rectangle {
     renderType: Text.QtRendering
   }
 
+  // The rename field. Docked at the bottom rather than drawn over the row: an
+  // in-place editor would have to fight the delegate's own layout, and the row
+  // being renamed still needs to be readable while you type a new name for it.
+  Rectangle {
+    id: renameBar
+    anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 8 }
+    height: root.renaming ? 36 : 0
+    visible: root.renaming
+    radius: 8
+    color: Theme.alpha(Theme.base, 0.8)
+    border.width: 1
+    border.color: Theme.alpha(root.accent, renameField.activeFocus ? 0.9 : 0.3)
+
+    TextField {
+      id: renameField
+      anchors { fill: parent; leftMargin: 12; rightMargin: 12 }
+      verticalAlignment: TextInput.AlignVCenter
+      placeholderText: "new name…"
+      placeholderTextColor: Theme.overlay0
+      color: Theme.text
+      font.family: Style.font.panelMono
+      font.pixelSize: Style.font.panelBody
+      background: null
+      onAccepted: root.commitRename()
+      Keys.onPressed: function (event) {
+        if (event.key === Qt.Key_Escape) {
+          root.cancelRename()
+          event.accepted = true
+        }
+      }
+    }
+  }
+
   ListView {
     id: list
     anchors { left: parent.left; right: parent.right; top: title.bottom
-              bottom: parent.bottom; margins: 6; topMargin: 8 }
+              bottom: root.renaming ? renameBar.top : parent.bottom
+              margins: 6; topMargin: 8 }
     model: root.rows
     clip: true
     spacing: 2

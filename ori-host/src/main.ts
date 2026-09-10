@@ -187,6 +187,11 @@ class Agent implements PoolConv {
   }
 
   label(): string {
+    // An explicit name WINS over the derived one. Without this, renaming a
+    // conversation changed pi's session name and the agents view, and the
+    // resume picker went on showing the opening question -- two names for one
+    // thing, which is the state this rename exists to end.
+    if (this.conv.state.sessionName) return deriveLabel(this.conv.state.sessionName);
     for (const t of this.conv.turns) {
       if (t.role === "user" && t.text !== "") return deriveLabel(t.text);
     }
@@ -939,6 +944,28 @@ export class Host {
         this.pool.create();
         this.#ack(conn, cmd.id, true);
         return;
+
+      case "rename_peer": {
+        // Renaming goes through pi's OWN session name rather than the registry:
+        // pi writes it into the transcript, peers.ts sees session_info_changed
+        // and puts it on the row, and Agent.label() prefers it -- so one edit
+        // lands in the agents view AND the resume picker, with no second copy
+        // to drift. That is only possible for a conversation this host holds a
+        // child for; anything else is somebody's terminal pi or a delegate, and
+        // this host has no channel to it.
+        const title = cmd.title.trim();
+        const row = this.catalog.peerRows.find((r) => r.name === cmd.peer);
+        const target = this.pool.findByFile(row?.sessionFile ?? "") as Agent | null;
+        if (title === "") {
+          this.#ack(conn, cmd.id, false, "a name cannot be empty");
+        } else if (!target) {
+          this.#ack(conn, cmd.id, false, "only Ori's own conversations can be renamed from here");
+        } else {
+          target.send({ type: "set_session_name", name: title });
+          this.#ack(conn, cmd.id, true);
+        }
+        return;
+      }
 
       case "resume": {
         try {
