@@ -624,6 +624,21 @@ export class Host {
     if (!server) return;
     const out = ev.t === "sessions" ? { ...ev, entries: this.withAgents(ev.entries) } : ev;
     for (const conn of server.conns()) conn.send(out);
+    // A peer row carries two facts the REGISTRY does not know -- which
+    // conversation is active, and which is mid-turn -- and peers are otherwise
+    // only pushed when that file changes. Switching conversations changes both
+    // and touches no file, so the panel kept the old active row and drew it as
+    // "current · asleep" long after you had moved on. A session list going out
+    // is exactly the moment those two facts moved.
+    // ...and the same for a turn starting or ending, which moves `busy` on a
+    // row without writing anything the registry watcher would see. A turn that
+    // calls no tool never touches the registry at all.
+    const stale =
+      ev.t === "sessions" || (ev.t === "state" && (ev.patch as { busy?: boolean }).busy !== undefined);
+    if (stale) {
+      const rows = this.#peerRows();
+      for (const conn of server.conns()) conn.send({ t: "peers", rows });
+    }
   }
 
   /**
