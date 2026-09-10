@@ -188,6 +188,10 @@ Rectangle {
       if (r.busy === false) return "up"
       return r.activity ? "working" : "up"
     }
+    // The conversation you are IN, with no child: stopped, or idle-killed by
+    // the pool. "gone" is what the pid says and it is the wrong word -- the
+    // pool respawns on the next message, so it is asleep, not lost.
+    if (r.active) return "asleep"
     return "gone"
   }
 

@@ -746,8 +746,13 @@ export class Host {
     // Instance numbers, oldest first, over the LIVE ones only. Numbering the
     // dead too would leave the visible rows starting at #7 on a machine that
     // has been up a while.
+    // `alive || active`: stopping the conversation you are IN leaves it on the
+    // list (it is the one the panel is showing, and the pool respawns its child
+    // on the next message), and a row with no number rendered as "#?".
     let n = 0;
-    for (const r of [...rows].filter((r) => r.ori && r.alive).sort((a, b) => a.startedAt - b.startedAt))
+    for (const r of [...rows]
+      .filter((r) => r.ori && (r.alive || r.active))
+      .sort((a, b) => a.startedAt - b.startedAt))
       r.instance = ++n;
     return rows;
   }
