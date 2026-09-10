@@ -485,6 +485,14 @@ export class Host {
     this.catalog = new Catalog(opts.catalogPaths ? { paths: opts.catalogPaths } : {});
     this.catalog.onChange((what) => this.#onCatalogChange(what));
 
+    // Periodic tray sweep. Reconciliation also runs on every bg broadcast, but
+    // a delegate whose parent died mid-flight leaves a row the registry never
+    // touches again -- nothing writes, so nothing emits, so without this the
+    // dead row would sit until the host restarted. A dead pid is the one fact
+    // that does not need a file change to be true.
+    const sweep = setInterval(() => this.#broadcastBg(), 60_000);
+    sweep.unref?.();
+
     this.pool = new Pool({
       store: this.store,
       emit: (ev) => this.broadcast(ev),
@@ -645,12 +653,53 @@ export class Host {
   #bgByConv = new Map<string, BgJob[]>();
 
   #broadcastBg(): void {
+    // RECONCILE. A tray row is born from a tool result and is supposed to die
+    // from the delegate's own report-back -- but that report is a queued
+    // followUp in the conversation's pi child, and a child that dies first
+    // (killed, evicted, crashed) takes it with it. research-compare-three sat
+    // in the tray for half an hour after it was long dead for exactly this
+    // reason. The registry is the source of truth -- the catalog already
+    // watches it -- so settled rows drop here, and so does anything claiming to
+    // run whose pid is gone. Bash jobs are not registry rows and pass untouched.
+    const rows = this.catalog.registryRows ?? {};
+    for (const [convId, list] of this.#bgByConv) {
+      const kept = list.filter((j) => {
+        if (j.kind !== "agent" || !j.name) return true;
+        const row = rows[j.name];
+        if (!row) return false; // pruned -- delegates older than a day are gone
+        if (row.status !== "running") return false;
+        if (row.pid !== undefined && row.pid > 0 && !this.#pidAlive(row.pid)) return false;
+        return true;
+      });
+      if (kept.length !== list.length) this.#bgByConv.set(convId, kept);
+    }
+    // The delegate's live line is joined HERE, at broadcast time, not stored on
+    // the job: the registry rewrites it on every tool call the child makes, and
+    // a job object frozen at addBgJob would carry the first line forever. The
+    // catalog already watches the registry file; this is where its map and the
+    // job list meet. Joined by handle -- the same key the panel looks up.
     const jobs: BgJob[] = [];
-    for (const list of this.#bgByConv.values()) jobs.push(...list);
+    for (const list of this.#bgByConv.values())
+      jobs.push(
+        ...list.map((j) => {
+          const activity = this.catalog.agentActivity[j.name] ?? undefined;
+          return activity === j.activity ? j : { ...j, activity };
+        }),
+      );
     // convId is the ACTIVE conversation, not the jobs' owners: the panel's
     // ingest drops any event addressed to a conversation it is not showing, and
     // this one is addressed to all of them at once.
     this.broadcast({ t: "bg", convId: this.pool.activeId, jobs });
+  }
+
+  /** True unless the pid is provably gone. EPERM means it exists. */
+  #pidAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err: unknown) {
+      return (err as NodeJS.ErrnoException)?.code === "EPERM";
+    }
   }
 
   #panelCmds(): SlashCommand[] {
@@ -661,10 +710,13 @@ export class Host {
   }
 
   #onCatalogChange(what: CatalogChange): void {
-    // "activity" is the subagent registry, which feeds BgJob.activity -- not
-    // wired to a HostEvent yet, and silently broadcasting the model list on it
-    // would be noise.
-    if (what === "activity") return;
+    // "activity" is the subagent registry: the delegate's current tool line
+    // moved, so the tray's ↳ rows are stale until the bg list is re-sent. Only
+    // the bg broadcast -- pushing the model list on it would be noise.
+    if (what === "activity") {
+      this.#broadcastBg();
+      return;
+    }
     this.broadcast({ t: "models", models: this.catalog.availableModels });
     this.broadcast({ t: "commands", commands: this.#panelCmds() });
   }

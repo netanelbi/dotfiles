@@ -218,6 +218,8 @@ export class Catalog {
   ollamaApiKey = "";
   /** subagent handle -> what that delegate is doing right now. */
   agentActivity: Record<string, string> = {};
+  /** Every registry row by handle: status and pid. See reloadRegistry. */
+  registryRows: Record<string, { status: string; pid?: number }> = {};
 
   /* ---- the catalogue a live child reported ---- */
   availableModels: ModelChoice[] = [];
@@ -317,16 +319,25 @@ export class Catalog {
     this.reloadCount++;
     const reg = asRecord(parseJson(await this.#io.readText(this.paths.registry))) ?? {};
     const out: Record<string, string> = {};
+    // Every row's settle state, by handle -- the tray reconciles its rows
+    // against this. The activity map above is running-only by design; this one
+    // keeps everything, because a row that LEFT "running" is exactly the
+    // signal a stale tray row is waiting for.
+    const rows: Record<string, { status: string; pid?: number }> = {};
     for (const [handle, value] of Object.entries(reg)) {
       const rec = asRecord(value);
-      // Only a LIVE one. A record keeps its handle for a day after it finishes
-      // so it can be resumed, and none of those belong on a strip that says
-      // what is running.
-      if (rec && rec["status"] === "running" && typeof rec["activity"] === "string" && rec["activity"])
+      if (!rec) continue;
+      const status = String(rec["status"] ?? "");
+      const pid = typeof rec["pid"] === "number" ? rec["pid"] : undefined;
+      if (status === "running" && typeof rec["activity"] === "string" && rec["activity"])
         out[handle] = rec["activity"];
+      rows[handle] = { status, pid };
     }
-    const changed = JSON.stringify(out) !== JSON.stringify(this.agentActivity);
+    const changed =
+      JSON.stringify(out) !== JSON.stringify(this.agentActivity) ||
+      JSON.stringify(rows) !== JSON.stringify(this.registryRows);
     this.agentActivity = out;
+    this.registryRows = rows;
     if (changed) this.#emit("activity");
   }
 
