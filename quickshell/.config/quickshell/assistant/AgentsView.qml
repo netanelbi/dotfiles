@@ -37,10 +37,23 @@ Rectangle {
   // change notifier, so a row that said "just now" would go on saying it.
   property int nonce: 0
 
-  readonly property int running: {
+  // TWO counts, because they answer different questions and sharing one slot
+  // was a lie: the pool keeps parked conversations alive, so three idle Ori
+  // tabs read as "3 running" when nothing at all was happening.
+  readonly property int upCount: {
     var n = 0
     for (var i = 0; i < root.peers.length; i++)
       if (root.peers[i].alive === true) n++
+    return n
+  }
+  readonly property int workingCount: {
+    var n = 0
+    for (var i = 0; i < root.peers.length; i++) {
+      var p = root.peers[i]
+      // `busy` is only known for conversations the host owns. For everything
+      // else -- terminal pi, delegates -- a live activity line is the evidence.
+      if (p.alive && (p.busy === true || (p.busy === undefined && p.activity))) n++
+    }
     return n
   }
 
@@ -136,10 +149,17 @@ Rectangle {
     return Qt.formatDateTime(new Date(at), "d MMM")
   }
 
+  // WORKING vs UP vs GONE. The registry's own `status` cannot make the first
+  // distinction -- it is written once at session_start and again at exit -- so
+  // an idle conversation whose child the pool is still holding said "running".
   function stateWord(r) {
-    if (r.alive) return "running"
-    // "running" on a row whose pid is gone is the registry mid-write or a
-    // process that died without settling. Neither is running.
+    if (r.alive) {
+      if (r.busy === true) return "working"
+      if (r.busy === false) return "up"
+      return r.activity ? "working" : "up"
+    }
+    // "running" on a row whose pid is gone is a process that died without
+    // settling, or the registry mid-write. Neither is running.
     if (r.status === "running") return "gone"
     return r.status || "idle"
   }
@@ -171,7 +191,9 @@ Rectangle {
   Text {
     id: title
     anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
-    text: "agents  ·  " + (root.running > 0 ? root.running + " running" : "none running")
+    text: "agents  ·  "
+        + (root.upCount > 0 ? root.upCount + " up" : "none up")
+        + (root.workingCount > 0 ? "  ·  " + root.workingCount + " working" : "")
         + "  ·  ↑↓ move   esc back"
     color: Theme.overlay0
     font.family: Style.font.panelMono
@@ -236,13 +258,15 @@ Rectangle {
         opacity: parent.on ? 1 : 0
       }
 
-      // ALIVE, and nothing else. A pip is the only thing an eye scanning a
-      // column of names actually catches.
+      // WORKING, and nothing else. A pip is the only thing an eye scanning a
+      // column of names actually catches, so it gets the scarce meaning. It
+      // used to mean merely alive, which put a pip on every parked
+      // conversation -- three of them, with nothing happening in any.
       Rectangle {
         width: 5; height: 5; radius: 2.5
         anchors { right: parent.right; top: parent.top; rightMargin: 10; topMargin: 9 }
         color: root.accent
-        opacity: parent.r.alive ? 1 : 0
+        opacity: root.stateWord(parent.r) === "working" ? 1 : 0
       }
 
       Text {

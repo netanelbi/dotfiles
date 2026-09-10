@@ -710,13 +710,18 @@ export class Host {
    * task instead), and anything with no match is left alone.
    */
   #peerRows(): PeerRow[] {
-    const byFile = new Map<string, string>();
-    for (const s of this.pool.list()) if (s.file && s.label) byFile.set(s.file, s.label);
+    const byFile = new Map<string, { label: string; busy: boolean }>();
+    for (const s of this.pool.list())
+      if (s.file) byFile.set(s.file, { label: s.label, busy: s.busy });
     if (byFile.size === 0) return this.catalog.peerRows;
     return this.catalog.peerRows.map((r) => {
-      if (r.label || !r.sessionFile) return r;
-      const label = byFile.get(r.sessionFile);
-      return label ? { ...r, label } : r;
+      const hit = r.sessionFile ? byFile.get(r.sessionFile) : undefined;
+      if (!hit) return r;
+      // `busy` is the host's own per-conversation flag, and it is the only
+      // honest answer to "is this thing working". The registry cannot say: it
+      // writes "running" at session_start and does not touch it again until
+      // exit, so every parked-but-alive conversation reads as running there.
+      return { ...r, busy: hit.busy, label: r.label || hit.label || undefined };
     });
   }
 

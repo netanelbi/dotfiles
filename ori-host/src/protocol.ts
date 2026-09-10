@@ -191,8 +191,17 @@ export interface PeerRow {
   /** Handle of the spawner. Empty for a root. This is the tree. */
   parent: string;
   status: string;
-  /** True only when a pid is present AND that pid answers. */
+  /**
+   * The PROCESS is up. Not "is working" -- the pool keeps parked children
+   * alive, so an Ori conversation nobody has touched for an hour is still
+   * alive. See `busy` for the other question.
+   */
   alive: boolean;
+  /**
+   * Mid-turn RIGHT NOW. Only known for conversations the host owns, so
+   * `undefined` means "no idea", not "no". Filled by Host#peerRows.
+   */
+  busy?: boolean;
   /** The delegate's current tool line, while it runs. */
   activity?: string;
   /** What the delegate was sent to do. Empty for a root. */
