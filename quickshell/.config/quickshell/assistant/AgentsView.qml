@@ -251,9 +251,21 @@ Rectangle {
                   leftMargin: 14 + parent.depth * 16; rightMargin: 22; topMargin: 5 }
         // The tree mark is the indent's explanation. Without it a nested row
         // just looks misaligned.
+        // Handle first, name second. The handle is what you type at `peers
+        // send`, so it cannot be replaced by the name -- but a row that was
+        // only a handle said nothing about what the conversation IS.
+        //
+        // Capped here rather than trusted: an Ori conversation has no session
+        // name, so the host substitutes the label it derived for the resume
+        // picker, and that is the whole opening question up to 90 characters.
+        // Elide alone would let one row's title push the state line off screen.
         text: (parent.depth > 0 ? "↳ " : "")
             + parent.r.name
-            + (parent.r.label ? "  “" + parent.r.label + "”" : "")
+            + (parent.r.label
+               ? "  “" + (parent.r.label.length > 44
+                          ? parent.r.label.slice(0, 44) + "…"
+                          : parent.r.label) + "”"
+               : "")
         color: parent.r.alive ? Theme.text : Theme.subtext0
         elide: Text.ElideRight
         font.family: Style.font.panelMono

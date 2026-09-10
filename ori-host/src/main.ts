@@ -49,6 +49,7 @@ import {
   type ClientCmd,
   type HostEvent,
   type ImageRef,
+  type PeerRow,
   type SlashCommand,
 } from "./protocol";
 import { rehydrate } from "./rehydrate";
@@ -697,6 +698,28 @@ export class Host {
     this.broadcast({ t: "bg", convId: this.pool.activeId, jobs });
   }
 
+  /**
+   * The peer rows, with a name on every row that can have one.
+   *
+   * Ori's own conversations never carry a session name: `auto-session-name` is
+   * not in Ori's extension list, and nothing calls `/name`, so their registry
+   * rows have an empty `label` and the agents view could only print the raw
+   * handle. The host already derives a label for exactly these -- the opening
+   * question, which is what the resume picker shows -- so the two are joined
+   * here on the transcript path. Delegates keep their own label (they have a
+   * task instead), and anything with no match is left alone.
+   */
+  #peerRows(): PeerRow[] {
+    const byFile = new Map<string, string>();
+    for (const s of this.pool.list()) if (s.file && s.label) byFile.set(s.file, s.label);
+    if (byFile.size === 0) return this.catalog.peerRows;
+    return this.catalog.peerRows.map((r) => {
+      if (r.label || !r.sessionFile) return r;
+      const label = byFile.get(r.sessionFile);
+      return label ? { ...r, label } : r;
+    });
+  }
+
   /** True unless the pid is provably gone. EPERM means it exists. */
   #pidAlive(pid: number): boolean {
     try {
@@ -723,7 +746,7 @@ export class Host {
       // The same file also feeds the agents view (Ctrl+S), which shows settled
       // rows the tray deliberately drops -- so it needs its own push, not the
       // bg list.
-      this.broadcast({ t: "peers", rows: this.catalog.peerRows });
+      this.broadcast({ t: "peers", rows: this.#peerRows() });
       return;
     }
     this.broadcast({ t: "models", models: this.catalog.availableModels });
@@ -842,7 +865,7 @@ export class Host {
     });
     conn.send(agent.snapshot());
     conn.send({ t: "sessions", entries: this.pool.list(), activeId: agent.sessionId });
-    conn.send({ t: "peers", rows: this.catalog.peerRows });
+    conn.send({ t: "peers", rows: this.#peerRows() });
     conn.send({ t: "models", models: this.catalog.availableModels });
     conn.send({ t: "commands", commands: this.#panelCmds() });
     log.info("client attached", { channel, conv: agent.id, displaced });

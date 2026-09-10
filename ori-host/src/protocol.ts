@@ -197,8 +197,15 @@ export interface PeerRow {
   activity?: string;
   /** What the delegate was sent to do. Empty for a root. */
   task?: string;
-  /** The name the human gave the session, when there is one. */
+  /**
+   * What to call this session in prose. Either pi's own session name, or --
+   * for Ori's conversations, which are never `/name`d -- the label the host
+   * already derived from the opening question for the resume picker. Filled in
+   * by the host, which is the only place that knows both. See Host#peerRows.
+   */
   label?: string;
+  /** The transcript path, which is how a row is joined to the session index. */
+  sessionFile?: string;
   /** Epoch ms. */
   startedAt: number;
   endedAt?: number;

@@ -360,6 +360,7 @@ export class Catalog {
         activity: alive ? activity || undefined : undefined,
         task: str("task") || undefined,
         label: str("label") || undefined,
+        sessionFile: str("sessionFile") || undefined,
         startedAt: num("startedAt") ?? 0,
         endedAt: num("endedAt"),
       });
