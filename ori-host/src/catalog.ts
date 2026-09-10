@@ -38,7 +38,17 @@
 
 import { watch } from "node:fs";
 import { dirname, basename } from "node:path";
-import { REJECTED_LEVELS, type ModelChoice } from "./protocol";
+import { REJECTED_LEVELS, type ModelChoice, type PeerRow } from "./protocol";
+
+/** True unless the pid is provably gone. EPERM means it exists, owned by another. */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    return (err as NodeJS.ErrnoException)?.code === "EPERM";
+  }
+}
 
 /**
  * pi's universal scale, minus what the endpoint refuses (below). This is what
@@ -220,6 +230,8 @@ export class Catalog {
   agentActivity: Record<string, string> = {};
   /** Every registry row by handle: status and pid. See reloadRegistry. */
   registryRows: Record<string, { status: string; pid?: number }> = {};
+  /** The same rows, shaped for the panel's agents view. See reloadRegistry. */
+  peerRows: PeerRow[] = [];
 
   /* ---- the catalogue a live child reported ---- */
   availableModels: ModelChoice[] = [];
@@ -324,20 +336,42 @@ export class Catalog {
     // keeps everything, because a row that LEFT "running" is exactly the
     // signal a stale tray row is waiting for.
     const rows: Record<string, { status: string; pid?: number }> = {};
+    const peers: PeerRow[] = [];
     for (const [handle, value] of Object.entries(reg)) {
       const rec = asRecord(value);
       if (!rec) continue;
       const status = String(rec["status"] ?? "");
       const pid = typeof rec["pid"] === "number" ? rec["pid"] : undefined;
-      if (status === "running" && typeof rec["activity"] === "string" && rec["activity"])
-        out[handle] = rec["activity"];
+      const activity = typeof rec["activity"] === "string" ? rec["activity"] : "";
+      if (status === "running" && activity) out[handle] = activity;
       rows[handle] = { status, pid };
+      // `alive` is decided HERE, against the pid, not taken from `status`. A row
+      // says "running" until its own process writes the exit, so a child that
+      // was killed leaves a row that lies. The panel must never draw a dead
+      // agent as working -- see the tray's own reconciliation, same reason.
+      const alive = status === "running" && pid !== undefined && pid > 0 && pidAlive(pid);
+      const str = (k: string) => (typeof rec[k] === "string" ? (rec[k] as string) : undefined);
+      const num = (k: string) => (typeof rec[k] === "number" ? (rec[k] as number) : undefined);
+      peers.push({
+        name: handle,
+        kind: rec["kind"] === "root" ? "root" : "delegate",
+        parent: str("parent") ?? "",
+        status, alive,
+        activity: alive ? activity || undefined : undefined,
+        task: str("task") || undefined,
+        label: str("label") || undefined,
+        startedAt: num("startedAt") ?? 0,
+        endedAt: num("endedAt"),
+      });
     }
+    peers.sort((a, b) => b.startedAt - a.startedAt);
     const changed =
       JSON.stringify(out) !== JSON.stringify(this.agentActivity) ||
-      JSON.stringify(rows) !== JSON.stringify(this.registryRows);
+      JSON.stringify(rows) !== JSON.stringify(this.registryRows) ||
+      JSON.stringify(peers) !== JSON.stringify(this.peerRows);
     this.agentActivity = out;
     this.registryRows = rows;
+    this.peerRows = peers;
     if (changed) this.#emit("activity");
   }
 

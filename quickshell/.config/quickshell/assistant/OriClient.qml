@@ -82,6 +82,10 @@ Singleton {
   property var sessions: []
   property var models: []
   property var commands: []
+  // Every pi session on the machine that registered itself -- terminal pi,
+  // panel conversations, delegates. NOT `sessions`, which is Ori's own
+  // conversations and drives Ctrl+R. This drives the agents view on Ctrl+S.
+  property var peers: []
 
   // ---- transient strips ----
   // `error` pins the card border to the busy accent; `notice` does not. Writing
@@ -885,6 +889,10 @@ Singleton {
 
     case "sessions":
       root.sessions = m.entries || []
+      return
+
+    case "peers":
+      root.peers = m.rows || []
       return
 
     case "models":

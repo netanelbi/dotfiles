@@ -175,6 +175,35 @@ export interface Usage {
 
 export type BgKind = "job" | "monitor" | "agent" | "speak";
 
+/**
+ * One row of the peers registry (`~/.pi/agent/subagents/registry.json`), as the
+ * panel needs it. Written by every pi session's `peers.ts` at start and at exit.
+ *
+ * This is NOT the session list. `sessions` is Ori's own conversations, indexed
+ * by the host, and drives Ctrl+R. This is every pi PROCESS on the machine that
+ * registered itself -- terminal pi, panel conversations, and delegates -- and
+ * drives Ctrl+S. A row can appear in both; they are two views, not two things.
+ */
+export interface PeerRow {
+  name: string;
+  /** A human started it (`root`) or an agent spawned it (`delegate`). */
+  kind: "root" | "delegate";
+  /** Handle of the spawner. Empty for a root. This is the tree. */
+  parent: string;
+  status: string;
+  /** True only when a pid is present AND that pid answers. */
+  alive: boolean;
+  /** The delegate's current tool line, while it runs. */
+  activity?: string;
+  /** What the delegate was sent to do. Empty for a root. */
+  task?: string;
+  /** The name the human gave the session, when there is one. */
+  label?: string;
+  /** Epoch ms. */
+  startedAt: number;
+  endedAt?: number;
+}
+
 export interface BgJob {
   pid: number;
   kind: BgKind;
@@ -253,6 +282,8 @@ export type HostEvent =
 
   /** The session list, including parked-and-busy ones. Drives the picker. */
   | { t: "sessions"; entries: SessionEntry[]; activeId: string }
+  /** Every registered pi session on the machine. Drives the agents panel. */
+  | { t: "peers"; rows: PeerRow[] }
   | { t: "models"; models: ModelChoice[] }
   | { t: "commands"; commands: SlashCommand[] }
 

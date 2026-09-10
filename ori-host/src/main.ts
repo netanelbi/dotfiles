@@ -490,7 +490,12 @@ export class Host {
     // touches again -- nothing writes, so nothing emits, so without this the
     // dead row would sit until the host restarted. A dead pid is the one fact
     // that does not need a file change to be true.
-    const sweep = setInterval(() => this.#broadcastBg(), 60_000);
+    const sweep = setInterval(() => {
+      this.#broadcastBg();
+      // Same reason, for the agents view: `alive` is a pid check, and a pid dies
+      // without anyone writing the file, so nothing would emit.
+      void this.catalog.reloadRegistry();
+    }, 60_000);
     sweep.unref?.();
 
     this.pool = new Pool({
@@ -715,6 +720,10 @@ export class Host {
     // the bg broadcast -- pushing the model list on it would be noise.
     if (what === "activity") {
       this.#broadcastBg();
+      // The same file also feeds the agents view (Ctrl+S), which shows settled
+      // rows the tray deliberately drops -- so it needs its own push, not the
+      // bg list.
+      this.broadcast({ t: "peers", rows: this.catalog.peerRows });
       return;
     }
     this.broadcast({ t: "models", models: this.catalog.availableModels });
@@ -833,6 +842,7 @@ export class Host {
     });
     conn.send(agent.snapshot());
     conn.send({ t: "sessions", entries: this.pool.list(), activeId: agent.sessionId });
+    conn.send({ t: "peers", rows: this.catalog.peerRows });
     conn.send({ t: "models", models: this.catalog.availableModels });
     conn.send({ t: "commands", commands: this.#panelCmds() });
     log.info("client attached", { channel, conv: agent.id, displaced });

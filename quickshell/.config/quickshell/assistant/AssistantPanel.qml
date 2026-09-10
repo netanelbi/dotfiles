@@ -1432,6 +1432,15 @@ PanelWindow {
       returnFocus: entry
     }
 
+    // Ctrl+S, the sibling surface. Same footprint and same rules as the resume
+    // picker; the difference is that this one changes nothing. See AgentsView.
+    AgentsView {
+      id: agents
+      anchors.fill: transcript
+      accent: panel.accent
+      returnFocus: entry
+    }
+
     // A scroll position, not a scrollbar: there is nothing to grab, it only
     // says how much transcript is above you. Hidden entirely when everything
     // fits, which is most of the time.
@@ -1943,12 +1952,25 @@ PanelWindow {
             // have it, so only one of the two may be up at a time.
             if (event.modifiers & Qt.ControlModifier) {
               commands.close()
+              agents.close()
               // open() returns false when the index is empty, and that return
               // used to be discarded -- so on a fresh machine the panel's only
               // history key did nothing at all: no list, no message, no way to
               // tell it apart from a dead binding. Say so instead.
               if (!picker.open())
                 OriClient.notice = "no saved conversations yet"
+              event.accepted = true
+            }
+            return
+          case Qt.Key_S:
+            // Ctrl+S: who is running, and who started them. A viewer -- it
+            // never changes which conversation you are in, which is why it can
+            // list sessions from other repos at all. Same exclusivity as the
+            // resume picker: both want the keyboard, so only one may be up.
+            if (event.modifiers & Qt.ControlModifier) {
+              commands.close()
+              picker.close()
+              agents.open()
               event.accepted = true
             }
             return
