@@ -191,6 +191,8 @@ export interface PeerRow {
   /** Handle of the spawner. Empty for a root. This is the tree. */
   parent: string;
   status: string;
+  /** Whatever the row claims. Only trustworthy together with `alive`. */
+  pid?: number;
   /**
    * The PROCESS is up. Not "is working" -- the pool keeps parked children
    * alive, so an Ori conversation nobody has touched for an hour is still
@@ -222,6 +224,8 @@ export interface PeerRow {
   instance?: number;
   /** The conversation the panel is currently showing. */
   active?: boolean;
+  /** pi's session id, so Enter on an Ori row can resume it. Ori rows only. */
+  sessionId?: string;
   /** Epoch ms. */
   startedAt: number;
   endedAt?: number;
@@ -373,9 +377,10 @@ export type ClientCmd =
    *  never stop a running turn. See docs/specs/multi-session.md. */
   | { t: "new"; id?: string }
   | { t: "resume"; id?: string; sessionId: string }
-  /** Rename an agent from the agents view. `peer` is a PeerRow.name. Only
-   *  conversations this host owns can be renamed; see Host's handler. */
+  /** Rename an agent from the agents view. `peer` is a PeerRow.name. */
   | { t: "rename_peer"; id?: string; peer: string; title: string }
+  /** Stop an agent from the agents view. The transcript is never touched. */
+  | { t: "stop_peer"; id?: string; peer: string }
   | { t: "activate"; id?: string; convId: string }
 
   /** Panel visibility, so the host can own the unread mark. */

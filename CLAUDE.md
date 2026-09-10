@@ -111,7 +111,7 @@ never see again after the first run. So this table is the only place they exist.
 | `Ctrl + C` | Abort the running turn |
 | `Ctrl + N` | New conversation |
 | `Ctrl + R` | Session history picker (Ori's own conversations; switches) |
-| `Ctrl + S` | Agents view — Ori’s live instances, outside pi sessions, and running delegates. Never switches conversation, which is why it may list other repos. `Ctrl + R` inside it renames the selected Ori conversation |
+| `Ctrl + S` | Agents view — the pi processes running now, grouped ORI then OTHERS. A row leaves when its process ends; the transcript stays in `Ctrl + R`. Inside: `⏎` open (Ori’s own only), `Ctrl + R` rename, `Ctrl + X` stop, `Ctrl + N` new Ori |
 | `Ctrl + V` | Attach an image from the clipboard |
 | `Shift + Tab` | Cycle the thinking level (arrives as `Key_Backtab`) |
 | `Ctrl + ↓` | Jump to the newest turn, and stick there |

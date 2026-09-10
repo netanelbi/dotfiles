@@ -762,6 +762,7 @@ Singleton {
   function renamePeer(peer, title) {
     return root.send({ t: "rename_peer", peer: String(peer), title: String(title) })
   }
+  function stopPeer(peer) { return root.send({ t: "stop_peer", peer: String(peer) }) }
   function activate(convId) { return root.send({ t: "activate", convId: String(convId) }) }
 
   function setPanelOpen(open) { root.panelOpen = open === true }

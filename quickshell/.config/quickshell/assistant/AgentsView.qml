@@ -2,29 +2,39 @@ import QtQuick
 import QtQuick.Controls
 import ".."
 
-// Ctrl+S: every pi session on this machine, as a tree.
+// Ctrl+S: the pi processes running on this machine right now.
 //
-// A VIEWER. No Enter, no switching, no actions -- deliberately, and not as a
-// first cut. Ori is a conversation that lives in ~/.dotfiles; opening someone
-// else's session here would move Ori out of its own repo, which is exactly what
-// it must not do. Ctrl+R remains the only thing that changes which conversation
-// you are in, and it only ever offers Ori's own.
+// -------------------------------------------------- what is in this list
+// AN AGENT IS A LIVE PI PROCESS. It joins the list when it registers and leaves
+// when its process ends -- nothing else. That rule is the whole model, and it
+// is what makes this list different from Ctrl+R: a conversation whose child the
+// pool idle-killed ten minutes ago is not an agent, it is a transcript, and it
+// is still there under Ctrl+R with everything it knew.
 //
-// So this answers one question -- what is running, and who started it -- and
-// then gets out of the way. Reaching an agent is `peers send`, from the
-// composer, in words. There is nothing to click here on purpose.
+// (Measured while building this: of six Ori rows in the registry, two had live
+// pids. The other four looked like "missing sessions" and were simply over.)
 //
-// The model is OriClient.peers: the host's read of the peers registry
-// (~/.pi/agent/subagents/registry.json), which every pi session writes at start
-// and at exit. It is NOT OriClient.sessions -- that is Ori's own conversations
-// and belongs to Ctrl+R. A session can be in both lists; they are two views of
-// one machine, not two populations.
+// The one exception is the conversation you are LOOKING AT, which stays on the
+// list even if its child has just been idle-killed -- a row vanishing out from
+// under the panel it belongs to reads as a bug, not as a fact.
 //
-// -------------------------------------------------- what a row may claim
+// -------------------------------------------------- two sections
+// ORI first, then OTHERS. Ori's conversations are all the same assistant in the
+// same repo, so they are grouped rather than listed as peers of a stranger's
+// terminal pi; under one heading, four rows read as one Ori with four sessions
+// instead of four Oris. Delegates nest under whoever spawned them.
+//
+// -------------------------------------------------- what it can do
+// Enter switches, but ONLY to one of Ori's own conversations: that is the same
+// move as Ctrl+R and stays inside this repo. Switching to somebody else's pi
+// would take Ori out of ~/.dotfiles, which it must never do, so those rows say
+// no. Ctrl+X stops an agent (never its transcript). Ctrl+R renames one. Ctrl+N
+// starts another Ori.
+//
 // `alive` comes from the HOST, which tests the pid. It is never read off
 // `status`: a row says "running" until its own process writes the exit, so a
-// killed agent leaves a row that lies, and drawing a dead delegate as working
-// is the one mistake this view must not make.
+// killed agent leaves a row that lies, and drawing a dead agent as working is
+// the one mistake this view must not make.
 Rectangle {
   id: root
 
@@ -38,9 +48,6 @@ Rectangle {
   // change notifier, so a row that said "just now" would go on saying it.
   property int nonce: 0
 
-  // TWO counts, because they answer different questions and sharing one slot
-  // was a lie: the pool keeps parked conversations alive, so three idle Ori
-  // tabs read as "3 running" when nothing at all was happening.
   readonly property int upCount: {
     var n = 0
     for (var i = 0; i < root.peers.length; i++)
@@ -61,72 +68,67 @@ Rectangle {
   // ---------------------------------------------------------------- the tree
   // Flattened here rather than nested in the view, because a ListView of
   // ListViews cannot be walked with two arrow keys, and this surface is
-  // keyboard-only.
-  //
-  // Roots always, newest first. Under each, its LIVE delegates -- a finished
-  // delegate is a row you cannot act on, and forty of them would bury the two
-  // that are working. What is lost is only ever a count, and the count is
-  // printed on the parent, so nothing disappears silently.
-  //
-  // A delegate whose parent is not itself a row -- forgotten, never registered,
-  // or written before rows carried a parent at all -- is an ORPHAN. A live one
-  // is promoted to the top level, because a running agent that appears nowhere
-  // is the worst outcome this view can produce. A dead one is dropped: it has
-  // no parent to be folded under, nothing here can act on it, and there are
-  // currently 35 of them left over from testing, which would bury everything
-  // real. They stay in the registry and `peers list` still shows them.
+  // keyboard-only. Section headings ride in the same array as rows with a
+  // `header` field; the key handler steps over them.
   readonly property var rows: {
     var list = []
-    var byParent = ({})
-    var names = ({})
-    var i
-    for (i = 0; i < root.peers.length; i++) names[root.peers[i].name] = true
+    var i, j, k
+
+    // Live only. See the rule at the top of the file.
+    var live = []
     for (i = 0; i < root.peers.length; i++) {
       var p = root.peers[i]
-      var known = p.parent && names[p.parent]
-      if (!known && p.kind !== "root" && !p.alive) continue
-      var key = known ? p.parent : ""
+      if (p.alive === true || p.active === true) live.push(p)
+    }
+
+    var names = ({})
+    for (i = 0; i < live.length; i++) names[live[i].name] = true
+    var byParent = ({})
+    for (i = 0; i < live.length; i++) {
+      var q = live[i]
+      // A delegate whose parent is not itself a LIVE row is an orphan -- its
+      // Ori was stopped or idle-killed while it kept working. It is promoted to
+      // the top of OTHERS rather than dropped: a running agent that appears
+      // nowhere is the worst outcome this view can produce.
+      var key = (q.parent && names[q.parent]) ? q.parent : ""
       if (!byParent[key]) byParent[key] = []
-      byParent[key].push(p)
+      byParent[key].push(q)
     }
+
     var tops = byParent[""] || []
-    for (i = 0; i < tops.length; i++) {
-      var top = tops[i]
-      var kids = byParent[top.name] || []
-      var live = []
-      var doneCount = 0
-      for (var k = 0; k < kids.length; k++) {
-        if (kids[k].alive) live.push(kids[k])
-        else doneCount++
+    var oris = [], others = []
+    for (i = 0; i < tops.length; i++)
+      (tops[i].ori ? oris : others).push(tops[i])
+
+    function emit(group, heading) {
+      if (group.length === 0) return
+      list.push({ header: heading })
+      for (var a = 0; a < group.length; a++) {
+        var top = group[a]
+        var kids = byParent[top.name] || []
+        list.push({ row: top, depth: 0, done: 0 })
+        for (var b = 0; b < kids.length; b++)
+          list.push({ row: kids[b], depth: 1, done: 0 })
       }
-      // ORI IS ONE AGENT, not one per conversation it has ever held.
-      //
-      // Switching conversations parks the old one WITHOUT killing its child --
-      // deliberately, so a session mid-answer keeps answering -- so every
-      // conversation of the day was still alive and drew its own row. Four
-      // Oris, one of you.
-      //
-      // A parked conversation earns a row only by still doing something: it is
-      // mid-turn (then it genuinely is a second Ori working alongside the one
-      // you are talking to), or it has a delegate of its own still running
-      // (dropping it would orphan a live agent). Otherwise it is a session, and
-      // sessions belong to Ctrl+R.
-      if (top.ori && !top.active && !top.busy && live.length === 0) continue
-      list.push({ row: top, depth: 0, done: doneCount })
-      for (var j = 0; j < live.length; j++)
-        list.push({ row: live[j], depth: 1, done: 0 })
     }
+    emit(oris, "ORI")
+    emit(others, "OTHERS")
     return list
   }
 
-  // Ori's conversations are prefixed and numbered, because they are all the
-  // same assistant in the same repo and the handle alone (`dotfiles-39162e`)
-  // says neither. Everything else is somebody else's agent and gets only its
-  // own name -- or its handle, when it has no name to give.
+  function isHeader(i) {
+    return i >= 0 && i < root.rows.length && root.rows[i].header !== undefined
+  }
+
+  // Ori's conversations are numbered, because they are all the same assistant
+  // in the same repo and the handle alone (`dotfiles-39162e`) says neither
+  // which nor what. Under the ORI heading the word itself would be repetition,
+  // so the row carries only the number. Everything else gets its own name --
+  // or its handle, when it has no name to give.
   function displayName(r) {
     var n = r.label || r.name
     if (!r.ori) return n
-    return "Ori #" + (r.instance ? r.instance : "?") + " - " + n
+    return "#" + (r.instance ? r.instance : "?") + " - " + n
   }
 
   // Denser than the card it sits on: a list is read, and glass under glass
@@ -147,7 +149,9 @@ Rectangle {
   // silently does nothing reads as broken.
   function open() {
     root.nonce++
-    root.current = 0
+    root.current = root.isHeader(0) ? 1 : 0
+    root.confirmStop = false
+    root.renaming = false
     root.opacity = 1
     root.forceActiveFocus()
     return true
@@ -155,6 +159,8 @@ Rectangle {
 
   function close() {
     root.opacity = 0
+    root.renaming = false
+    root.confirmStop = false
     if (root.returnFocus) root.returnFocus.forceActiveFocus()
   }
 
@@ -182,32 +188,25 @@ Rectangle {
       if (r.busy === false) return "up"
       return r.activity ? "working" : "up"
     }
-    // "running" on a row whose pid is gone is a process that died without
-    // settling, or the registry mid-write. Neither is running.
-    if (r.status === "running") return "gone"
-    return r.status || "idle"
+    return "gone"
   }
 
-  // ------------------------------------------------------------- renaming
-  // Ctrl+R here, where Ctrl+R in the chat panel is resume: this surface has no
-  // resume to offer -- it never switches conversation -- so the key is free,
-  // and "the list of things, R to rename one" is the gesture it already means
-  // elsewhere on this desktop.
-  //
-  // Only Ori's own conversations can be renamed: the host renames by sending
-  // pi's `set_session_name` to the child it holds, and it holds none for a
-  // terminal pi or a delegate. Saying so up front beats an ack that fails.
-  property bool renaming: false
-  readonly property var currentRow: root.rows.length > 0 && root.current < root.rows.length
+  readonly property var currentRow: !root.isHeader(root.current)
+      && root.current >= 0 && root.current < root.rows.length
       ? root.rows[root.current].row : null
-  readonly property bool canRename: root.currentRow !== null && root.currentRow.ori === true
+
+  // ------------------------------------------------------------- renaming
+  // Ctrl+R here, where Ctrl+R in the chat panel is resume. Ori's own rows are
+  // renamed through pi's `set_session_name`, so the name lands in the resume
+  // picker too; anything else gets its registry `label`, which is also what
+  // `peers send` resolves as an address. Either way it is a real name, not a
+  // decoration on this list.
+  property bool renaming: false
 
   function beginRename() {
-    if (!root.canRename) {
-      OriClient.notice = "only Ori's own conversations can be renamed"
-      return
-    }
+    if (!root.currentRow) return
     renameField.text = root.currentRow.label || ""
+    root.confirmStop = false
     root.renaming = true
     renameField.forceActiveFocus()
     renameField.selectAll()
@@ -226,16 +225,42 @@ Rectangle {
     root.forceActiveFocus()
   }
 
+  // --------------------------------------------------------------- stopping
+  // Two presses when the agent is mid-turn, one when it is not. Stopping
+  // something that is working throws away work that cannot be recovered, and
+  // Ctrl+X is one slip away from Ctrl+C; stopping an idle child costs nothing
+  // but a respawn, so making that one ask twice would be noise.
+  property bool confirmStop: false
+
+  function askStop() {
+    var r = root.currentRow
+    if (!r) return
+    if (root.stateWord(r) === "working" && !root.confirmStop) {
+      root.confirmStop = true
+      return
+    }
+    root.confirmStop = false
+    OriClient.stopPeer(r.name)
+  }
+
   Keys.onPressed: function (event) {
+    // Headers are not rows: step past them so ↑↓ never lands on a heading.
+    function move(dir) {
+      var i = root.current + dir
+      while (i >= 0 && i < root.rows.length && root.isHeader(i)) i += dir
+      if (i >= 0 && i < root.rows.length) root.current = i
+    }
     switch (event.key) {
     case Qt.Key_Down:
     case Qt.Key_J:
-      root.current = Math.min(root.current + 1, root.rows.length - 1)
+      move(1)
+      root.confirmStop = false
       event.accepted = true
       return
     case Qt.Key_Up:
     case Qt.Key_K:
-      root.current = Math.max(root.current - 1, 0)
+      move(-1)
+      root.confirmStop = false
       event.accepted = true
       return
     case Qt.Key_R:
@@ -244,12 +269,39 @@ Rectangle {
         event.accepted = true
       }
       return
-    case Qt.Key_Escape:
+    case Qt.Key_X:
+      if (event.modifiers & Qt.ControlModifier) {
+        root.askStop()
+        event.accepted = true
+      }
+      return
+    case Qt.Key_N:
+      // A new Ori, in this repo -- the only kind this panel can start. Same
+      // thing Ctrl+N does in the composer, offered here because this is the
+      // list you are looking at when you decide you want another one.
+      if (event.modifiers & Qt.ControlModifier) {
+        root.close()
+        OriClient.newChat()
+        event.accepted = true
+      }
+      return
     case Qt.Key_Return:
-    case Qt.Key_Enter:
-      // Enter closes rather than doing nothing: it is the reflex after reading
-      // a list, and a key that is swallowed reads as a hang.
-      root.close()
+    case Qt.Key_Enter: {
+      var r = root.currentRow
+      if (r && r.ori && !r.active) {
+        root.close()
+        OriClient.resume(r.sessionId)
+      } else if (r && !r.ori) {
+        OriClient.notice = "Ori only opens its own conversations"
+      } else {
+        root.close()
+      }
+      event.accepted = true
+      return
+    }
+    case Qt.Key_Escape:
+      if (root.confirmStop) root.confirmStop = false
+      else root.close()
       event.accepted = true
       return
     }
@@ -261,11 +313,14 @@ Rectangle {
     anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
     text: root.renaming
         ? "rename  ·  ⏎ save   esc cancel"
-        : "agents  ·  "
-          + (root.upCount > 0 ? root.upCount + " up" : "none up")
-          + (root.workingCount > 0 ? "  ·  " + root.workingCount + " working" : "")
-          + "  ·  ↑↓ move   ctrl+r rename   esc back"
-    color: Theme.overlay0
+        : root.confirmStop
+          ? "ctrl+x again to stop “" + (root.currentRow ? root.displayName(root.currentRow) : "") + "”  ·  esc cancel"
+          : "agents  ·  "
+            + (root.upCount > 0 ? root.upCount + " up" : "none up")
+            + (root.workingCount > 0 ? "  ·  " + root.workingCount + " working" : "")
+            + "  ·  ⏎ open   ctrl+r rename   ctrl+x stop   ctrl+n new"
+    color: root.confirmStop ? Theme.peach : Theme.overlay0
+    elide: Text.ElideRight
     font.family: Style.font.panelMono
     font.pixelSize: Style.font.panelMeta
     renderType: Text.QtRendering
@@ -275,8 +330,9 @@ Rectangle {
     anchors { left: parent.left; right: parent.right; top: title.bottom
               leftMargin: 12; rightMargin: 12; topMargin: 14 }
     visible: root.rows.length === 0
-    text: "No pi sessions have registered yet."
+    text: "Nothing is running. Ori's past conversations are under ctrl+r."
     color: Theme.overlay0
+    wrapMode: Text.WordWrap
     font.family: Style.font.panelMono
     font.pixelSize: Style.font.panelMeta
     renderType: Text.QtRendering
@@ -336,98 +392,110 @@ Rectangle {
     preferredHighlightBegin: 0
     preferredHighlightEnd: height
 
-    delegate: Rectangle {
+    delegate: Loader {
       required property int index
       required property var modelData
-
-      readonly property var r: modelData.row
-      readonly property int depth: modelData.depth
-      readonly property int doneCount: modelData.done
-      readonly property bool on: index === root.current
-
       width: list.width
-      height: label.implicitHeight + meta.implicitHeight + 14
-      radius: 4
-      color: on ? Theme.surface1 : "transparent"
+      sourceComponent: modelData.header !== undefined ? headingPart : rowPart
+      property var d: modelData
+      property int i: index
+    }
 
-      // Selection rail. The only mark this view carries: with nothing to
-      // activate there is no "focused" row to distinguish from a selected one,
-      // which is the collision the resume picker had to solve with three marks.
-      Rectangle {
-        width: 2
-        anchors { left: parent.left; top: parent.top; bottom: parent.bottom
-                  leftMargin: 2; topMargin: 3; bottomMargin: 3 }
-        radius: 1
-        color: root.accent
-        opacity: parent.on ? 1 : 0
-      }
-
-      // WORKING, and nothing else. A pip is the only thing an eye scanning a
-      // column of names actually catches, so it gets the scarce meaning. It
-      // used to mean merely alive, which put a pip on every parked
-      // conversation -- three of them, with nothing happening in any.
-      Rectangle {
-        width: 5; height: 5; radius: 2.5
-        anchors { right: parent.right; top: parent.top; rightMargin: 10; topMargin: 9 }
-        color: root.accent
-        opacity: root.stateWord(parent.r) === "working" ? 1 : 0
-      }
-
-      Text {
-        id: label
-        anchors { left: parent.left; right: parent.right; top: parent.top
-                  leftMargin: 14 + parent.depth * 16; rightMargin: 22; topMargin: 5 }
-        // The tree mark is the indent's explanation. Without it a nested row
-        // just looks misaligned.
-        // Capped rather than trusted: an Ori conversation has no session name,
-        // so the host substitutes the label it derived for the resume picker,
-        // and that is the whole opening question up to 90 characters. Elide
-        // alone would let one row's title push the state line off screen.
-        text: {
-          var n = root.displayName(parent.r)
-          if (n.length > 52) n = n.slice(0, 52) + "…"
-          return (parent.depth > 0 ? "↳ " : "") + n
+    Component {
+      id: headingPart
+      Item {
+        height: 22
+        Text {
+          anchors { left: parent.left; bottom: parent.bottom; leftMargin: 14; bottomMargin: 3 }
+          text: parent.parent.d.header
+          color: Theme.overlay0
+          font.family: Style.font.panelMono
+          font.pixelSize: Style.font.panelMeta
+          font.letterSpacing: 1
+          renderType: Text.QtRendering
         }
-        color: parent.r.alive ? Theme.text : Theme.subtext0
-        elide: Text.ElideRight
-        font.family: Style.font.panelMono
-        font.pixelSize: Style.font.panelBody
-        renderType: Text.QtRendering
       }
+    }
 
-      // One grey line under the name carrying everything that is not the name:
-      // what it is, how it is, when it started, what it is doing, and -- on a
-      // root -- how many finished delegates are folded away beneath it.
-      Text {
-        id: meta
-        anchors { left: parent.left; right: parent.right; top: label.bottom
-                  leftMargin: 14 + parent.depth * 16; rightMargin: 22; topMargin: 2 }
-        text: {
-          var bits = []
-          // "root" was a word out of the registry's vocabulary, not the
-          // user's, and on an Ori row the prefix already said it. What is worth
-          // naming is only what a row IS: one of Ori's, a delegate, or a pi
-          // running somewhere else on this machine.
-          if (parent.r.ori) bits.push(parent.r.active ? "current" : "parked")
-          else if (parent.r.kind === "root") bits.push("pi")
-          else bits.push("delegate")
-          bits.push(root.stateWord(parent.r))
-          var w = root.when(parent.r.startedAt, root.nonce)
-          if (w) bits.push(w)
-          if (parent.doneCount > 0)
-            bits.push(parent.doneCount + " done")
-          var line = bits.join("  ·  ")
-          // The live tool line wins the tail of the row when there is one --
-          // it is the only human-readable account of a running agent there is.
-          if (parent.r.activity) return line + "  ·  " + parent.r.activity
-          if (parent.r.task) return line + "  ·  " + parent.r.task
-          return line
+    Component {
+      id: rowPart
+      Rectangle {
+        readonly property var r: parent.d.row
+        readonly property int depth: parent.d.depth
+        readonly property bool on: parent.i === root.current
+
+        height: label.implicitHeight + meta.implicitHeight + 14
+        width: list.width
+        radius: 4
+        color: on ? Theme.surface1 : "transparent"
+
+        // Selection rail.
+        Rectangle {
+          width: 2
+          anchors { left: parent.left; top: parent.top; bottom: parent.bottom
+                    leftMargin: 2; topMargin: 3; bottomMargin: 3 }
+          radius: 1
+          color: root.accent
+          opacity: parent.on ? 1 : 0
         }
-        color: Theme.overlay0
-        elide: Text.ElideRight
-        font.family: Style.font.panelMono
-        font.pixelSize: Style.font.panelMeta
-        renderType: Text.QtRendering
+
+        // WORKING, and nothing else. A pip is the only thing an eye scanning a
+        // column of names actually catches, so it gets the scarce meaning. It
+        // used to mean merely alive, which put a pip on every parked
+        // conversation with nothing happening in any of them.
+        Rectangle {
+          width: 5; height: 5; radius: 2.5
+          anchors { right: parent.right; top: parent.top; rightMargin: 10; topMargin: 9 }
+          color: root.accent
+          opacity: root.stateWord(parent.r) === "working" ? 1 : 0
+        }
+
+        Text {
+          id: label
+          anchors { left: parent.left; right: parent.right; top: parent.top
+                    leftMargin: 14 + parent.depth * 16; rightMargin: 22; topMargin: 5 }
+          // Capped rather than trusted: an Ori conversation has no session
+          // name, so the host substitutes the label it derived for the resume
+          // picker, and that is the whole opening question up to 90 characters.
+          text: {
+            var n = root.displayName(parent.r)
+            if (n.length > 52) n = n.slice(0, 52) + "…"
+            return (parent.depth > 0 ? "↳ " : "") + n
+          }
+          color: parent.r.alive ? Theme.text : Theme.subtext0
+          elide: Text.ElideRight
+          font.family: Style.font.panelMono
+          font.pixelSize: Style.font.panelBody
+          renderType: Text.QtRendering
+        }
+
+        // One grey line under the name carrying everything that is not the
+        // name: what it is, how it is, when it started, and what it is doing.
+        Text {
+          id: meta
+          anchors { left: parent.left; right: parent.right; top: label.bottom
+                    leftMargin: 14 + parent.depth * 16; rightMargin: 22; topMargin: 2 }
+          text: {
+            var bits = []
+            if (parent.r.ori) bits.push(parent.r.active ? "current" : "parked")
+            else if (parent.r.kind !== "root") bits.push("delegate")
+            else bits.push("pi")
+            bits.push(root.stateWord(parent.r))
+            var w = root.when(parent.r.startedAt, root.nonce)
+            if (w) bits.push(w)
+            var line = bits.join("  ·  ")
+            // The live tool line wins the tail of the row when there is one --
+            // it is the only human-readable account of a running agent there is.
+            if (parent.r.activity) return line + "  ·  " + parent.r.activity
+            if (parent.r.task) return line + "  ·  " + parent.r.task
+            return line
+          }
+          color: Theme.overlay0
+          elide: Text.ElideRight
+          font.family: Style.font.panelMono
+          font.pixelSize: Style.font.panelMeta
+          renderType: Text.QtRendering
+        }
       }
     }
   }

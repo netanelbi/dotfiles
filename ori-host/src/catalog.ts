@@ -356,7 +356,7 @@ export class Catalog {
         name: handle,
         kind: rec["kind"] === "root" ? "root" : "delegate",
         parent: str("parent") ?? "",
-        status, alive,
+        status, alive, pid,
         activity: alive ? activity || undefined : undefined,
         task: str("task") || undefined,
         label: str("label") || undefined,

@@ -53,6 +53,7 @@ import {
   type SessionEntry,
   type SlashCommand,
 } from "./protocol";
+import { setLabel as setPeerLabel } from "./registry";
 import { rehydrate } from "./rehydrate";
 import {
   deriveLabel,
@@ -737,6 +738,7 @@ export class Host {
         ori: true,
         busy: hit.busy,
         active: hit.id === activeSession,
+        sessionId: hit.id,
         label: r.label || hit.label || undefined,
       };
     });
@@ -958,12 +960,46 @@ export class Host {
         const target = this.pool.findByFile(row?.sessionFile ?? "") as Agent | null;
         if (title === "") {
           this.#ack(conn, cmd.id, false, "a name cannot be empty");
-        } else if (!target) {
-          this.#ack(conn, cmd.id, false, "only Ori's own conversations can be renamed from here");
-        } else {
+        } else if (target) {
           target.send({ type: "set_session_name", name: title });
           this.#ack(conn, cmd.id, true);
+        } else if (!row) {
+          this.#ack(conn, cmd.id, false, `no agent called "${cmd.peer}"`);
+        } else {
+          // Somebody else's pi, or a delegate. No channel to it -- but its
+          // registry row is a file we can both write, and `label` is also what
+          // `peers send` resolves as an address, so the name is not cosmetic.
+          const ok = setPeerLabel(this.catalog.paths.registry, cmd.peer, title);
+          this.#ack(conn, cmd.id, ok, ok ? undefined : "that agent is no longer registered");
+          if (ok) void this.catalog.reloadRegistry();
         }
+        return;
+      }
+
+      case "stop_peer": {
+        // SIGTERM, never the transcript. pi runs its shutdown handlers on TERM
+        // (peers.ts settles the row and unlinks the socket there), so the row
+        // tidies itself and the session stays resumable from Ctrl+R.
+        const row = this.catalog.peerRows.find((r) => r.name === cmd.peer);
+        const owned = this.pool.findByFile(row?.sessionFile ?? "") as Agent | null;
+        if (!row) {
+          this.#ack(conn, cmd.id, false, `no agent called "${cmd.peer}"`);
+        } else if (owned) {
+          // Through the pool, which knows this child is one of its own and
+          // will not treat the exit as a crash.
+          owned.killChild("stopped from the agents view");
+          this.#ack(conn, cmd.id, true);
+        } else if (row.pid && row.pid > 0) {
+          try {
+            process.kill(row.pid, "SIGTERM");
+            this.#ack(conn, cmd.id, true);
+          } catch {
+            this.#ack(conn, cmd.id, false, "that agent is already gone");
+          }
+        } else {
+          this.#ack(conn, cmd.id, false, "that agent is not running");
+        }
+        void this.catalog.reloadRegistry();
         return;
       }
 
