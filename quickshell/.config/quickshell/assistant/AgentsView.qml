@@ -100,6 +100,14 @@ Rectangle {
     for (i = 0; i < tops.length; i++)
       (tops[i].ori ? oris : others).push(tops[i])
 
+    // OLDEST FIRST, in both sections. The host hands rows over newest-first,
+    // which is right for a log and wrong here: instance numbers are assigned by
+    // start time, so newest-first printed #3, #2, #1 down the screen and the
+    // numbering read as random. Creation order makes the column count up.
+    function byAge(a, b) { return (a.startedAt || 0) - (b.startedAt || 0) }
+    oris.sort(byAge)
+    others.sort(byAge)
+
     function emit(group, heading) {
       if (group.length === 0) return
       list.push({ header: heading })
