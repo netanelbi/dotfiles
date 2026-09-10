@@ -622,7 +622,26 @@ export class Host {
   broadcast(ev: HostEvent): void {
     const server = this.#server;
     if (!server) return;
-    for (const conn of server.conns()) conn.send(ev);
+    const out = ev.t === "sessions" ? { ...ev, entries: this.withAgents(ev.entries) } : ev;
+    for (const conn of server.conns()) conn.send(out);
+  }
+
+  /**
+   * Tag each session with the agent holding it, if one is.
+   *
+   * Done HERE rather than in `pool.list()` because the pool has never heard of
+   * the peers registry and should not start now -- and because every path that
+   * emits a session list (the pool's own, three in this file) then gets the tag
+   * for free instead of three of them remembering to ask.
+   */
+  withAgents(entries: SessionEntry[]): SessionEntry[] {
+    const rows = this.#peerRows().filter((r) => r.ori && r.alive && r.instance);
+    if (rows.length === 0) return entries;
+    const byFile = new Map(rows.map((r) => [r.sessionFile ?? "", `Ori #${r.instance}`]));
+    return entries.map((e) => {
+      const agent = e.file ? byFile.get(e.file) : undefined;
+      return agent ? { ...e, agent } : e;
+    });
   }
 
   /**
@@ -901,7 +920,9 @@ export class Host {
       convId: agent.id,
     });
     conn.send(agent.snapshot());
-    conn.send({ t: "sessions", entries: this.pool.list(), activeId: agent.sessionId });
+    // withAgents by hand: this one goes straight down a single connection on
+    // attach and never passes through broadcast().
+    conn.send({ t: "sessions", entries: this.withAgents(this.pool.list()), activeId: agent.sessionId });
     conn.send({ t: "peers", rows: this.#peerRows() });
     conn.send({ t: "models", models: this.catalog.availableModels });
     conn.send({ t: "commands", commands: this.#panelCmds() });

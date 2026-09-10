@@ -280,6 +280,15 @@ export interface SessionEntry {
   live: boolean;
   /** Mid-turn. A parked session can be busy -- that is the point. */
   busy: boolean;
+  /**
+   * The agent holding this transcript right now, as the agents view names it
+   * ("Ori #2"). Absent when no live process has it open.
+   *
+   * The resume picker lists transcripts and the agents view lists processes;
+   * this is the one string that says which row over there is this row over
+   * here. Filled by the host -- see Host#withAgents.
+   */
+  agent?: string;
 }
 
 /* ------------------------------------------------------------------ *

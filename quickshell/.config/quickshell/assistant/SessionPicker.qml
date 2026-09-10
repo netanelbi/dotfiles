@@ -292,7 +292,13 @@ Rectangle {
         // current conversation was also working, which is exactly when its
         // status was worth reading. Focus moved to the gutter caret; this line
         // now answers one question and always answers it.
+        // `agent` names the instance holding this transcript, in the words the
+        // agents view uses ("Ori #2"). Two surfaces list the same machine from
+        // different ends -- transcripts here, processes there -- and this is
+        // the one string that lets you match a row in one to a row in the
+        // other. Absent when nothing has it open, which is most rows.
         text: root.when(modelData.at, root.nonce) + "  ·  " + (modelData.turns || 0) + " exchanges"
+            + (modelData.agent ? "  ·  " + modelData.agent : "")
             + (modelData.busy ? "  ·  running now" : "")
         // The busy row's meta line is lifted out of the grey the other rows
         // sit in. "running now" in overlay0 next to "12 exchanges" in overlay0
