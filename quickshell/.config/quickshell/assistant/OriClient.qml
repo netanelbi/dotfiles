@@ -99,6 +99,10 @@ Singleton {
   // per monitor.
   property bool panelOpen: false
   property bool unread: false
+  // Written by Board.qml: names of screens with at least one OPEN board.
+  // The panel's wide mode reads it -- a floating card is what the takeover
+  // would cover, so a board out means the panel docks on that screen.
+  property var boardScreens: []
 
   // ---- the orb ----
   // Voice.qml owns the exchange and writes these; the bar dock and the panel's

@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
 // Theme/Style/Copy/Usage/ScrollProbe are singletons in the config root; a
@@ -89,6 +90,48 @@ PanelWindow {
     return panel.screen
   }
 
+  // ------------------------------------------------------------ wide mode
+  // THE RULE, verbatim: no windows open -> the panel takes the full width
+  // below the bar; any window -> it docks back to its strip. Boards count
+  // too (OriClient.boardScreens): a card out means docked. The count is
+  // Hyprland's own JSON, queried once per window event -- never the
+  // quickshell toplevels model, which lags the event by one tick and lies
+  // at exactly the moment that matters (measured).
+  property int windowCount: -1 // -1 = not measured yet -> docked
+
+  Process {
+    id: windowProbe
+    command: ["hyprctl", "-j", "clients"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try {
+          var list = JSON.parse(this.text)
+          var n = 0
+          for (var i = 0; i < list.length; i++) {
+            var o = list[i]
+            if (o.mapped === false || o.hidden === true) continue
+            n++
+          }
+          panel.windowCount = n
+        } catch (err) { /* keep last count */ }
+      }
+    }
+  }
+
+  function recheckWindows() { windowProbe.running = true }
+
+  Connections {
+    target: Hyprland
+    function onRawEvent(e) {
+      if (e.name === "openwindow" || e.name === "closewindow" || e.name === "minimize")
+        panel.recheckWindows()
+    }
+  }
+
+  readonly property bool wide:
+      opened && windowCount === 0
+      && OriClient.boardScreens.indexOf(panel.screen ? panel.screen.name : "") < 0
+
   // 560, not the 460 it was pinned at for three rounds. The user's verdict was
   // "i feel like its too small or not clear", and then, having seen it, "the
   // size of the panel was better in A". At 460 the answer's measure was 426px --
@@ -100,6 +143,11 @@ PanelWindow {
   // still reads as a floating card and needs no adjustment.
   readonly property int panelWidth: 560
 
+  // The wide card's width: most of the row, not all -- past ~960px it reads
+  // as a form. Centred, same glass and glow: the same card grown.
+  readonly property int cardWide:
+      Math.min(960, (panel.screen ? panel.screen.width : 1280) - 48)
+
   WlrLayershell.namespace: "quickshell-assistant"
   WlrLayershell.layer: WlrLayer.Top
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
@@ -108,18 +156,25 @@ PanelWindow {
   // user's ask, after the floating version sat on top of the terminal it was
   // meant to be read next to). Closed, the reservation drops the same frame
   // and the windows take the room back while the card slides out.
-  exclusionMode: panel.opened ? ExclusionMode.Auto : ExclusionMode.Ignore
+  exclusionMode: (opened && !wide) ? ExclusionMode.Auto : ExclusionMode.Ignore
 
   // LEFT, not right. The right edge is where this shell already puts things
   // that interrupt you -- notification popups stack there. The assistant is
   // something you turn TO, so it gets the other side and does not fight them
   // for the same corner.
   anchors { top: true; bottom: true; left: true }
+  // In wide mode the surface must start BELOW the bar: Ignore drops the
+  // compositor's exclusive-zone offset (the glass covered the top bar --
+  // seen and reported), so the takeover insets itself by the bar strip.
+  margins { top: wide ? Style.bar.marginTop + Style.bar.height : 0 }
   // The SURFACE is a fixed width and never resizes; the card slides inside it.
   // A layer surface that changes size waits on a compositor configure/ack per
   // frame, which is what turned the notification popups into a slideshow before
   // they were sized once and animated internally.
-  implicitWidth: panelWidth + 24
+  // The one exception is the wide mode, which resizes ONCE per transition.
+  implicitWidth: wide
+      ? (panel.screen ? panel.screen.width : panelWidth + 24)
+      : panelWidth + 24
   color: "transparent"
 
   visible: opened || revealed > 0.001
@@ -128,7 +183,7 @@ PanelWindow {
   onOpenedChanged: {
     // Re-target only on the way IN, while the surface is off screen: moving a
     // live layer surface between outputs costs a configure round trip per frame.
-    if (opened) panel.screen = focusedScreen()
+    if (opened) { panel.screen = focusedScreen(); panel.recheckWindows() }
     revealed = opened ? 1 : 0
     // Opening it means wanting to type into it. callLater because the composer
     // does not exist yet on the frame `opened` flips.
@@ -386,12 +441,13 @@ PanelWindow {
     // Floating, not docked: inset from every edge and short of full height, so
     // it reads as a console resting on the desktop rather than a sidebar welded
     // to it. The surface behind it is still fixed-size -- only the card moves.
-    width: panel.panelWidth
+    width: wide ? cardWide : panelWidth
     // Full height: with the surface reserving its width it is a tile beside
     // the windows, and a tile runs the height of the workspace.
     height: parent.height - 16
     anchors.verticalCenter: parent.verticalCenter
-    x: 16
+    // Instant, no glide: surface and card switch in the same frame.
+    x: wide ? (parent.width - width) / 2 : 16
     opacity: 1
 
     // Glass: a translucent crust over the compositor's blur (layer rule on

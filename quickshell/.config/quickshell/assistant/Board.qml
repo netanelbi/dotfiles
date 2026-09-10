@@ -35,6 +35,18 @@ Scope {
   // closing a board hides it, spawning the same name again reuses it.
   property var boardMap: ({})
 
+  // Recount screens with an OPEN board into OriClient.boardScreens -- the
+  // panel's wide mode reads it. The only ways either fact changes are the
+  // card's open/close and screen-move paths below.
+  function recountOpenScreens() {
+    var names = {}
+    for (var k in root.boardMap) {
+      var b = root.boardMap[k]
+      if (b.opened && b.screen) names[b.screen.name] = true
+    }
+    OriClient.boardScreens = Object.keys(names)
+  }
+
   function ensure(name: string): string {
     var n = String(name || "").trim() === "" ? "main" : String(name).trim()
     if (root.boardNames.indexOf(n) < 0) {
@@ -291,6 +303,7 @@ Scope {
           board.screen = screens[i]
           board.placedOn = ""
           board.clampPos()
+          root.recountOpenScreens()
           return board.name + " -> " + want
         }
       }
@@ -442,6 +455,7 @@ Scope {
     visible: opened
 
     onOpenedChanged: {
+      root.recountOpenScreens()
       if (!opened) return
       var s = focusedScreen()
       if (s) board.screen = s
@@ -456,6 +470,9 @@ Scope {
         var p2 = findFreeSpot()
         if (p2.x >= 0) { board.posX = p2.x; board.posY = p2.y }
       }
+      // The screen was reassigned above, after the recount at the top ran
+      // on the stale value -- run it again now the card knows where it lives.
+      root.recountOpenScreens()
     }
 
     // Only the card takes clicks.
