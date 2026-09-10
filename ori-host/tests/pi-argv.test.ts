@@ -58,12 +58,15 @@ describe("buildArgv", () => {
     ]);
   });
 
-  test("all four prompt files and all six extensions are passed", () => {
+  test("every prompt file and every extension is passed", () => {
     const argv = buildArgv(cfg());
-    expect(allAfter(argv, "--append-system-prompt")).toHaveLength(4);
-    expect(allAfter(argv, "-e")).toHaveLength(6);
-    expect(PROMPT_FILES).toHaveLength(4);
-    expect(EXTENSIONS).toHaveLength(6);
+    // Against the lists themselves, not a literal: this asserted 6 while the
+    // list held 8 and sat red for weeks, which is a count nobody maintains.
+    // What matters is that buildArgv drops none of them.
+    expect(allAfter(argv, "--append-system-prompt")).toHaveLength(PROMPT_FILES.length);
+    expect(allAfter(argv, "-e")).toHaveLength(EXTENSIONS.length);
+    expect(PROMPT_FILES.length).toBeGreaterThan(0);
+    expect(EXTENSIONS.length).toBeGreaterThan(0);
   });
 
   test("~ is expanded in prompt files and extensions", () => {

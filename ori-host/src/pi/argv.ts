@@ -83,6 +83,10 @@ export const EXTENSIONS: readonly string[] = [
   // that produced it.
   "~/Development/Personal/my-pi/extensions/subagent",
 
+  // Every pi session registers itself (row + Unix socket) so any session can
+  // message any other by name; delegates load it too. Ori is a root row.
+  "~/Development/Personal/my-pi/extensions/peers.ts",
+
   // One free-text note the agent keeps for itself, nudged every 8% of context,
   // asked for properly at 60%. Compaction keeps the note and the recent turns
   // and drops the rest -- no summariser call, no cold re-read.
