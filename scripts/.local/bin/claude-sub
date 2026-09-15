@@ -13,6 +13,7 @@
 #   claude-sub save <name>     snapshot the CURRENT login as <name>
 #   claude-sub <name>          switch to <name>
 #   claude-sub refresh [name]  renew the stored token(s) so usage is readable
+#   claude-sub token <name>    attach a one-year token (read from stdin) to <name>
 #   claude-sub rm <name>       forget <name>
 #
 # First-time setup:
@@ -21,7 +22,16 @@
 #   claude-sub save work       # snapshot that one too
 #   claude-sub personal        # ...and from now on, one command to swap
 #
-# Switching affects NEW claude sessions; a running session keeps its token.
+# One-year token (optional, per profile):
+#   claude setup-token | claude-sub token personal
+# A /login's refresh token dies after ~28 days; the token from `claude setup-token`
+# lives a year. When a profile has one, swapping writes THAT as the access token
+# (no refresh token, expiry a year out) — the CLI reads it exactly like a login.
+# The usage endpoint refuses it (403), so usage for a token profile comes from
+# its saved /login snapshot while that one is still refreshable.
+#
+# Running sessions pick a swap up at once — the CLI re-reads the credentials
+# file on each request.
 #
 # NO_COLOR=1 disables colour; CLICOLOR_FORCE=1 keeps it when piping.
 
@@ -71,6 +81,16 @@ bar() {
 }
 
 live_email() { jq -r '.oauthAccount.emailAddress // empty' "$CONFIG" 2>/dev/null; }
+
+# profile_token <name> — the profile's one-year token, or empty
+profile_token() { jq -r '.token // empty' "$STORE/$1.json" 2>/dev/null; }
+
+# token_expiry_note <name> — "1y token until YYYY-MM-DD" or empty
+token_expiry_note() {
+    _te=$(jq -r '.tokenExpiresAt // empty' "$STORE/$1.json" 2>/dev/null)
+    [ -n "$_te" ] || return 0
+    printf '1y token until %s' "$(date -d "@$((_te / 1000))" +%Y-%m-%d 2>/dev/null)"
+}
 
 # "<email> (<org type>, <tier>)" for a saved profile file, or for the live login
 describe_file() {
@@ -248,13 +268,20 @@ usage_for() {
                     "$(jq -r '.claudeAiOauth.expiresAt // empty' "$CREDS")"
         return
     fi
-    if [ -f "$ACTIVE" ] && [ "$(cat "$ACTIVE")" = "$1" ] && [ -f "$CREDS" ]; then
+    # A token profile's live file holds the one-year token, which the usage
+    # endpoint refuses — read its saved /login snapshot instead.
+    if [ -f "$ACTIVE" ] && [ "$(cat "$ACTIVE")" = "$1" ] && [ -f "$CREDS" ] &&
+       [ -z "$(profile_token "$1")" ]; then
         usage_for __live__
         return
     fi
     if expired "$(jq -r '.credentials.expiresAt // empty' "$STORE/$1.json")" &&
        [ "$CLAUDE_SUB_NO_REFRESH" != 1 ] && ! refresh_profile "$1"; then
-        printf '    %stoken expired and refresh failed — swap in and run claude%s\n' "$YEL" "$R"
+        if [ -n "$(profile_token "$1")" ]; then
+            printf '    %susage unreadable — saved /login is dead; /login + claude-sub save %s to renew%s\n' "$YEL" "$1" "$R"
+        else
+            printf '    %stoken expired and refresh failed — swap in and run claude%s\n' "$YEL" "$R"
+        fi
         return 0
     fi
     usage_block "$(jq -r '.credentials.accessToken // empty' "$STORE/$1.json")" \
@@ -266,8 +293,11 @@ snapshot() {  # snapshot <name> — capture live auth into the store
     [ -f "$CREDS" ] || die "No live login found at $CREDS — run claude and /login first."
     mkdir -p "$STORE"; chmod 700 "$STORE"
     _sntmp="$STORE/.$_sn.tmp.$$"
-    jq -n --slurpfile c "$CREDS" --slurpfile g "$CONFIG" \
-        '{credentials: $c[0].claudeAiOauth, oauthAccount: $g[0].oauthAccount}' > "$_sntmp"
+    # Keep an attached one-year token across re-saves.
+    _snprev='{}'
+    [ -f "$STORE/$_sn.json" ] && _snprev=$(jq -c '{token, tokenExpiresAt} | with_entries(select(.value != null))' "$STORE/$_sn.json" 2>/dev/null || echo '{}')
+    jq -n --slurpfile c "$CREDS" --slurpfile g "$CONFIG" --argjson keep "$_snprev" \
+        '{credentials: $c[0].claudeAiOauth, oauthAccount: $g[0].oauthAccount} + $keep' > "$_sntmp"
     [ "$(jq -r '.credentials.accessToken // empty' "$_sntmp")" ] || { rm -f "$_sntmp"; die "No accessToken in $CREDS"; }
     chmod 600 "$_sntmp"
     mv "$_sntmp" "$STORE/$_sn.json"
@@ -278,8 +308,17 @@ snapshot() {  # snapshot <name> — capture live auth into the store
 # not the one we think is active (e.g. you /login'd to someone else).
 stash_active() {
     [ -f "$ACTIVE" ] || return 0
+    # No live credentials (e.g. you are logged out): there is nothing to fold
+    # back, and a swap must still work — it writes the target login in full.
+    [ -f "$CREDS" ] || return 0
     prev=$(cat "$ACTIVE")
     [ -f "$STORE/$prev.json" ] || return 0
+    # If the live file IS the one-year token (not a /login), there is nothing to
+    # fold back — doing so would replace the snapshot with something that can't
+    # refresh. A real /login that is live (e.g. first swap after attaching) is
+    # still worth keeping.
+    _pt=$(profile_token "$prev")
+    [ -z "$_pt" ] || [ "$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDS")" != "$_pt" ] || return 0
     stored=$(jq -r '.oauthAccount.emailAddress // empty' "$STORE/$prev.json")
     now=$(live_email)
     if [ -n "$now" ] && [ "$stored" != "$now" ]; then
@@ -288,13 +327,6 @@ stash_active() {
         return 0
     fi
     snapshot "$prev"
-}
-
-warn_running() {
-    if pgrep -x claude >/dev/null 2>&1; then
-        printf '%swarning:%s a claude session is running — it keeps its old account, and may\n' "$YEL" "$R" >&2
-        printf '         write its refreshed token back over this swap. Quit it first.\n' >&2
-    fi
 }
 
 status() {
@@ -313,9 +345,10 @@ status() {
             printf '%s○%s %-10s %s%s%s\n' "$D" "$R" "$n" "$D" \
                 "$(jq -r '.oauthAccount.emailAddress // "?"' "$f")" "$R"
         fi
-        printf '    %s%s · %s%s\n' "$D" \
+        printf '    %s%s · %s%s%s\n' "$D" \
             "$(jq -r '.oauthAccount.organizationType // "?"' "$f")" \
-            "$(jq -r '.credentials.rateLimitTier // .credentials.subscriptionType // "?"' "$f")" "$R"
+            "$(jq -r '.credentials.rateLimitTier // .credentials.subscriptionType // "?"' "$f")" \
+            "$(_tn=$(token_expiry_note "$n"); [ -n "$_tn" ] && printf ' · %s' "$_tn")" "$R"
         [ "$NO_USAGE" = 1 ] || usage_for "$n"
         echo
     done
@@ -350,7 +383,7 @@ case "$1" in
         fi
         for f in $targets; do
             n=$(basename "$f" .json)
-            if [ -f "$ACTIVE" ] && [ "$n" = "$(cat "$ACTIVE")" ]; then
+            if [ -f "$ACTIVE" ] && [ "$n" = "$(cat "$ACTIVE")" ] && [ -z "$(profile_token "$n")" ]; then
                 printf '%s%-10s%s %sactive — the CLI keeps this one fresh%s\n' "$B" "$n" "$R" "$D" "$R"
             elif refresh_profile "$n"; then
                 printf '%s%-10s%s %srefreshed%s\n' "$B" "$n" "$R" "$GRN" "$R"
@@ -358,6 +391,26 @@ case "$1" in
                 printf '%s%-10s%s %sfailed — swap in and run claude to re-login%s\n' "$B" "$n" "$R" "$YEL" "$R"
             fi
         done
+        ;;
+    token)
+        [ -n "$2" ] || die "Usage: claude setup-token | claude-sub token <name>"
+        [ -f "$STORE/$2.json" ] || die "No such saved account: $2 — claude-sub save $2 first"
+        # Terminal copies wrap long tokens; strip every kind of whitespace.
+        tok=$(tr -d '\n\r\t ' | tail -c 200)
+        case "$tok" in
+            sk-ant-oat01-*) ;;
+            *) die "That does not look like a setup-token (expected sk-ant-oat01-…)" ;;
+        esac
+        umask 077
+        tmp="$STORE/.$2.token.$$"
+        jq --arg t "$tok" --argjson e "$(( $(now_ms) + 365 * 86400000 ))" \
+            '.token = $t | .tokenExpiresAt = $e' "$STORE/$2.json" > "$tmp"
+        chmod 600 "$tmp"
+        mv "$tmp" "$STORE/$2.json"
+        printf '%sAttached%s one-year token to %s%s%s (%s)\n' "$GRN" "$R" "$B" "$2" "$R" "$(token_expiry_note "$2")"
+        if [ -f "$ACTIVE" ] && [ "$(cat "$ACTIVE")" = "$2" ]; then
+            printf '%s is active — run %sclaude-sub %s%s to put the token live\n' "$2" "$B" "$2" "$R"
+        fi
         ;;
     rm)
         [ -n "$2" ] || die "Usage: claude-sub rm <name>"
@@ -372,8 +425,11 @@ case "$1" in
             NO_USAGE=1 status >&2
             exit 1
         }
+        token=$(profile_token "$name")
+        live_tok=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDS" 2>/dev/null)
         [ -f "$ACTIVE" ] && [ "$(cat "$ACTIVE")" = "$name" ] && [ "$(live_email)" = \
-            "$(jq -r '.oauthAccount.emailAddress // empty' "$STORE/$name.json")" ] && {
+            "$(jq -r '.oauthAccount.emailAddress // empty' "$STORE/$name.json")" ] &&
+            { [ -z "$token" ] || [ "$live_tok" = "$token" ]; } && {
             printf 'Already on %s%s%s (%s)\n' "$B" "$name" "$R" "$(describe_live)"
             exit 0
         }
@@ -382,7 +438,17 @@ case "$1" in
 
         umask 077
         tmp="$CREDS.tmp.$$"
-        jq '{claudeAiOauth: .credentials}' "$STORE/$name.json" > "$tmp"
+        if [ -n "$token" ]; then
+            # The one-year token goes in as the access token. No refresh token —
+            # there is nothing to refresh with, and the CLI won't try for a year.
+            jq '{claudeAiOauth: (.credentials
+                  | .accessToken = $t | .refreshToken = "" | .expiresAt = $e
+                  | del(.refreshTokenExpiresAt))}' \
+                --arg t "$token" --argjson e "$(jq '.tokenExpiresAt' "$STORE/$name.json")" \
+                "$STORE/$name.json" > "$tmp"
+        else
+            jq '{claudeAiOauth: .credentials}' "$STORE/$name.json" > "$tmp"
+        fi
         mv "$tmp" "$CREDS"
 
         tmp="$CONFIG.tmp.$$"
@@ -391,6 +457,5 @@ case "$1" in
 
         mkdir -p "$STORE"; printf '%s\n' "$name" > "$ACTIVE"
         printf '%sSwapped to%s %s%-10s%s %s\n' "$GRN" "$R" "$B" "$name" "$R" "$(describe_live)"
-        warn_running
         ;;
 esac
