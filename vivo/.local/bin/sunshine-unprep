@@ -29,14 +29,12 @@ if [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
     done
 fi
 
-# 1. Release the screensaver inhibit (if we still have the cookie)
-if [[ -s "$COOKIE_FILE" ]]; then
-    COOKIE=$(cat "$COOKIE_FILE")
-    timeout 3 busctl --user call \
-        org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver \
-        org.freedesktop.ScreenSaver UnInhibit u "$COOKIE" 2>/dev/null || true
-    rm -f "$COOKIE_FILE"
-fi
+# 1. Release the idle inhibitor. This is a transient unit, not a D-Bus cookie —
+#    see sunshine-prep step 4 for why the cookie form silently never held.
+timeout 3 systemctl --user stop sunshine-inhibit 2>/dev/null || true
+systemctl --user reset-failed sunshine-inhibit 2>/dev/null || true
+# Legacy: drop any cookie file left behind by the old (broken) inhibit form.
+rm -f "$COOKIE_FILE"
 
 # 2. Re-enable the physical panels prep disabled — BEFORE focusing eDP-1, otherwise
 #    focusmonitor hits "Monitor not found". The `hyprctl reload` below also restores

@@ -43,7 +43,15 @@ pkill -USR1 hyprlock 2>/dev/null || true
 # leave HEADLESS-1 mis-registered.
 for _ in $(seq 1 10); do pgrep -x hyprlock >/dev/null 2>&1 || break; sleep 0.1; done
 
-# 1. Enable HEADLESS-1 at 1080p120, parked far offscreen so cursor/windows can't drift onto it.
+# 1. Enable HEADLESS-1 at 1080p60, parked far offscreen so cursor/windows can't drift onto it.
+#
+#    60, not 120 (changed 2026-09-19). This is an APU: the game's rendering, the
+#    wlr screencopy of every frame, and VCN's encode all share one memory bus and
+#    one ~45W budget. At 120 the game renders two frames for every one a 60fps
+#    client actually receives, and the wasted half is taken straight out of the
+#    bandwidth and power the capture+encode path needs — which is why a game
+#    stream stutters while a desktop stream (idle GPU) is smooth. Raise it back
+#    only alongside a client actually requesting 120fps AND headroom to spare.
 #
 #    MUST be `hyprctl eval` + hl.monitor(), NOT `hyprctl keyword`. Since the Lua
 #    config migration hyprctl rejects keyword outright:
@@ -54,7 +62,7 @@ for _ in $(seq 1 10); do pgrep -x hyprlock >/dev/null 2>&1 || break; sleep 0.1; 
 #
 #    `disabled = false` is required: monitor.lua declares HEADLESS-1 with
 #    `disabled = true`, and supplying a mode alone does not clear that.
-hyprctl eval 'hl.monitor({ output = "HEADLESS-1", mode = "1920x1080@120", position = "4000x0", scale = 1, disabled = false })'
+hyprctl eval 'hl.monitor({ output = "HEADLESS-1", mode = "1920x1080@60", position = "4000x0", scale = 1, disabled = false })'
 # Block until HEADLESS-1 is actually registered before returning. Sunshine waits
 # for this prep to finish, THEN enumerates outputs and matches output_name. If we
 # return too early (notably cold-starting from a locked/DPMS-off session) the
@@ -81,21 +89,36 @@ hyprctl dispatch 'hl.dsp.focus({ workspace = "name:stream" })'
 #    (The previous `windowrule ... match:class ...` lines used invalid syntax
 #    and silently never matched — that was a big part of the unreliability.)
 
-# 4. Inhibit the screensaver so hypridle doesn't lock/dpms during the stream.
-#    Release any prior inhibitor first: Sunshine re-runs prep ("do") when a stream
-#    restarts without a clean "undo", and without this a double-prep would leak the
-#    old cookie — orphaned inhibitors keep idle/lock suppressed forever, even after
-#    streaming ends. unprep only knows about the latest cookie.
-if [[ -s "$STATE_DIR/inhibit-cookie" ]]; then
-    busctl --user call \
-        org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver \
-        org.freedesktop.ScreenSaver UnInhibit u "$(cat "$STATE_DIR/inhibit-cookie")" 2>/dev/null || true
-fi
-COOKIE=$(busctl --user --json=short call \
-    org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver \
-    org.freedesktop.ScreenSaver Inhibit ss "sunshine" "active stream" \
-    | jq -r '.data[0]')
-echo "$COOKIE" > "$STATE_DIR/inhibit-cookie"
+# 4. Inhibit idle so hypridle doesn't screensaver/lock/dpms/suspend during the stream.
+#
+#    The obvious `busctl call ... org.freedesktop.ScreenSaver Inhibit` form was here
+#    until 2026-09-19 and NEVER HELD. That inhibit is scoped to the CALLER'S BUS
+#    CONNECTION, so busctl's connection closes the instant it prints the cookie and
+#    hypridle drops the lock in the same second. Straight from its log:
+#        ScreenSaver inhibit: true dbus message from sunshine (owner: :1.89)
+#        Inhibit locks: 1
+#        Inhibit locks: 0        <- released before prep had even returned
+#    The saved cookie was therefore meaningless and every stream ran unprotected;
+#    the 150s screensaver and 300s lock fired straight through live streams.
+#    Reproduced with an identical standalone probe, so this is the mechanism, not
+#    a sunshine quirk.
+#
+#    A logind idle inhibitor held by a LONG-LIVED process is honoured by hypridle
+#    ("systemd idle inhibit active" -> Inhibit locks: 1, and it stays at 1), so hold
+#    it in a transient unit instead. `idle` alone is deliberate: it suppresses every
+#    hypridle listener (screensaver, lock, dpms, the 600s suspend) without touching
+#    lid handling, which is stay-awake's job. Transient units die at reboot, so a
+#    leaked one cannot outlive the boot the way an enabled unit would.
+#
+#    Stop any previous holder first: Sunshine re-runs prep ("do") when a stream
+#    restarts without a clean "undo", and a stale unit name would make systemd-run
+#    fail with "unit already exists".
+systemctl --user stop sunshine-inhibit 2>/dev/null || true
+systemctl --user reset-failed sunshine-inhibit 2>/dev/null || true
+systemd-run --user --unit=sunshine-inhibit --quiet \
+    --description="Sunshine stream active — hold idle off" \
+    systemd-inhibit --what=idle --who=sunshine --why="active stream" --mode=block \
+    sleep infinity || true
 
 # 5. Boost to performance profile + TDP for the stream — ONLY when docked (on AC)
 #    and not deliberately on power-saver. Mirrors power-profile-cycle's perf preset

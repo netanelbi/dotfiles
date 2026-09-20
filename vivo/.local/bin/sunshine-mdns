@@ -1,0 +1,103 @@
+#!/home/netanel/.local/share/sunshine-mdns/venv/bin/python
+"""Publish Sunshine's _nvstream._tcp record so Moonlight clients can discover it.
+
+Sunshine publishes this itself, but only through avahi-daemon, which is disabled
+on this box because systemd-resolved already owns UDP 5353 (resolved has
+MulticastDNS=yes). Sunshine logs "Failed to create client: Daemon not running"
+on every start and advertises nothing. python-zeroconf sets SO_REUSEPORT, so it
+coexists with resolved on 5353 and needs no root.
+
+Re-registers on address changes (`ip monitor address`) so a WiFi reconnect or a
+DHCP lease change does not leave a stale A record behind.
+"""
+
+import json
+import socket
+import subprocess
+import sys
+import urllib.request
+import xml.etree.ElementTree as ET
+
+from zeroconf import IPVersion, ServiceInfo, Zeroconf
+
+LAN_IF = "wlan0"
+HTTP_PORT = 47989
+
+
+def lan_ip():
+    """The IPv4 currently on LAN_IF, or None. Deliberately not the tailscale one."""
+    out = subprocess.run(
+        ["ip", "-json", "-4", "addr", "show", "dev", LAN_IF],
+        capture_output=True, text=True,
+    ).stdout
+    for link in json.loads(out or "[]"):
+        for a in link.get("addr_info", []):
+            if a.get("family") == "inet":
+                return a["local"]
+    return None
+
+
+def server_identity(ip):
+    """hostname + uniqueid straight from Sunshine, so the record never disagrees
+    with what the client reads back from /serverinfo."""
+    host = socket.gethostname()
+    uniqueid = ""
+    try:
+        with urllib.request.urlopen(
+            f"http://{ip}:{HTTP_PORT}/serverinfo?uniqueid=0123456789ABCDEF", timeout=5
+        ) as r:
+            root = ET.fromstring(r.read())
+        host = (root.findtext("hostname") or host).strip()
+        uniqueid = (root.findtext("uniqueid") or "").strip()
+    except Exception as e:
+        print(f"serverinfo unreachable ({e}); falling back to {host}", flush=True)
+    return host, uniqueid
+
+
+def make_info(ip):
+    host, uniqueid = server_identity(ip)
+    return ServiceInfo(
+        "_nvstream._tcp.local.",
+        f"{host}._nvstream._tcp.local.",
+        addresses=[socket.inet_aton(ip)],
+        port=HTTP_PORT,
+        properties={"SERVICE": "SUNSHINE", "UNIQUEID": uniqueid},
+        server=f"{host}.local.",
+    )
+
+
+def main():
+    ip = lan_ip()
+    if not ip:
+        sys.exit(f"no IPv4 on {LAN_IF} yet")
+
+    zc = Zeroconf(interfaces=[ip], ip_version=IPVersion.V4Only)
+    info = make_info(ip)
+    zc.register_service(info)
+    print(f"advertising {info.name} -> {ip}:{HTTP_PORT}", flush=True)
+
+    # Event-driven: block on netlink instead of polling for the address to move.
+    mon = subprocess.Popen(
+        ["ip", "monitor", "address", "dev", LAN_IF],
+        stdout=subprocess.PIPE, text=True,
+    )
+    try:
+        for _ in mon.stdout:
+            new_ip = lan_ip()
+            if not new_ip or new_ip == ip:
+                continue
+            print(f"address moved {ip} -> {new_ip}, re-registering", flush=True)
+            zc.unregister_service(info)
+            zc.close()
+            ip = new_ip
+            zc = Zeroconf(interfaces=[ip], ip_version=IPVersion.V4Only)
+            info = make_info(ip)
+            zc.register_service(info)
+    finally:
+        mon.terminate()
+        zc.unregister_service(info)
+        zc.close()
+
+
+if __name__ == "__main__":
+    main()
