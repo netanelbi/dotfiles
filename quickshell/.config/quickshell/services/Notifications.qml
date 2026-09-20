@@ -71,7 +71,12 @@ Scope {
   readonly property int timeoutNormal: 10      // timeout
   readonly property int timeoutLow: 5          // timeout-low
   readonly property int timeoutCritical: 0     // timeout-critical (0 = never)
-  readonly property bool hideOnAction: true    // hide-on-action
+  // swaync's "hide-on-action": true closes the whole panel the moment an
+  // action button is pressed. Deliberately overridden: a notification usually
+  // carries more than one button, and shutting the list after the first one
+  // means reopening it for the second. The notification itself still closes --
+  // only the panel stays up.
+  readonly property bool hideOnAction: false   // hide-on-action (overridden)
   readonly property bool hideOnClear: false    // hide-on-clear
   readonly property bool twoFactorAction: true // notification-2fa-action
   readonly property bool inlineReplies: false  // notification-inline-replies
@@ -84,6 +89,131 @@ Scope {
   // center: a screenshot confirmation is worth the 2s popup and nothing more.
   readonly property var blockedApps: ["Claude Code", "power-profile", "Scratchpad", "stay-awake", "Screenshot", "Command"]
   readonly property var historyOnlyApps: ["Cachy-Updater"]
+
+  // -------------------------------------------------------------- ignores
+  // The door the owner closes by hand. The two arrays above are mine, edited
+  // in this file; this list is his, built one notification at a time from the
+  // control center's mute button -- so it has to outlive a shell restart, and
+  // it lives in state, not in the dotfiles repo:
+  //
+  //   $XDG_STATE_HOME/quickshell/notification-ignores.json
+  //
+  // A rule is { app, summary }, matched by case-insensitive PREFIX against
+  // the notification's app-name and summary -- the same two handles the noise
+  // gate uses, because several senders set no app-name and the summary is
+  // then the only one there is. Prefixes rather than whole strings are what
+  // make a rule survive a version number: ignoring "Update available" also
+  // ignores the next release. An empty summary means the whole app.
+  //
+  // This is a real blocklist, not a filter: an ignored notification is expired
+  // at the door exactly like a blockedApps one -- no popup, no history, the
+  // sender is told.
+  property var ignoreRules: []
+  property bool ignoresLoaded: false
+  // The rule the panel is currently offering to undo, plus the label its
+  // toast shows: { app, summary, label }. Cleared by the toast timing out, by
+  // an unignore, or by the panel closing.
+  property var lastIgnore: null
+
+  readonly property string stateDir: {
+    var xdg = Quickshell.env("XDG_STATE_HOME")
+    var base = (xdg && xdg !== "") ? xdg : Quickshell.env("HOME") + "/.local/state"
+    return base + "/quickshell"
+  }
+  readonly property string ignorePath: root.stateDir + "/notification-ignores.json"
+
+  function ignoreKey(app, summary) {
+    return String(app).toLowerCase() + "|" + String(summary || "").toLowerCase()
+  }
+
+  function ruleMatches(notification, rule) {
+    var app = notification.appName !== "" ? notification.appName : "Notification"
+    if (app.toLowerCase().indexOf(String(rule.app).toLowerCase()) !== 0) return false
+    if (!rule.summary) return true
+    return notification.summary.toLowerCase().indexOf(String(rule.summary).toLowerCase()) === 0
+  }
+
+  function isIgnored(notification) {
+    for (var i = 0; i < root.ignoreRules.length; i++) {
+      if (root.ruleMatches(notification, root.ignoreRules[i])) return true
+    }
+    return false
+  }
+
+  // Called from a control-center row's mute button.
+  function ignoreEntry(entry) {
+    if (!entry || !entry.notif) return
+    root.ignore(entry.app, entry.notif.summary || "")
+  }
+
+  // The undo offer is armed here rather than at the button, so an ignore made
+  // by a script lands with the same way back as one made by hand.
+  function ignore(app, summary) {
+    summary = summary || ""
+    var key = root.ignoreKey(app, summary)
+    root.lastIgnore = {
+      app: app,
+      summary: summary,
+      label: summary === "" ? app : app + " — " + summary
+    }
+    for (var i = 0; i < root.ignoreRules.length; i++) {
+      if (root.ignoreKey(root.ignoreRules[i].app, root.ignoreRules[i].summary) === key) {
+        root.sweepIgnored()
+        return key
+      }
+    }
+    root.ignoreRules = root.ignoreRules.concat([{ app: app, summary: summary }])
+    root.saveIgnores()
+    root.sweepIgnored()
+    return key
+  }
+
+  function unignore(app, summary) {
+    var key = root.ignoreKey(app, summary)
+    root.ignoreRules = root.ignoreRules.filter(function (r) {
+      return root.ignoreKey(r.app, r.summary) !== key
+    })
+    if (root.lastIgnore && root.ignoreKey(root.lastIgnore.app, root.lastIgnore.summary) === key) {
+      root.lastIgnore = null
+    }
+    root.saveIgnores()
+  }
+
+  // A rule added while the rows it covers are already on screen takes them out
+  // now, not at their next arrival. They are closed rather than hidden, so the
+  // senders hear about it.
+  function sweepIgnored() {
+    var all = root.history.concat(root.popups)
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].notif && root.isIgnored(all[i].notif)) root.close(all[i])
+    }
+  }
+
+  // Rewritten whole on every change; atomic so a torn write cannot lose the
+  // list, which is the only thing here that must not be lost.
+  FileView {
+    id: ignoreFile
+    path: root.ignorePath
+    printErrors: false
+    atomicWrites: true
+
+    onLoaded: {
+      try {
+        var d = JSON.parse(text())
+        root.ignoreRules = d.rules || []
+      } catch (e) {
+        root.ignoreRules = []
+      }
+      root.ignoresLoaded = true
+    }
+    // No file on a first run is an empty list, not an error.
+    onLoadFailed: root.ignoresLoaded = true
+  }
+
+  function saveIgnores() {
+    if (!root.ignoresLoaded) return
+    ignoreFile.setText(JSON.stringify({ version: 1, rules: root.ignoreRules }))
+  }
 
   // ------------------------------------------------------------- state
   // Both lists are newest-first. The same entry object is shared between them
@@ -187,6 +317,12 @@ Scope {
         break
       }
     }
+    // His own list, checked where the rest of the noise gate is.
+    if (root.isIgnored(notification)) {
+      notification.expire()
+      return
+    }
+
     var entry = root.entryFor(notification)
     var fresh = !entry
 
@@ -552,6 +688,8 @@ Scope {
     if (!root.centerOpen) return
     root.centerOpen = false
     root.expandedGroups = []
+    // The undo offer belongs to the visit it was made in.
+    root.lastIgnore = null
   }
 
   function toggleCenter() {
@@ -596,7 +734,14 @@ Scope {
   // component, so the singleton cannot reach in here -- and it deliberately
   // keeps no notifications of its own, deriving its whole digest from the
   // `history` handed over on this line. One direction, one copy of the truth.
-  Component.onCompleted: Triage.store = root
+  Component.onCompleted: {
+    Triage.store = root
+    // FileView.setText does not create missing parent directories, and
+    // ~/.local/state/quickshell does not exist on a fresh machine. Done at
+    // startup rather than lazily on the first save, so the ignore that matters
+    // -- the first one -- cannot race a mkdir.
+    Quickshell.execDetached(["/usr/bin/mkdir", "-p", root.stateDir])
+  }
 
   // ----------------------------------------------------------------- ipc
   // The swaync-client surface, so muscle memory and existing scripts port
@@ -679,6 +824,35 @@ Scope {
     function hideAll(): string {
       root.hideAllPopups()
       return "hidden"
+    }
+
+    // ------------------------------------------------------------- ignores
+    // The mute button, scriptable -- and the only way to review or undo a
+    // mis-click once the panel's toast is gone.
+    //
+    //   qs ipc call notifications ignored                     one line per rule
+    //   qs ipc call notifications ignore "Slack" "New message"
+    //   qs ipc call notifications unignore "Slack" "New message"
+    //
+    // An empty summary makes the rule cover the whole app.
+    function ignored(): string {
+      if (root.ignoreRules.length === 0) return "nothing ignored"
+      var out = []
+      for (var i = 0; i < root.ignoreRules.length; i++) {
+        var r = root.ignoreRules[i]
+        var s = r.summary === "" ? "(all)" : r.summary
+        out.push(r.app + " | " + s)
+      }
+      return out.join("\n")
+    }
+
+    function ignore(app: string, summary: string): string {
+      return root.ignore(app, summary)
+    }
+
+    function unignore(app: string, summary: string): string {
+      root.unignore(app, summary)
+      return "ok"
     }
 
     // ------------------------------------------------------------- triage

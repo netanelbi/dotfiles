@@ -9,12 +9,11 @@ import "../assistant"
 //
 // swaync had a waybar module and this shell dropped it in the port: the control
 // centre survived (services/NotificationCenter.qml, arrow keys, groups, Clear
-// All and all) but nothing opens it. No bar module, and -- checked against
-// hyprland.lua, which binds eleven other `qs ipc call` targets -- no keybind
-// either. So the notification history has been reachable only from a terminal
-// since the port. A batch nobody can look at is not triage, it is a deeper hole
-// than the one it was dug to fill, so the module that counts the batch is also
-// the way in.
+// All and all) but nothing opens it. No bar module, and the keybind came later
+// -- SUPER+N now toggles it, but it did not when this widget was written, and a
+// bind alone would not have been enough anyway. So the module that counts the
+// batch is also the way in: a batch nobody can look at is not triage, it is a
+// deeper hole than the one it was dug to fill.
 //
 // ------------------------------------------------------------ what it costs
 // Nothing at rest, in the literal sense: `shown` is false whenever there is no

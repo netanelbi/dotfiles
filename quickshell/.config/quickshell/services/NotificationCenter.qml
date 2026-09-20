@@ -336,7 +336,99 @@ PanelWindow {
           HoverHandler { id: listHover }
         }
       }
+
+      // ------------------------------------------------------ ignore toast
+      // The mute button takes a whole app (or a whole kind of notification) out
+      // of the panel in one click, made while the pointer is already moving.
+      // So the last thing it did stays on screen with its undo for a few
+      // seconds -- otherwise the only way back from a mis-click is
+      // `qs ipc call notifications unignore`.
+      Rectangle {
+        id: ignoreToast
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 12
+        height: 52
+        radius: 10
+        color: Theme.surface0
+        border.width: 1
+        border.color: Theme.surface1
+        visible: opacity > 0.01
+        opacity: center.store.lastIgnore ? 1 : 0
+        y: 12 + (1 - opacity) * 8
+
+        Behavior on opacity {
+          NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
+        }
+        Behavior on y {
+          NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
+        }
+
+        Text {
+          id: toastLabel
+          anchors.left: parent.left
+          anchors.leftMargin: 14
+          anchors.right: undoButton.left
+          anchors.rightMargin: 10
+          anchors.verticalCenter: parent.verticalCenter
+          text: center.store.lastIgnore ? "Ignoring · " + center.store.lastIgnore.label : ""
+          color: Theme.text
+          font.family: Style.font.family
+          font.pixelSize: Style.font.size
+          elide: Text.ElideRight
+          renderType: Text.NativeRendering
+        }
+
+        Rectangle {
+          id: undoButton
+          anchors.right: parent.right
+          anchors.rightMargin: 10
+          anchors.verticalCenter: parent.verticalCenter
+          width: undoLabel.implicitWidth + 20
+          height: undoLabel.implicitHeight + 10
+          radius: 8
+          color: undoArea.containsMouse ? Theme.mauve : Theme.surface1
+
+          Behavior on color {
+            ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+          }
+
+          Text {
+            id: undoLabel
+            anchors.centerIn: parent
+            text: "Undo"
+            color: undoArea.containsMouse ? Theme.base : Theme.text
+            font.family: Style.font.family
+            font.pixelSize: Style.font.size
+            font.weight: Style.font.boldWeight
+            renderType: Text.NativeRendering
+
+            Behavior on color {
+              ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+            }
+          }
+
+          MouseArea {
+            id: undoArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+              if (!center.store.lastIgnore) return
+              center.store.unignore(center.store.lastIgnore.app, center.store.lastIgnore.summary)
+            }
+          }
+        }
+      }
     }
+  }
+
+  // The undo offer is a courtesy, not a prompt: it goes away on its own.
+  Timer {
+    interval: 8000
+    running: center.store.lastIgnore !== null
+    onTriggered: center.store.lastIgnore = null
   }
 
   // ------------------------------------------------------------ keyboard

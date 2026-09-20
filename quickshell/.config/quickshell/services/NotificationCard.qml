@@ -69,6 +69,10 @@ Item {
   // .notification-row:focus { background: @noti-bg-focus }; here the card
   // simply lights its own hover tint.
   property bool selected: false
+  // The mute affordance is the control center's, not the popup's: "never show
+  // this again" is a decision you make while reading the list, not from a card
+  // that is about to expire.
+  property bool allowIgnore: false
 
   // Set by the view when the store marks this entry as leaving.
   property bool leaving: false
@@ -76,6 +80,8 @@ Item {
   signal defaultActivated()
   signal actionActivated(int index)
   signal closeRequested()
+  // "Never show this again": adds an ignore rule for this app + summary.
+  signal ignoreRequested()
   signal linkActivated(string link)
   // Emitted once the exit animation has finished and the row may be dropped.
   signal finished()
@@ -257,7 +263,10 @@ Item {
               id: time
               visible: root.showTime
               anchors.right: parent.right
-              anchors.rightMargin: 30                  // .time margin-right
+              // .time margin-right, widened by the mute button the control
+              // center puts to the left of the close button so the stamp is
+              // not drawn under it.
+              anchors.rightMargin: 30 + (root.allowIgnore ? ignoreButton.width + 4 : 0)
               anchors.baseline: summary.baseline
               text: root.showTime && root.entry ? root.relativeTime(root.entry.time) : ""
               color: Theme.subtext0
@@ -330,6 +339,55 @@ Item {
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
           onClicked: root.closeRequested()
+        }
+      }
+
+      // ------------------------------------------------------- ignore
+      // Hover-revealed beside the close button, same as the close button is:
+      // it is a destructive gesture, and painting it permanently on every row
+      // would invite the mis-click it costs a whole app to undo.
+      Rectangle {
+        id: ignoreButton
+        visible: root.allowIgnore
+        anchors.right: closeButton.left
+        anchors.rightMargin: 4
+        anchors.top: parent.top
+        anchors.topMargin: 8
+        width: ignoreGlyph.implicitWidth + 16
+        height: ignoreGlyph.implicitHeight + 4
+        radius: 6
+        opacity: defaultArea.containsMouse || closeArea.containsMouse || actionsHover.hovered ? 1 : 0
+        color: ignoreArea.containsMouse ? Theme.attention : Theme.surface0
+
+        Behavior on opacity {
+          NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+        }
+        Behavior on color {
+          ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+        }
+
+        Text {
+          id: ignoreGlyph
+          anchors.centerIn: parent
+          // nf-md-bell_off -- the same struck bell the bar uses for dnd.
+          text: "󰂛"
+          color: ignoreArea.containsMouse ? Theme.base : Theme.text
+          font.family: Style.font.family
+          font.pixelSize: Style.font.size - 2
+          renderType: Text.NativeRendering
+
+          Behavior on color {
+            ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
+          }
+        }
+
+        MouseArea {
+          id: ignoreArea
+          anchors.fill: parent
+          enabled: ignoreButton.opacity > 0.5
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.ignoreRequested()
         }
       }
     }

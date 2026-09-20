@@ -236,6 +236,7 @@ Item {
           entry: holder.modelData
           cardWidth: root.cardWidth
           showTime: true                      // control-center rows carry one
+          allowIgnore: true                   // ...and the mute button
           now: root.now
           selected: root.selectedKey === holder.modelData.key
           leaving: root.store.historyLeaving.indexOf(holder.modelData.key) >= 0
@@ -254,6 +255,7 @@ Item {
             else root.store.close(holder.modelData)
           }
           onLinkActivated: link => root.store.openLink(link)
+          onIgnoreRequested: root.store.ignoreEntry(holder.modelData)
           onFinished: root.store.dropHistory(holder.modelData.key)
         }
       }
