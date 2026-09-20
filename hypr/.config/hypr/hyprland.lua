@@ -192,6 +192,13 @@ hl.bind(mainMod .. " + SHIFT + Print", hl.dsp.exec_cmd(
 -- Clipboard history (with image preview, Alt+P to preview image)
 hl.bind(mainMod .. " + V", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call clipboard toggle"))
 
+-- Notification centre: the panel, open and closed. The bar's bell is the other
+-- door, but it only exists while there is a held batch (widgets/Inbox.qml) --
+-- this one is always there. The panel grabs the keyboard while it is up, which
+-- does not stop the bind: binds are global, so the same key closes what it
+-- opened.
+hl.bind(mainMod .. " + N", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call notifications toggle"))
+
 -- Lock screen
 hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("hyprlock"))
 
@@ -243,6 +250,36 @@ hl.bind(mainMod .. " + Escape", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc 
 
 hl.window_rule({ name = "idle-inhibit-steam",     match = { class = "^steam_app" }, idle_inhibit = "always" })
 hl.window_rule({ name = "idle-inhibit-gamescope", match = { class = "^gamescope" }, idle_inhibit = "always" })
+
+-- Catch-all for everything NOT launched through Steam or gamescope: Eden
+-- (Switch), pcsx2-qt (PS2), the PS2/EmuHub launcher, Heroic/Wine titles,
+-- native Linux games. Matching those by class is a losing game — a
+-- Heroic-launched title's class is whatever the Wine app decides — so key off
+-- the state they all share: being fullscreen.
+--
+-- The MATCH is deliberately every window; the MODE does the work. idle_inhibit
+-- = "fullscreen" means "inhibit while THIS window is fullscreen", so the rule
+-- is attached broadly and evaluated against live window state. Matching on
+-- `fullscreen = true` instead is wrong — that is a map-time predicate, so a
+-- window that goes fullscreen later never picks the rule up at all.
+--
+-- "fullscreen" rather than "always" here is load-bearing: the inhibit lifts
+-- when the window leaves fullscreen or dies. A broad "always" rule is how a
+-- crashed game leaves the whole session unable to idle — that cost 4h27m of no
+-- locking on 2026-08-15. Verified against this build, not the wiki:
+-- idle_inhibit = "bananas" errors with 'unknown mode', "fullscreen" returns ok.
+hl.window_rule({ name = "idle-inhibit-fullscreen", match = { class = ".*" }, idle_inhibit = "fullscreen" })
+
+-- Emulators and launchers also need cover while WINDOWED — a gamepad generates
+-- no pointer/keyboard events, so the idle timer runs on regardless of play.
+-- These get "always" (same risk profile as the steam/gamescope rules above);
+-- if one of these ever crashes and leaves idle stuck, the fix is the two-step
+-- in sunshine-unprep step 7: `hyprctl reload` THEN restart hypridle.
+-- ElectrobunKitchenSink is EmuHub, read off `hyprctl clients` while it ran.
+hl.window_rule({ name = "idle-inhibit-emuhub", match = { class = "^ElectrobunKitchenSink" }, idle_inhibit = "always" })
+hl.window_rule({ name = "idle-inhibit-pcsx2",  match = { class = "^([Pp][Cc][Ss][Xx]2.*)$" }, idle_inhibit = "always" })
+hl.window_rule({ name = "idle-inhibit-eden",   match = { class = "^([Ee]den|org\\.eden_emu\\.eden)$" }, idle_inhibit = "always" })
+hl.window_rule({ name = "idle-inhibit-heroic", match = { class = "^([Hh]eroic.*)$" }, idle_inhibit = "always" })
 
 hl.window_rule({ name = "floating-generic", match = { class = "floating" },
     float = true, size = "500 400", center = true })

@@ -41,8 +41,12 @@ hl.bind(mainMod .. " + O", hl.dsp.exec_cmd("~/.local/bin/hypr-display-toggle"), 
 -- answers out loud is Ori's call, not the keybind's. Capsule IPC lives in
 -- quickshell assistant/Voice.qml. ignore_mods because Alt_R IS the ALT
 -- modifier while held; release=true fires the send on key-up.
-hl.bind("R_ALT", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice start"), { ignore_mods = true, non_consuming = true })
-hl.bind("R_ALT", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice stop"),  { release = true, ignore_mods = true, non_consuming = true })
+-- Alt_R, NOT R_ALT: R_ALT fails as `Unknown keysym` in hl.bind on this build
+-- (verified 2026-09-20 — and it stayed latent for a while because a stale real
+-- ~/.config/hypr/machine.lua shadowed this symlink, so the broken name was never
+-- loaded). Both binds are dead with the wrong spelling, silently.
+hl.bind("Alt_R", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice start"), { ignore_mods = true, non_consuming = true })
+hl.bind("Alt_R", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice stop"),  { release = true, ignore_mods = true, non_consuming = true })
 
 -- dictation (typed into the focused app) retired 2026-09-06 — right Alt now
 -- belongs to the voice capsule. ptt script kept in vivo/.local/bin for revival.
