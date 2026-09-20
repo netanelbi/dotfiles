@@ -21,17 +21,17 @@ function ccr --description "Launch Claude Code against Ollama Cloud (ollama.ncym
     end
 
     # --- Model mapping: Claude Code tiers -> Ollama Cloud models ---
-    # all tiers -> glm-5.3-flash  (fast/cheap, vision support; no [1m] tag on the shim yet)
+    # all tiers -> deepseek-v4.1-flash
     if set -q _flag_all
         set -x ANTHROPIC_DEFAULT_HAIKU_MODEL   $_flag_all
         set -x ANTHROPIC_DEFAULT_SONNET_MODEL $_flag_all
         set -x ANTHROPIC_DEFAULT_OPUS_MODEL   $_flag_all
         set -x CLAUDE_CODE_SUBAGENT_MODEL     $_flag_all
     else
-        set -x ANTHROPIC_DEFAULT_HAIKU_MODEL   (set -q _flag_haiku;    and echo $_flag_haiku;    or echo "glm-5.3-flash")
-        set -x ANTHROPIC_DEFAULT_SONNET_MODEL  (set -q _flag_sonnet;  and echo $_flag_sonnet;  or echo "glm-5.3-flash")
-        set -x ANTHROPIC_DEFAULT_OPUS_MODEL    (set -q _flag_opus;    and echo $_flag_opus;    or echo "glm-5.3-flash")
-        set -x CLAUDE_CODE_SUBAGENT_MODEL      (set -q _flag_subagent; and echo $_flag_subagent; or echo "glm-5.3-flash")
+        set -x ANTHROPIC_DEFAULT_HAIKU_MODEL   (set -q _flag_haiku;    and echo $_flag_haiku;    or echo "deepseek-v4.1-flash")
+        set -x ANTHROPIC_DEFAULT_SONNET_MODEL  (set -q _flag_sonnet;  and echo $_flag_sonnet;  or echo "deepseek-v4.1-flash")
+        set -x ANTHROPIC_DEFAULT_OPUS_MODEL    (set -q _flag_opus;    and echo $_flag_opus;    or echo "deepseek-v4.1-flash")
+        set -x CLAUDE_CODE_SUBAGENT_MODEL      (set -q _flag_subagent; and echo $_flag_subagent; or echo "deepseek-v4.1-flash")
     end
 
     if set -q _flag_max_tokens

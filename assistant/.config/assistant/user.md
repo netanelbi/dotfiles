@@ -18,3 +18,5 @@ The second dialogue voice (kokoro `af_heart`) is called "Grace" — in two-voice
 For two-voice dialogues, voices must sound clearly different — "almost the same" voices confused the scene. Working set: Grace (af_heart), Bella (af_bella), host/narrator Nicole (af_nicole).
 §
 Lives in Nahariya, Israel. Use that for weather/location lookups — IP geolocation is wrong (his ISP geo-locates elsewhere; there is no VPN).
+§
+A question like "what is X" wants X in a line or two. Do not walk a file I wrote end to end, or turn a one-line answer into headings and bullets — he will say "why is this so long".
