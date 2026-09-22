@@ -38,7 +38,12 @@ apply
 gdbus monitor --system --dest net.hadess.PowerProfiles 2>/dev/null |
 while read -r line; do
     case "$line" in
-        /net/hadess/PowerProfiles:*ActiveProfile*) apply ;;
+        # Settle first: the platform_profile change makes the firmware reprogram
+        # the same limits, and ryzenadj writing the SMU mailbox while that is in
+        # flight (and while amdgpu/amdxdna message the SMU on their own) is the
+        # collision that hard-froze the box on 2026-09-22. Half a second is
+        # invisible to the user and clears the firmware's window.
+        /net/hadess/PowerProfiles:*ActiveProfile*) sleep 0.5; apply ;;
     esac
 done
 

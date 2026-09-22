@@ -20,6 +20,7 @@ else
 fi
 
 # Set profile based on AC state
+prev=$(powerprofilesctl get 2>/dev/null)
 if [ "$ac_online" = "1" ]; then
     powerprofilesctl set balanced
     profile=balanced
@@ -32,7 +33,12 @@ fi
 # optional hook (power-profile-tdp-hook, installed by the vivo/ stow package).
 # Intel machines don't install it, so this is a clean no-op there. Runs as root
 # from udev; the hook drops privileges handling internally.
-if [ -x /home/netanel/.local/bin/power-profile-tdp-hook ]; then
+# Only when the profile did NOT change. When it did, ppd-tdp-watch applies the
+# hook on the D-Bus signal, and calling it here too meant two ryzenadj runs per
+# AC event — each SMU mailbox write is a collision risk against amdgpu/amdxdna
+# (2026-09-22 freeze). With no change ppd emits no signal, but the firmware may
+# still have reset the limits on the AC flip, so re-apply here in that case.
+if [ "$prev" = "$profile" ] && [ -x /home/netanel/.local/bin/power-profile-tdp-hook ]; then
     [ "$ac_online" = "1" ] && sleep 3  # let firmware settle before the pstate fix
     /home/netanel/.local/bin/power-profile-tdp-hook "$profile"
 fi
