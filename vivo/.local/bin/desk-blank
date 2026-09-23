@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# desk-blank — make the desk dark WITHOUT ever reaching "all displays off".
+#
+#   desk-blank on      # blank, no lock          (sunshine-prep)
+#   desk-blank off     # restore everything      (sunshine-unprep, desk-blank-watch)
+#   desk-blank toggle  # lock + blank, or restore if already blanked   (SUPER + O)
+#
+# THE RULE THIS EXISTS TO ENFORCE
+# `dpms off`, and disabling the last physical output, both put this APU
+# (Radeon 890M, DCN 3.5) into "all displays off" — the one state where the driver
+# allows the deep IPS2 idle state, which hard-resets the box (firmware reports a
+# data fabric sync flood; no oops, unsaved work gone). sunshine-prep used to
+# disable BOTH panels, leaving only HEADLESS-1 — a virtual wlroots output with no
+# display engine — and that crashed the machine at stream start on 2026-09-20.
+# See CLAUDE.md, "Never turn every display off".
+#
+# So: disable every physical output EXCEPT one "keeper", which stays enabled and
+# scanning out, and is merely made to emit no light.
+#
+#   keeper = eDP-1   -> backlight to 0. A true 0 on this panel (measured), and
+#                       the desktop keeps rendering underneath, so if Sunshine
+#                       ever grabs eDP-1 instead of HEADLESS-1 the remote player
+#                       sees a usable desktop rather than a black rectangle.
+#   keeper = other   -> the black overlay (quickshell gameblank). Reached with the
+#                       lid shut, where eDP-1 is already disabled and an external
+#                       is all that is left; its backlight is not ours to control
+#                       (the Dell's DDC/CI does not answer over its USB-C->DP
+#                       adapter, tested 2026-09-23).
+#
+# `monitor disabled = true` is used rather than `dpms off` deliberately: it takes
+# one named output, it is already used all over this repo, and it never touches
+# the global dpms path.
+#
+# `off` is also the RESCUE path, which is why SUPER + O is bound `locked` and is
+# always safe to press: it re-enables whatever `on` disabled and restores the
+# backlight, whether or not this script is the thing that turned them off.
+set -uo pipefail
+
+STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/desk-blank"
+MODE_FILE="$STATE_DIR/mode"        # backlight | overlay
+OFF_FILE="$STATE_DIR/disabled"     # one output name per line
+QS=(qs -p "$HOME/.config/quickshell" ipc call gameblank)
+
+mkdir -p "$STATE_DIR"
+
+blanked() { [[ -f "$MODE_FILE" ]]; }
+
+start_watcher() {
+    systemctl --user stop desk-blank-watch 2>/dev/null || true
+    systemctl --user reset-failed desk-blank-watch 2>/dev/null || true
+    systemd-run --user --unit=desk-blank-watch --quiet \
+        --description="Wake the desk when someone touches the laptop" \
+        "$HOME/.local/bin/desk-blank-watch" || true
+}
+
+blank_on() {
+    blanked && return 0
+
+    # `hyprctl monitors` (no `all`) lists only ENABLED outputs.
+    mapfile -t physical < <(hyprctl monitors -j 2>/dev/null |
+        jq -r '.[] | select(.name | startswith("HEADLESS") | not) | .name')
+
+    # Nothing enabled (lid shut, externals unplugged): there is nothing to
+    # darken, and disabling anything here is what this whole file is about.
+    [[ ${#physical[@]} -eq 0 ]] && return 0
+
+    local keeper="${physical[0]}" m
+    for m in "${physical[@]}"; do
+        [[ "$m" == "eDP-1" ]] && keeper="eDP-1"
+    done
+
+    : > "$OFF_FILE"
+    for m in "${physical[@]}"; do
+        [[ "$m" == "$keeper" ]] && continue
+        if hyprctl eval "hl.monitor({ output = \"$m\", disabled = true })" >/dev/null; then
+            printf '%s\n' "$m" >> "$OFF_FILE"
+        fi
+    done
+
+    if [[ "$keeper" == "eDP-1" ]]; then
+        brightnessctl --save set 0 >/dev/null 2>&1 && echo backlight > "$MODE_FILE"
+    else
+        "${QS[@]}" start >/dev/null 2>&1 && echo overlay > "$MODE_FILE"
+    fi
+
+    start_watcher
+}
+
+blank_off() {
+    case "$(cat "$MODE_FILE" 2>/dev/null)" in
+        backlight) brightnessctl --restore >/dev/null 2>&1 || true ;;
+        overlay)   "${QS[@]}" stop >/dev/null 2>&1 || true ;;
+    esac
+
+    # Re-enable by name and then reload, which re-applies the mode/position/scale
+    # each output is declared with in monitor.lua. `disabled = false` on its own
+    # leaves a re-enabled output on whatever the compositor picks.
+    if [[ -s "$OFF_FILE" ]]; then
+        local m
+        while read -r m; do
+            [[ -n "$m" ]] || continue
+            timeout 2 hyprctl eval "hl.monitor({ output = \"$m\", disabled = false })" >/dev/null 2>&1 || true
+        done < "$OFF_FILE"
+        timeout 3 hyprctl reload >/dev/null 2>&1 || true
+    fi
+
+    rm -f "$MODE_FILE" "$OFF_FILE"
+    systemctl --user stop desk-blank-watch 2>/dev/null || true
+    systemctl --user reset-failed desk-blank-watch 2>/dev/null || true
+}
+
+case "${1:-}" in
+on)  blank_on ;;
+off) blank_off ;;
+toggle)
+    if blanked; then
+        blank_off
+    else
+        # Lock first: the point of SUPER + O is to walk away from a machine that
+        # keeps running. The blank follows, so a failed lock leaves a lit desk
+        # rather than a dark unlocked one.
+        loginctl lock-session 2>/dev/null || true
+        blank_on
+    fi
+    ;;
+status) blanked && echo blanked || echo lit ;;
+*)
+    echo "usage: desk-blank on|off|toggle|status" >&2
+    exit 2
+    ;;
+esac
+exit 0

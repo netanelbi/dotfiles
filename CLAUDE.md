@@ -76,6 +76,7 @@ stow -D package_name
 | `SUPER + SHIFT + F` | Fullscreen |
 | `SUPER + V` | Clipboard history (quickshell) |
 | `SUPER + L` | Lock screen |
+| `SUPER + O` | Desk off: lock + blank the panels; press again or any key to wake |
 | `SUPER + E` | File manager (Thunar) |
 | `SUPER + ~` | Toggle scratchpad |
 | `SUPER + S` | Move window to scratchpad |
@@ -192,10 +193,13 @@ Located in `scripts/.local/bin/`:
 
 **Streaming / misc** (vivo-only, in the `vivo/` stow package)
 - `sunshine-prep` / `sunshine-unprep` - Switch monitor to 1920x1080@60 for Moonlight, restore native on disconnect
-- `sunshine-blank` - Darken the desk for a stream while keeping ONE physical output
-  enabled (see "Never turn every display off" below)
-- `sunshine-blank-watch` - Wake the desk when a real (non-Sunshine) input device reports
-  activity; started by `sunshine-prep` as a transient unit
+- `desk-blank` - `on|off|toggle`. Darken the desk while keeping ONE physical output
+  enabled (see "Never turn every display off" below). `toggle` locks first and is what
+  `SUPER + O` runs; `off` is also the rescue path
+- `desk-blank-watch` - Wake the desk on a deliberate KEY PRESS from a real
+  (non-Sunshine) input device; started by `desk-blank on` as a transient unit.
+  EV_KEY only — the MX Master emits motion on its own, so waking on pointer
+  movement un-blanked the desk within seconds (measured)
 - `imv-dir` - Open imv with directory navigation
 
 ## Hyprland Lua config (0.56+)
@@ -379,16 +383,18 @@ may reintroduce one.
 |---|---|---|
 | Blank the laptop panel | `brightnessctl --save set 0` / `--restore` (a true 0, measured) | `dpms off` |
 | Turn one external off | `hl.monitor({ output = "DP-2", disabled = true })` | `dpms off` |
-| Darken the desk for a stream | `sunshine-blank on` / `off` | disabling every panel |
+| Darken the desk (stream or `SUPER + O`) | `desk-blank on` / `off` / `toggle` | disabling every panel |
 
 The invariant is simply: **at least one real output stays enabled at all times.**
 HEADLESS-1 does not count — it is a virtual wlroots output with no display engine,
 which is exactly why the old `sunshine-prep` (which disabled eDP-1 and DP-2, leaving
 only HEADLESS-1) crashed the machine at stream start.
 
-Removed for this reason: `SUPER + O` and its `hypr-display-toggle` script, hypridle's
-330s `dpms off` listener, `hypr-lid-switch`'s undocked `dpms off`, and the two
-`monitor disabled` lines in `sunshine-prep`.
+Removed for this reason: `hypr-display-toggle`, hypridle's 330s `dpms off` listener,
+`hypr-lid-switch`'s undocked `dpms off`, and the two `monitor disabled` lines in
+`sunshine-prep`. `SUPER + O` was rebuilt on `desk-blank toggle`: lock, disable the
+externals, drop the keeper's backlight, and wake on real input — same intent as the old
+bind, none of the dpms.
 
 **Do not test whether `hl.dsp.dpms` takes a per-monitor argument by running it.** If
 the argument is ignored the probe *is* the crash. That mistake ate a whole session on

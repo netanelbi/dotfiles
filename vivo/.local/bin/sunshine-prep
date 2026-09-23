@@ -146,10 +146,10 @@ fi
 #    part and hard-resets the box (memory: amdgpu_dpms_reboot). It did exactly
 #    that at stream start on 2026-09-20 11:19.
 #
-#    sunshine-blank keeps ONE physical output enabled and merely makes it emit no
+#    desk-blank keeps ONE physical output enabled and merely makes it emit no
 #    light — see that script for how the keeper is chosen. Nothing here touches
 #    dpms; `monitor disabled = true` takes a named output and is safe as long as
-#    something real stays enabled, which is the invariant sunshine-blank holds.
+#    something real stays enabled, which is the invariant desk-blank holds.
 #
 #    KNOWN RISK, WATCH THE FIRST FEW STREAMS: the old comment here claimed that
 #    leaving the panels enumerable let Sunshine's output_name matcher fall back to
@@ -158,13 +158,8 @@ fi
 #    that may well have been the race rather than the matcher. If a remote client
 #    ever sees the desktop instead of the game, that is this — say so, don't
 #    "fix" it by disabling the keeper.
-"$HOME/.local/bin/sunshine-blank" on || true
-
-#    Wake the desk when a person physically touches the laptop. Sunshine's
-#    injected input is indistinguishable from real input at the Wayland level, so
-#    this is done by watching the real evdev nodes — see sunshine-blank-watch.
-systemctl --user stop sunshine-blank-watch 2>/dev/null || true
-systemctl --user reset-failed sunshine-blank-watch 2>/dev/null || true
-systemd-run --user --unit=sunshine-blank-watch --quiet \
-    --description="Wake the desk when someone touches the laptop mid-stream" \
-    "$HOME/.local/bin/sunshine-blank-watch" || true
+#    desk-blank also starts desk-blank-watch, which wakes the desk when a person
+#    physically touches the laptop. Sunshine's injected input is indistinguishable
+#    from real input at the Wayland level, so that watcher reads the real evdev
+#    nodes instead — Sunshine's devices all live under /devices/virtual/input/.
+"$HOME/.local/bin/desk-blank" on || true

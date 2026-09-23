@@ -30,12 +30,18 @@ end)
 
 hl.bind(mainMod .. " + M", hl.dsp.focus({ workspace = "name:stream" }))
 
--- SUPER + O ("server mode": lock + blank the panels) is GONE, along with
--- hypr-display-toggle. It drove `dpms off`, and "all displays off" is the state
--- that arms IPS2 on this DCN 3.5 part and hard-resets the machine -- three times
--- on 2026-09-23 alone (memory: amdgpu_dpms_reboot). No kernel flag both guards
--- it and keeps deep sleep, so the trigger was removed instead of mitigated.
--- To blank the panel now: `brightnessctl --save set 0`, restore with --restore.
+-- Desk off ("server mode"): lock, then darken the desk while the machine keeps
+-- running. Any real keypress or touchpad movement brings it back, as does
+-- pressing this again. `locked` so it fires while locked -- that, plus the fact
+-- that `off` re-enables whatever was disabled, makes this the rescue key too.
+--
+-- The old bind ran hypr-display-toggle, which ran `dpms off`. "All displays off"
+-- is the state that arms IPS2 on this DCN 3.5 part and hard-resets the machine
+-- (three times on 2026-09-23 alone; memory: amdgpu_dpms_reboot), and no kernel
+-- flag both guards it and keeps deep sleep. desk-blank gets the same result by
+-- disabling the EXTERNALS and dropping the remaining panel's backlight to 0, so
+-- one real output is always enabled. See CLAUDE.md, "Never turn every display off".
+hl.bind(mainMod .. " + O", hl.dsp.exec_cmd("~/.local/bin/desk-blank toggle"), { locked = true })
 
 -- Push-to-talk: hold right Alt, speak, release. Voice capsule (Ori), not
 -- dictation — the message lands in Ori's session marked [voice]; whether Ori

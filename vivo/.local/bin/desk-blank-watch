@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""desk-blank-watch — restore the desk when someone deliberately touches the laptop.
+
+Started by `desk-blank on` as the transient unit `desk-blank-watch`; stopped by
+`desk-blank off`. One-shot: once the desk is awake it stays awake until something
+blanks it again.
+
+WHY IT WATCHES EVDEV AND NOT THE COMPOSITOR
+Sunshine injects remote input through uinput ("Keyboard passthrough", "Mouse
+passthrough", "Sunshine X-Box One (virtual) pad"). At the Wayland level those are
+ordinary input devices, so a surface that woke on "any key" would be dismissed by
+the remote player's first keystroke. evdev is the one layer where the two are
+still distinguishable: everything Sunshine creates lives under
+/devices/virtual/input/, and nothing real does.
+
+WHY EV_KEY PRESSES ONLY, NOT POINTER MOTION
+Measured 2026-09-23: the Logitech MX Master 3 emits motion on its own within
+seconds of being left alone -- desk vibration is enough. Waking on motion meant
+the desk un-blanked immediately, every time. EV_KEY covers every deliberate act
+(keyboard keys, mouse buttons, and BTN_TOOL_FINGER/BTN_TOUCH when a finger lands
+on the touchpad) while ignoring a mouse that merely drifts.
+"""
+
+import os
+import selectors
+import struct
+import subprocess
+import sys
+import time
+
+# struct input_event on x86-64: __kernel_time64_t tv_sec, long tv_usec (16 bytes),
+# then __u16 type, __u16 code, __s32 value.
+EVENT_SIZE = 24
+EVENT_FMT = "qqHHi"
+EV_KEY = 0x01
+KEY_PRESS = 1
+
+HOME = os.path.expanduser("~")
+BLANK = os.path.join(HOME, ".local/bin/desk-blank")
+RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+MODE_FILE = os.path.join(RUNTIME, "desk-blank", "mode")
+
+# A stream usually starts with the operator already remote, but "launch Moonlight,
+# then walk away" is real -- and SUPER + O is ALWAYS pressed with a hand on the
+# keyboard. The keystroke that blanked the desk must not un-blank it.
+ARM_DELAY = float(os.environ.get("DESK_BLANK_ARM_DELAY", "5"))
+
+
+def real_event_nodes():
+    """Event nodes of real keyboards and pointers, Sunshine's virtual ones excluded.
+
+    /proc/bus/input/devices is stanza-per-device, blank-line separated:
+        S: Sysfs=/devices/platform/i8042/serio0/input/input2
+        H: Handlers=sysrq kbd leds event2
+    The kbd/mouse filter keeps this to things a person operates, dropping the lid
+    switch, the video bus and the WMI hotkey pseudo-devices.
+    """
+    nodes, sysfs = [], ""
+    try:
+        stanzas = open("/proc/bus/input/devices").read()
+    except OSError:
+        return nodes
+    for line in stanzas.splitlines():
+        if line.startswith("S: Sysfs="):
+            sysfs = line
+        elif line.startswith("H: Handlers="):
+            handlers = line.split("=", 1)[1].split()
+            if "/devices/virtual/" in sysfs:
+                continue
+            if not any(h == "kbd" or h.startswith("mouse") for h in handlers):
+                continue
+            for h in handlers:
+                if h.startswith("event"):
+                    nodes.append("/dev/input/" + h)
+        elif not line.strip():
+            sysfs = ""
+    return nodes
+
+
+def wake():
+    subprocess.run([BLANK, "off"], check=False)
+
+
+def main():
+    time.sleep(ARM_DELAY)
+
+    # Nothing to wake if the desk is already lit (short stream, manual dismiss).
+    if not os.path.exists(MODE_FILE):
+        return 0
+
+    sel = selectors.DefaultSelector()
+    opened = []
+    for node in real_event_nodes():
+        try:
+            fd = os.open(node, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            continue  # needs group `input`, which this user has
+        opened.append(fd)
+        sel.register(fd, selectors.EVENT_READ)
+
+    # No readable real devices means no way to wake the desk; undo the blank
+    # rather than strand it.
+    if not opened:
+        wake()
+        return 0
+
+    try:
+        while True:
+            for key, _ in sel.select():
+                try:
+                    data = os.read(key.fd, EVENT_SIZE * 16)
+                except OSError:
+                    continue
+                for off in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
+                    _, _, etype, _, value = struct.unpack(
+                        EVENT_FMT, data[off:off + EVENT_SIZE])
+                    if etype == EV_KEY and value == KEY_PRESS:
+                        wake()
+                        return 0
+    finally:
+        for fd in opened:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+if __name__ == "__main__":
+    sys.exit(main())
