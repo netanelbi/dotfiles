@@ -45,8 +45,20 @@ get_network_info() {
     fi
 
     # Check WiFi (auto-detect interface so this survives kernel renames)
-    local iface
-    iface=$(iw dev 2>/dev/null | awk '/Interface/{print $2; exit}')
+    #
+    # A phy can carry more than one netdev (vivo has a stray, permanently DOWN
+    # wlan1 alongside wlan0), and `iw dev` lists them in whatever order the
+    # kernel holds them -- taking merely the FIRST one reported "disconnected"
+    # on a machine that was online. So prefer the first interface with a live
+    # link, and only fall back to the first one when none is connected.
+    local iface="" cand
+    for cand in $(iw dev 2>/dev/null | awk '/Interface/{print $2}'); do
+        [[ -z "$iface" ]] && iface="$cand"
+        if iw dev "$cand" link 2>/dev/null | grep -q 'Connected to'; then
+            iface="$cand"
+            break
+        fi
+    done
     [[ -z "$iface" ]] && iface="wlan0"
 
     local iw_output

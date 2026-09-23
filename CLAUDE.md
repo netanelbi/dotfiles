@@ -192,6 +192,10 @@ Located in `scripts/.local/bin/`:
 
 **Streaming / misc** (vivo-only, in the `vivo/` stow package)
 - `sunshine-prep` / `sunshine-unprep` - Switch monitor to 1920x1080@60 for Moonlight, restore native on disconnect
+- `sunshine-blank` - Darken the desk for a stream while keeping ONE physical output
+  enabled (see "Never turn every display off" below)
+- `sunshine-blank-watch` - Wake the desk when a real (non-Sunshine) input device reports
+  activity; started by `sunshine-prep` as a transient unit
 - `imv-dir` - Open imv with directory navigation
 
 ## Hyprland Lua config (0.56+)
@@ -355,6 +359,40 @@ node named `alsa_playback.kokoro-npu`; `OriClient.oriTalking` is true while it
 exists. The speak tool's own done-message rides pi's follow-up queue and lands at
 the next tool boundary, so `speakJob` lingers for the length of any blocking call
 after a sentence -- do not drive "speaking" or the speak strip from it.
+
+## Never turn every display off
+
+`dpms off` with no argument, and disabling the last physical output, both put this
+APU (Radeon 890M, DCN 3.5) into "all displays off" — the one state where the driver
+allows the deep IPS2 idle state. On this machine IPS2 hard-resets the box: the
+firmware reports `[0x08000800] ... data fabric sync flood`, there is no oops, and
+unsaved work is gone. It fired three times on 2026-09-23 alone. Memory:
+`amdgpu_dpms_reboot`.
+
+There is no kernel flag that both guards it and keeps deep sleep.
+`amdgpu.dcdebugmask=0x800` guards it and costs 0% hardware sleep;
+`0x1000` keeps 99% hardware sleep and does NOT guard it (measured, then crashed).
+**So the flag is gone and the triggers were removed instead.** Nothing in this repo
+may reintroduce one.
+
+| Want | Use | Not |
+|---|---|---|
+| Blank the laptop panel | `brightnessctl --save set 0` / `--restore` (a true 0, measured) | `dpms off` |
+| Turn one external off | `hl.monitor({ output = "DP-2", disabled = true })` | `dpms off` |
+| Darken the desk for a stream | `sunshine-blank on` / `off` | disabling every panel |
+
+The invariant is simply: **at least one real output stays enabled at all times.**
+HEADLESS-1 does not count — it is a virtual wlroots output with no display engine,
+which is exactly why the old `sunshine-prep` (which disabled eDP-1 and DP-2, leaving
+only HEADLESS-1) crashed the machine at stream start.
+
+Removed for this reason: `SUPER + O` and its `hypr-display-toggle` script, hypridle's
+330s `dpms off` listener, `hypr-lid-switch`'s undocked `dpms off`, and the two
+`monitor disabled` lines in `sunshine-prep`.
+
+**Do not test whether `hl.dsp.dpms` takes a per-monitor argument by running it.** If
+the argument is ignored the probe *is* the crash. That mistake ate a whole session on
+2026-09-23. Read the Hyprland source instead.
 
 ## Troubleshooting
 

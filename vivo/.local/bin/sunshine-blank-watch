@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# sunshine-blank-watch — dismiss the gaming blackout when someone touches the
+# laptop itself.
+#
+# WHY NOT JUST LET THE OVERLAY HANDLE IT
+# Sunshine injects remote input through uinput ("Keyboard passthrough", "Mouse
+# passthrough", "Sunshine X-Box One (virtual) pad"). At the Wayland level those
+# are ordinary input devices, so a surface that dismisses on "any key" would be
+# dismissed by the remote player's first keystroke -- and, worse, an exclusive
+# keyboard grab would swallow the game's input entirely.
+#
+# The one place the two are still distinguishable is evdev: everything Sunshine
+# creates lives under /devices/virtual/input/, and nothing real does. So this
+# watches the real nodes only.
+#
+# Started by sunshine-prep, stopped by sunshine-unprep (transient unit
+# `sunshine-blank`). One-shot: once the desk is awake it stays awake for the
+# rest of the stream.
+set -uo pipefail
+
+BLANK="$HOME/.local/bin/sunshine-blank"
+MODE_FILE="${XDG_RUNTIME_DIR:-/tmp}/sunshine-prep/blank-mode"
+
+# Grace period. The stream usually starts with the operator already remote, but
+# "launch Moonlight, then walk away" is a real sequence and the keystroke that
+# started it must not dismiss what it just opened.
+ARM_DELAY="${SUNSHINE_BLANK_ARM_DELAY:-5}"
+
+# Collect the real keyboard/pointer event nodes.
+#
+# /proc/bus/input/devices is stanza-per-device, blank-line separated:
+#   S: Sysfs=/devices/platform/i8042/serio0/input/input2
+#   H: Handlers=sysrq kbd leds event2
+# Virtual (Sunshine) devices read S: Sysfs=/devices/virtual/input/inputNN.
+# The kbd/mouse filter keeps this to things a person operates -- it drops the
+# lid switch, the video bus and the WMI hotkey pseudo-devices, which can fire
+# on their own and would dismiss the blackout with nobody at the desk.
+real_event_nodes() {
+    awk '
+        /^S: Sysfs=/   { sysfs = $0 }
+        /^H: Handlers=/ {
+            if (sysfs !~ /\/devices\/virtual\//  &&
+                $0 ~ /(^| )(kbd|mouse[0-9]+)( |$)/ &&
+                match($0, /event[0-9]+/))
+                print "/dev/input/" substr($0, RSTART, RLENGTH)
+        }
+        /^$/ { sysfs = "" }
+    ' /proc/bus/input/devices
+}
+
+PIDS=()
+FIFO=""
+
+cleanup() {
+    for p in ${PIDS+"${PIDS[@]}"}; do kill "$p" 2>/dev/null; done
+    [[ -n "$FIFO" ]] && rm -f "$FIFO"
+    exit 0
+}
+trap cleanup EXIT INT TERM
+
+sleep "$ARM_DELAY"
+
+# Nothing to wake if the desk is already awake (short stream, manual dismiss).
+[[ -f "$MODE_FILE" ]] || exit 0
+
+mapfile -t DEVS < <(real_event_nodes)
+if [[ ${#DEVS[@]} -eq 0 ]]; then
+    # No readable real devices means no way to wake the desk; undo the blank
+    # rather than strand it. (Needs group `input`, which this user has.)
+    "$BLANK" off
+    exit 0
+fi
+
+FIFO=$(mktemp -u "${XDG_RUNTIME_DIR:-/tmp}/sunshine-blank.XXXXXX")
+mkfifo "$FIFO" || exit 0
+
+# One blocking read per device. An evdev record is 24 bytes on x86-64, so a
+# single complete read means a real key, button or pointer movement happened.
+# Whichever device reports first wins; the rest are killed on the way out.
+for d in "${DEVS[@]}"; do
+    [[ -r "$d" ]] || continue
+    ( dd if="$d" bs=24 count=1 status=none >/dev/null 2>&1 && echo woke > "$FIFO" ) &
+    PIDS+=($!)
+done
+
+[[ ${#PIDS[@]} -eq 0 ]] && { "$BLANK" off; exit 0; }
+
+read -r _ < "$FIFO"
+"$BLANK" off

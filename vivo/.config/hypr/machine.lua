@@ -30,11 +30,12 @@ end)
 
 hl.bind(mainMod .. " + M", hl.dsp.focus({ workspace = "name:stream" }))
 
--- Displays off / PC up ("server mode"): on -> lock + DPMS off; off -> wake.
--- locked so it fires while locked — that's the deliberate way back on.
--- NOTE: dpms-off hard-reboots the box on kernel 7.1.1 (amdgpu DCN/DMUB hang on
--- external DP-2). Rolled back to 7.0.12 (pinned in pacman.conf) where it's safe.
-hl.bind(mainMod .. " + O", hl.dsp.exec_cmd("~/.local/bin/hypr-display-toggle"), { locked = true })
+-- SUPER + O ("server mode": lock + blank the panels) is GONE, along with
+-- hypr-display-toggle. It drove `dpms off`, and "all displays off" is the state
+-- that arms IPS2 on this DCN 3.5 part and hard-resets the machine -- three times
+-- on 2026-09-23 alone (memory: amdgpu_dpms_reboot). No kernel flag both guards
+-- it and keeps deep sleep, so the trigger was removed instead of mitigated.
+-- To blank the panel now: `brightnessctl --save set 0`, restore with --restore.
 
 -- Push-to-talk: hold right Alt, speak, release. Voice capsule (Ori), not
 -- dictation — the message lands in Ori's session marked [voice]; whether Ori

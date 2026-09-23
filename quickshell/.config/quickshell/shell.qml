@@ -7,6 +7,7 @@
 import Quickshell
 
 import "assistant"
+import "gameblank"
 import "launchers"
 import "screensaver"
 import "services"
@@ -46,6 +47,10 @@ ShellRoot {
   // Fullscreen GPU screensaver on idle, replacing the kitty + tte pair.
   // Built only once hypridle calls `ipc call screensaver start`.
   Screensaver { }
+
+  // Black surface over the physical panels while a Sunshine stream is up.
+  // Built only once sunshine-prep calls `ipc call gameblank start`.
+  GameBlank { }
 
   // A conversation docked to the right edge, on `pi`. Not a launcher: it takes
   // the keyboard on demand rather than exclusively, so it can stay open beside

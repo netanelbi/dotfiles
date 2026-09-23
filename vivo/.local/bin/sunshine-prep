@@ -136,18 +136,35 @@ if [[ "$ac_online" == "1" && -n "$cur_profile" && "$cur_profile" != "power-saver
     touch "$STATE_DIR/profile-boosted"
 fi
 
-# 6. Disable the physical panels for the stream's duration — on this APU they only
-#    add compositing + memory-bandwidth load (the real bottleneck) and show nothing
-#    useful to a remote client. Done LAST so an earlier failure can't leave the
-#    screens off. Re-enabled by sunshine-unprep (and recoverable via SUPER+O, which
-#    reloads when a panel is left disabled).
+# 6. Darken the desk for the stream's duration. Done LAST so an earlier failure
+#    can't leave the screens dark. Undone by sunshine-unprep.
 #
-#    monitor,disable (NOT dpms off): removing the outputs entirely means Sunshine
-#    can't enumerate eDP-1/DP-2, so its flaky output_name matcher can't fall back to
-#    streaming the laptop panel — HEADLESS-1 is the only output left, so it captures
-#    that. (DPMS-off left the panels enumerable and Sunshine picked them ~80% of the
-#    time.) Requires Hyprland >= 0.55.4 — the reload this triggers segfaulted on
-#    0.55.3 (fixed in 0.55.4; reboot after a Hyprland package update).
-#    eval + hl.monitor(), not keyword — see step 1 for why keyword is a no-op here.
-hyprctl eval 'hl.monitor({ output = "eDP-1", disabled = true })' || true
-hyprctl eval 'hl.monitor({ output = "DP-2", disabled = true })' || true
+#    THIS USED TO DISABLE BOTH PANELS AND THAT IS WHAT CRASHED THE MACHINE.
+#    With eDP-1 and DP-2 both gone, HEADLESS-1 was the only output left — and it
+#    is a virtual wlroots output with no display engine behind it, so the GPU saw
+#    "all displays off". That is the single state that arms IPS2 on this DCN 3.5
+#    part and hard-resets the box (memory: amdgpu_dpms_reboot). It did exactly
+#    that at stream start on 2026-09-20 11:19.
+#
+#    sunshine-blank keeps ONE physical output enabled and merely makes it emit no
+#    light — see that script for how the keeper is chosen. Nothing here touches
+#    dpms; `monitor disabled = true` takes a named output and is safe as long as
+#    something real stays enabled, which is the invariant sunshine-blank holds.
+#
+#    KNOWN RISK, WATCH THE FIRST FEW STREAMS: the old comment here claimed that
+#    leaving the panels enumerable let Sunshine's output_name matcher fall back to
+#    the laptop panel ~80% of the time. output_name is pinned to HEADLESS-1 and
+#    this script now waits for HEADLESS-1 to exist before Sunshine enumerates, so
+#    that may well have been the race rather than the matcher. If a remote client
+#    ever sees the desktop instead of the game, that is this — say so, don't
+#    "fix" it by disabling the keeper.
+"$HOME/.local/bin/sunshine-blank" on || true
+
+#    Wake the desk when a person physically touches the laptop. Sunshine's
+#    injected input is indistinguishable from real input at the Wayland level, so
+#    this is done by watching the real evdev nodes — see sunshine-blank-watch.
+systemctl --user stop sunshine-blank-watch 2>/dev/null || true
+systemctl --user reset-failed sunshine-blank-watch 2>/dev/null || true
+systemd-run --user --unit=sunshine-blank-watch --quiet \
+    --description="Wake the desk when someone touches the laptop mid-stream" \
+    "$HOME/.local/bin/sunshine-blank-watch" || true
