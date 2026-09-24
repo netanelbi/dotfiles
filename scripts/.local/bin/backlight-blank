@@ -1,0 +1,24 @@
+#!/bin/bash
+# backlight-blank on|off — drop the panel backlight to 0 and bring it back.
+#
+# hypridle, hypr-lid-switch and desk-blank all blank this way, and they share
+# brightnessctl's ONE save slot. A bare `brightnessctl --save set 0` run while
+# the panel is already dark saves 0 over the real level, and every restore
+# after that restores 0. So: save only when the panel is lit, and never
+# restore to 0.
+FALLBACK="50%"
+
+case "$1" in
+    on)
+        [ "$(brightnessctl get)" -gt 0 ] && brightnessctl --save >/dev/null
+        brightnessctl set 0 >/dev/null
+        ;;
+    off)
+        brightnessctl --restore >/dev/null
+        [ "$(brightnessctl get)" -gt 0 ] || brightnessctl set "$FALLBACK" >/dev/null
+        ;;
+    *)
+        echo "usage: backlight-blank on|off" >&2
+        exit 1
+        ;;
+esac

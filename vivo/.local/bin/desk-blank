@@ -78,7 +78,7 @@ blank_on() {
     done
 
     if [[ "$keeper" == "eDP-1" ]]; then
-        brightnessctl --save set 0 >/dev/null 2>&1 && echo backlight > "$MODE_FILE"
+        ~/.local/bin/backlight-blank on >/dev/null 2>&1 && echo backlight > "$MODE_FILE"
     else
         "${QS[@]}" start >/dev/null 2>&1 && echo overlay > "$MODE_FILE"
     fi
@@ -88,7 +88,7 @@ blank_on() {
 
 blank_off() {
     case "$(cat "$MODE_FILE" 2>/dev/null)" in
-        backlight) brightnessctl --restore >/dev/null 2>&1 || true ;;
+        backlight) ~/.local/bin/backlight-blank off >/dev/null 2>&1 || true ;;
         overlay)   "${QS[@]}" stop >/dev/null 2>&1 || true ;;
     esac
 

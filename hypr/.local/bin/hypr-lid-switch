@@ -51,7 +51,7 @@ case "$1" in
             # Undocked: the panel is the only output. Blank its BACKLIGHT rather
             # than dpms -- dpms off here would mean "all displays off", the state
             # that arms IPS2 and hard-resets this APU (memory: amdgpu_dpms_reboot).
-            brightnessctl --save set 0
+            ~/.local/bin/backlight-blank on
         fi
         ;;
     open)
@@ -59,6 +59,6 @@ case "$1" in
         # user-facing knob in lid-switch.env; split it into hl.monitor's fields.
         IFS=, read -r _mode _pos _scale <<< "$EDP_SPEC"
         hyprctl eval "hl.monitor({ output = \"$INTERNAL\", mode = \"$_mode\", position = \"$_pos\", scale = $_scale, disabled = false })"
-        [ -f "$STREAM_MARKER" ] || brightnessctl --restore
+        [ -f "$STREAM_MARKER" ] || ~/.local/bin/backlight-blank off
         ;;
 esac
