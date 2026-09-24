@@ -17,6 +17,7 @@ Pinned facts. Full text is in ~/.pi/agent/memory/<name>.md; `memory search` also
 - pacman-sc-download-dirs — pacman -Sc errors ("could not open file download-XXXXX") on empty alpm:alpm temp dirs left by killed pacman runs; rm -rf them first
 - pdf-to-docx-hebrew — pdf2docx (and LibreOffice PDF import) sort spans by x, which reverses Hebrew and drops paragraph direction — use ~/.local/bin/pdf2docx-rtl instead (rebuilds real RTL Word paragraphs from the PDF's logical text order)
 - qs-log-and-dead-socket — qmllint noise is baseline, only 'Type X unavailable' in qs log is real; a dead panel socket needs a full quickshell restart (laptop.md says how)
+- semif-local-setup — SemIf: ~/Development/Personal/semif, uv python 3.13 + llama-cpp-python CPU, 96 tok/s prefill
 - shell-missing-display-env — Ori's shell has no DISPLAY/WAYLAND_DISPLAY: prefix GUI tools with XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-1 (grim), add DISPLAY=:1 for X11/Qt apps; launch apps via systemd-run --user as a *service* with -E env (a --scope dies with the turn)
 - subagent-parallel-failed-label — Parallel subagent rollup mislabels children that outlive the 2s grace as "failed" though they ran fine
 - subagent-wedge-and-tray — pi -p children wedged forever after answering a bg-job followUp (patched dist/main.js to waitForIdle+process.exit); ori-host tray rows now reconcile against the subagent registry — both fixes need an ori-host restart to be live
