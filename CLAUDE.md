@@ -22,7 +22,8 @@ package/.config/package/ -> ~/.config/package
 | fastfetch | System info display |
 | btop | System monitor |
 | gtk | GTK theme settings |
-| qt | Qt theme settings |
+| qt | Qt theme settings: qt6ct → Kvantum (local CatppuccinMocha theme), kdeglobals + KDE colour scheme |
+| dolphin | Dolphin file manager settings (dolphinrc; Dolphin rewrites it, expect churn) |
 | scripts | Utility scripts for Hyprland/Waybar |
 | vivo | vivo (AMD/1200p Vivobook, the main driver) — AMD TDP scripts, keyboard RGB, Sunshine streaming, per-machine Hyprland/waybar fragments |
 | lenovo | lenovo (Intel/1080p laptop) — per-machine Hyprland/waybar fragments | |
@@ -39,9 +40,9 @@ This repo is single-branch (`master`); machine differences live in **stow packag
 
 ```bash
 # on vivo (main driver):
-stow hypr quickshell kitty fish starship fastfetch btop gtk qt scripts vivo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts vivo
 # on lenovo:
-stow hypr quickshell kitty fish starship fastfetch btop gtk qt scripts lenovo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts lenovo
 ```
 
 A file lives in **either** a shared package **or** a machine package (never both — stow would conflict). Files that differ per machine but both need use a shared base that `source`s/`include`s/`require`s a machine fragment (e.g. `hyprland.lua` requires `monitor.lua`/`machine.lua`). vivo-only extras (AMD TDP, keyboard RGB, Sunshine) live in `vivo/` so lenovo doesn't carry them.
@@ -50,7 +51,7 @@ A file lives in **either** a shared package **or** a machine package (never both
 
 ```bash
 cd ~/.dotfiles
-stow hypr quickshell kitty fish starship fastfetch btop gtk qt scripts vivo   # on vivo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts vivo   # on vivo
 # replace `vivo` with `lenovo` on the lenovo machine
 ```
 
@@ -77,7 +78,7 @@ stow -D package_name
 | `SUPER + V` | Clipboard history (quickshell) |
 | `SUPER + L` | Lock screen |
 | `SUPER + O` | Desk off: lock + blank the panels; press again or any key to wake |
-| `SUPER + E` | File manager (Thunar) |
+| `SUPER + E` | File manager (Dolphin) |
 | `SUPER + ~` | Toggle scratchpad |
 | `SUPER + S` | Move window to scratchpad |
 | `SUPER + ALT + S` | Move to scratchpad silently |
@@ -135,7 +136,7 @@ pkill -SIGUSR2 waybar
 
 ```bash
 sudo pacman -S hyprland hyprlock hypridle xdg-desktop-portal-hyprland \
-  quickshell kitty stow socat \
+  quickshell kitty stow socat dolphin kvantum \
   grim slurp wl-copy cliphist jq pamixer
 ```
 

@@ -56,6 +56,7 @@ end)
 -- Environment (shared) — XCURSOR_* is machine-specific (see machine.lua)
 hl.env("QT_QPA_PLATFORMTHEME", "qt6ct")
 hl.env("TERMINAL", "kitty")
+hl.env("XDG_MENU_PREFIX", "arch-")
 
 hl.config({
     -- XWayland scaling - let Hyprland handle it
@@ -129,7 +130,7 @@ hl.bind(mainMod .. " + Return", hl.dsp.exec_cmd(terminal))
 hl.bind("CTRL + ALT + T",       hl.dsp.exec_cmd(terminal))
 hl.bind("CTRL + ALT + W",       hl.dsp.exec_cmd(terminal .. " --working-directory ~/Work"))
 hl.bind(mainMod .. " + D",      hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call apps toggle"))
-hl.bind(mainMod .. " + E",      hl.dsp.exec_cmd("thunar"))
+hl.bind(mainMod .. " + E",      hl.dsp.exec_cmd("dolphin"))
 
 -- Window management
 -- Closes the assistant panel when it is up, and the focused window otherwise.
