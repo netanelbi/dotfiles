@@ -35,7 +35,7 @@ ShellRoot {
   Launchers { }
 
   // Volume / brightness / mute OSD, replacing swayosd-server.
-  Osd { }
+  Osd { quiet: screensaver.active }
 
   // org.freedesktop.Notifications: popups + control center, replacing swaync.
   Notifications { }
@@ -46,7 +46,7 @@ ShellRoot {
 
   // Fullscreen GPU screensaver on idle, replacing the kitty + tte pair.
   // Built only once hypridle calls `ipc call screensaver start`.
-  Screensaver { }
+  Screensaver { id: screensaver }
 
   // Black surface over the physical panels while a Sunshine stream is up.
   // Built only once sunshine-prep calls `ipc call gameblank start`.

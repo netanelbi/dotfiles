@@ -15,6 +15,11 @@ Scope {
 
   property bool active: false
 
+  // Dim the real backlight while it runs; the art at full panel brightness is
+  // too much in a dark room. Restored on every close, key or lock alike.
+  onActiveChanged: Quickshell.execDetached(
+    [Quickshell.env("HOME") + "/.local/bin/backlight-blank", root.active ? "dim" : "off"])
+
   function start() {
     if (root.active) return
     // Never draw behind the lock. hypridle fires the screensaver at 150s and

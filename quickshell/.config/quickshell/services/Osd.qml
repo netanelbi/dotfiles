@@ -156,6 +156,16 @@ Scope {
   // held key moves the bar at key-repeat rate instead of at process-spawn rate.
   property int pendingStep: 0
 
+  // Set while something else owns the backlight on purpose (the screensaver's
+  // dim), so its writes do not pop the OSD. Held a beat past going false: the
+  // restore write lands after the owner lets go.
+  property bool quiet: false
+  onQuietChanged: if (!quiet) quietTail.restart()
+  Timer {
+    id: quietTail
+    interval: 1500
+  }
+
   FileView {
     id: brightnessFile
     path: root.brightnessPath
@@ -178,7 +188,7 @@ Scope {
     var first = brightnessPercent < 0
     brightnessPercent = pct
     // The very first read is the startup sync, not an event to announce.
-    if (!first && armed) present("brightness")
+    if (!first && armed && !quiet && !quietTail.running) present("brightness")
   }
 
   function stepBrightness(delta) {
