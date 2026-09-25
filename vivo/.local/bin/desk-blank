@@ -17,19 +17,22 @@
 # So: disable every physical output EXCEPT one "keeper", which stays enabled and
 # scanning out, and is merely made to emit no light.
 #
-#   keeper = eDP-1   -> backlight to 0. A true 0 on this panel (measured), and
-#                       the desktop keeps rendering underneath, so if Sunshine
-#                       ever grabs eDP-1 instead of HEADLESS-1 the remote player
-#                       sees a usable desktop rather than a black rectangle.
+#   keeper = eDP-1   -> dpms off on eDP-1 ONLY (2026-09-25, user's call).
+#                       Backlight 0 was not off: text stayed readable. Every
+#                       recorded IPS2 crash had the Dell attached; eDP-1 alone
+#                       never crashed, and the externals are disabled first.
+#                       `monitor = "eDP-1"` scopes it to that output (Hyprland
+#                       v0.56.2 ConfigActions.cpp Actions::dpms), so HEADLESS-1
+#                       keeps streaming. BUT an unresolved monitor name falls
+#                       back to EVERY monitor -- only call it with eDP-1 enabled.
 #   keeper = other   -> the black overlay (quickshell gameblank). Reached with the
 #                       lid shut, where eDP-1 is already disabled and an external
 #                       is all that is left; its backlight is not ours to control
 #                       (the Dell's DDC/CI does not answer over its USB-C->DP
 #                       adapter, tested 2026-09-23).
 #
-# `monitor disabled = true` is used rather than `dpms off` deliberately: it takes
-# one named output, it is already used all over this repo, and it never touches
-# the global dpms path.
+# Externals use `monitor disabled = true`, never dpms -- the Dell is the output
+# the crash was always seen with.
 #
 # `off` is also the RESCUE path, which is why SUPER + O is bound `locked` and is
 # always safe to press: it re-enables whatever `on` disabled and restores the
@@ -37,7 +40,7 @@
 set -uo pipefail
 
 STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/desk-blank"
-MODE_FILE="$STATE_DIR/mode"        # backlight | overlay
+MODE_FILE="$STATE_DIR/mode"        # dpms | overlay (backlight: legacy state)
 OFF_FILE="$STATE_DIR/disabled"     # one output name per line
 QS=(qs -p "$HOME/.config/quickshell" ipc call gameblank)
 
@@ -78,7 +81,8 @@ blank_on() {
     done
 
     if [[ "$keeper" == "eDP-1" ]]; then
-        ~/.local/bin/backlight-blank on >/dev/null 2>&1 && echo backlight > "$MODE_FILE"
+        hyprctl dispatch 'hl.dsp.dpms({ action = "off", monitor = "eDP-1" })' >/dev/null &&
+            echo dpms > "$MODE_FILE"
     else
         "${QS[@]}" start >/dev/null 2>&1 && echo overlay > "$MODE_FILE"
     fi
@@ -88,6 +92,7 @@ blank_on() {
 
 blank_off() {
     case "$(cat "$MODE_FILE" 2>/dev/null)" in
+        dpms)      timeout 2 hyprctl dispatch 'hl.dsp.dpms({ action = "on", monitor = "eDP-1" })' >/dev/null 2>&1 || true ;;
         backlight) ~/.local/bin/backlight-blank off >/dev/null 2>&1 || true ;;
         overlay)   "${QS[@]}" stop >/dev/null 2>&1 || true ;;
     esac

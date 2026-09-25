@@ -382,20 +382,28 @@ may reintroduce one.
 
 | Want | Use | Not |
 |---|---|---|
-| Blank the laptop panel | `brightnessctl --save set 0` / `--restore` (a true 0, measured) | `dpms off` |
+| Lid shut, undocked | `dpms off` (eDP-1 alone never crashed; backlight 0 still shows text) | backlight 0 |
+| Blank the laptop panel, lid open | `brightnessctl --save set 0` / `--restore` | `dpms off` while the Dell is attached |
 | Turn one external off | `hl.monitor({ output = "DP-2", disabled = true })` | `dpms off` |
-| Darken the desk (stream or `SUPER + O`) | `desk-blank on` / `off` / `toggle` | disabling every panel |
+| Darken the desk (stream or `SUPER + O`) | `desk-blank on` / `off` / `toggle`: externals disabled, then `dpms off` on eDP-1 only | disabling every panel |
 
 The invariant is simply: **at least one real output stays enabled at all times.**
 HEADLESS-1 does not count — it is a virtual wlroots output with no display engine,
 which is exactly why the old `sunshine-prep` (which disabled eDP-1 and DP-2, leaving
 only HEADLESS-1) crashed the machine at stream start.
 
-Removed for this reason: `hypr-display-toggle`, hypridle's 330s `dpms off` listener,
-`hypr-lid-switch`'s undocked `dpms off`, and the two `monitor disabled` lines in
+Removed for this reason: `hypr-display-toggle`, hypridle's 330s `dpms off` listener, and the two `monitor disabled` lines in
 `sunshine-prep`. `SUPER + O` was rebuilt on `desk-blank toggle`: lock, disable the
 externals, drop the keeper's backlight, and wake on real input — same intent as the old
 bind, none of the dpms.
+
+**Exception, 2026-09-25 (user's call):** `hypr-lid-switch`'s undocked close is
+`dpms off` again, and so is `desk-blank`'s (SUPER + O, sunshine-prep) blank of
+eDP-1. Every recorded crash had the Dell attached; eDP-1 alone never crashed, and
+backlight 0 left the text readable. Always the scoped form,
+`hl.dsp.dpms({ action = "off", monitor = "eDP-1" })` — per-monitor is real
+(read from v0.56.2 `Actions::dpms`, not probed), but an unresolved name falls
+back to EVERY monitor, so call it only while eDP-1 is enabled.
 
 **Do not test whether `hl.dsp.dpms` takes a per-monitor argument by running it.** If
 the argument is ignored the probe *is* the crash. That mistake ate a whole session on
