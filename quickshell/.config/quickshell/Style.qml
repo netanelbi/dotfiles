@@ -23,7 +23,7 @@ Singleton {
     // margin: 2px 0 on the module boxes -> the island is 4px shorter than the bar.
     readonly property int islandInset: 2
     readonly property int islandHeight: height - 2 * islandInset
-    readonly property int islandRadius: 14
+    readonly property int islandRadius: Theme.r(14)
     readonly property int islandPaddingH: 12
     readonly property int islandPaddingV: 4
     // Content height inside an island (islandHeight minus the 4px vertical padding).
@@ -42,7 +42,7 @@ Singleton {
   // the scratchpad `padding: 4px 10px; border-radius: 8px; border: 2px solid`,
   // and workspace buttons `padding: 4px 8px; border-radius: 8px`.
   readonly property QtObject module: QtObject {
-    readonly property int radius: 8
+    readonly property int radius: Theme.r(8)
     readonly property int paddingH: 6
     readonly property int paddingV: 4
     readonly property int borderWidth: 2
@@ -61,7 +61,10 @@ Singleton {
   // was an Omarchy trial's gsettings write, since reset.) One deliberate
   // deviation: the window-title list reads too small at 12px.
   readonly property QtObject font: QtObject {
-    readonly property string family: "JetBrainsMono Nerd Font"
+    readonly property string family: Theme.fonts.bar || "JetBrainsMono Nerd Font"
+    // Proportional UI face for labels/prose that need no Nerd Font glyphs
+    // (the theme's choice; catppuccin keeps the bar face).
+    readonly property string ui: Theme.fonts.ui || family
     readonly property int size: 14
     readonly property int small: 14    // #custom-windows; 12 read too small
     readonly property int tiny: 12     // #custom-tdp.active
@@ -88,13 +91,13 @@ Singleton {
     // so more of each glyph is above the baseline to be resolved, and flat
     // high-contrast stems that survive the distance field. It is also the face
     // this machine's own GTK chrome is set in.
-    readonly property string panelFamily: "Adwaita Sans"
+    readonly property string panelFamily: Theme.fonts.panel || "Adwaita Sans"
     // panelMono is Adwaita Mono (Iosevka metrics), not the bar's JetBrainsMono
     // Nerd Font. JetBrainsMono at the body size is so much wider and taller on
     // the body than a proportional face that every inline path outweighs its own
     // sentence. Iosevka is narrow: the same path costs ~25% less measure. The
     // BAR keeps `family` -- it needs the Nerd Font glyphs and this one has none.
-    readonly property string panelMono: "Adwaita Mono"
+    readonly property string panelMono: Theme.fonts.panelMono || "Adwaita Mono"
 
     // Ori's ANSWER, and the largest thing on this surface.
     readonly property int panelBody: 19

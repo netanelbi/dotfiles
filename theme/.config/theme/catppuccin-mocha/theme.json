@@ -1,0 +1,33 @@
+{
+  "name": "catppuccin-mocha",
+  "label": "Catppuccin Mocha",
+  "dark": true,
+  "brutal": false,
+  "swatch": ["#1e1e2e", "#cba6f7", "#89b4fa", "#a6e3a1", "#f9e2af"],
+  "palette": {
+    "base": "#1e1e2e", "mantle": "#181825", "crust": "#11111b",
+    "text": "#cdd6f4", "subtext0": "#a6adc8", "subtext1": "#bac2de",
+    "surface0": "#313244", "surface1": "#45475a", "surface2": "#585b70", "overlay0": "#6c7086",
+    "blue": "#89b4fa", "lavender": "#b4befe", "sapphire": "#74c7ec", "sky": "#89dceb",
+    "teal": "#94e2d5", "green": "#a6e3a1", "yellow": "#f9e2af", "peach": "#fab387",
+    "maroon": "#eba0ac", "red": "#f38ba8", "mauve": "#cba6f7", "pink": "#f5c2e7",
+    "flamingo": "#f2cdcd", "rosewater": "#f5e0dc"
+  },
+  "fill": {
+    "yellow": "#f9e2af", "red": "#f38ba8", "green": "#a6e3a1", "blue": "#89b4fa", "violet": "#cba6f7",
+    "onFill": "#1e1e2e"
+  },
+  "desk": { "background": "#1e1e2e", "grid": "" },
+  "shape": {
+    "radiusScale": 1.0,
+    "border": 0,
+    "borderColor": "#11111b",
+    "shadowX": 0, "shadowY": 0, "shadowColor": "#00000000"
+  },
+  "font": {
+    "bar": "JetBrainsMono Nerd Font",
+    "ui": "JetBrainsMono Nerd Font",
+    "panel": "Adwaita Sans",
+    "panelMono": "Adwaita Mono"
+  }
+}

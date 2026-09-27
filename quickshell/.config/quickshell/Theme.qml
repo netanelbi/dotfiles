@@ -4,52 +4,113 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// Catppuccin Mocha palette, read at runtime from the waybar stylesheet's
-// `@define-color` lines. That file is the single source of truth for colour in
-// this shell: edit it and both bars re-theme (the FileView watches for changes,
-// so no restart).
+// The desktop theme, read at runtime from ~/.config/theme/<name>/theme.json
+// (stow package `theme`). <name> comes from ~/.local/state/theme/current, which
+// `theme-switch` writes; both files are watched, so a switch re-themes the
+// whole shell live with no restart. No state file = catppuccin-mocha.
 //
-// The hex literals below are FALLBACKS ONLY, for the case where the stylesheet
-// cannot be read. They are the only hardcoded colours allowed anywhere in this
-// config -- every widget must go through Theme.
+// The hex literals below are FALLBACKS ONLY (Catppuccin Mocha), for the case
+// where the theme cannot be read. They are the only hardcoded colours allowed
+// anywhere in this config -- every widget must go through Theme.
+//
+// Colour names are Catppuccin's for every theme, and each one is INK: legible
+// as text on `base`. Pastel fills a brutal theme paints chips with live under
+// `fill*`, with `onFill` as the text drawn on them.
 Singleton {
   id: root
 
   readonly property string home: Quickshell.env("HOME")
-  // The repo copy is authoritative; the stow symlink is the fallback so the
-  // shell still themes correctly if the dotfiles checkout moves.
-  readonly property string primaryPath: home + "/.dotfiles/waybar/.config/waybar/style.css"
-  readonly property string fallbackPath: home + "/.config/waybar/style.css"
+  readonly property string defaultName: "catppuccin-mocha"
+  readonly property string statePath: home + "/.local/state/theme/current"
+  readonly property string themesDir: home + "/.config/theme"
 
-  // name -> "#rrggbb", filled by parse().
-  property var palette: ({})
-  readonly property bool loaded: Object.keys(palette).length > 0
+  // The active theme's name, and the parsed theme.json.
+  property string name: defaultName
+  property var data: ({})
+  readonly property bool loaded: data.palette !== undefined
+
+  readonly property var palette: data.palette || ({})
+  readonly property var fillMap: data.fill || ({})
+  readonly property var shape: data.shape || ({})
+  readonly property var fonts: data.font || ({})
+  readonly property var desk: data.desk || ({})
+  readonly property string label: data.label || name
+  readonly property bool dark: data.dark === undefined ? true : data.dark
+  // Structural switch: square corners, hard borders, offset shadows, filled
+  // chips. Widgets branch on this where the shape (not just colour) differs.
+  readonly property bool brutal: data.brutal === true
 
   function lookup(name, fallback) {
     var v = palette[name]
     return v === undefined ? fallback : v
   }
+  function fill(name, fallback) {
+    var v = fillMap[name]
+    return v === undefined ? fallback : v
+  }
 
-  function parse(css) {
-    var out = {}
-    var re = /@define-color\s+([A-Za-z0-9_-]+)\s+(#[0-9a-fA-F]{3,8})\s*;/g
-    var m
-    while ((m = re.exec(css)) !== null) out[m[1]] = m[2]
-    root.palette = out
+  // Re-read both files (theme-switch also pokes this over IPC, for the case
+  // where the state file did not exist when the shell started).
+  function reload() { stateFile.reload(); themeFile.reload() }
+
+  // Every theme.json in ~/.config/theme, for the picker: [{name,label,dark,swatch}].
+  property var available: []
+  function refreshAvailable() { listProc.running = true }
+
+  FileView {
+    id: stateFile
+    path: root.statePath
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      var n = text().trim()
+      root.name = n.length > 0 ? n : root.defaultName
+    }
+    onFileChanged: reload()
+    onLoadFailed: root.name = root.defaultName
   }
 
   FileView {
-    id: cssFile
-    path: root.primaryPath
+    id: themeFile
+    path: root.themesDir + "/" + root.name + "/theme.json"
     watchChanges: true
     printErrors: false
-    onLoaded: root.parse(text())
+    onLoaded: {
+      try {
+        var d = JSON.parse(text())
+        if (d && d.palette) root.data = d
+      } catch (e) {
+        // A half-written file: keep the current theme, the next change event re-reads it.
+        console.warn("Theme: " + path + " is not valid JSON yet: " + e)
+      }
+    }
     onFileChanged: reload()
     onLoadFailed: {
-      if (path !== root.fallbackPath) path = root.fallbackPath
-      else console.warn("Theme: no waybar style.css found, using built-in Mocha fallbacks")
+      console.warn("Theme: cannot read " + path + ", keeping " + (root.data.name || "built-in Mocha fallbacks"))
     }
   }
+
+  Process {
+    id: listProc
+    command: ["sh", "-c", "for f in \"$1\"/*/theme.json; do cat \"$f\"; printf '\\n@@THEME@@\\n'; done", "sh", root.themesDir]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var out = []
+        text.split("@@THEME@@").forEach(function (chunk) {
+          chunk = chunk.trim()
+          if (!chunk) return
+          try {
+            var d = JSON.parse(chunk)
+            out.push({ name: d.name, label: d.label || d.name, dark: d.dark !== false,
+                       brutal: d.brutal === true, swatch: d.swatch || [] })
+          } catch (e) { console.warn("Theme: skipping unparsable theme.json: " + e) }
+        })
+        out.sort(function (a, b) { return a.name === root.defaultName ? -1 : b.name === root.defaultName ? 1 : a.label.localeCompare(b.label) })
+        root.available = out
+      }
+    }
+  }
+  Component.onCompleted: refreshAvailable()
 
   // ------------------------------------------------------------ raw palette
   readonly property color base:      lookup("base",      "#1e1e2e")
@@ -105,4 +166,31 @@ Singleton {
   readonly property color tooltipBackground: base
   readonly property color tooltipBorder: surface0
   readonly property color tooltipText: text
+
+  // ------------------------------------------------------- fills (brutal chips)
+  // Pastel surfaces with `onFill` text on top. For catppuccin they equal the ink
+  // colours, so nothing that uses them changes the soft look.
+  readonly property color fillYellow: fill("yellow", "#f9e2af")
+  readonly property color fillRed:    fill("red",    "#f38ba8")
+  readonly property color fillGreen:  fill("green",  "#a6e3a1")
+  readonly property color fillBlue:   fill("blue",   "#89b4fa")
+  readonly property color fillViolet: fill("violet", "#cba6f7")
+  readonly property color onFill:     fill("onFill", "#1e1e2e")
+
+  // --------------------------------------------------------------- shape
+  // Outline + hard offset shadow for panels/popups/islands. Catppuccin: 0 / none.
+  readonly property int   borderWidth: shape.border === undefined ? 0 : shape.border
+  readonly property color borderColor: shape.borderColor || "#11111b"
+  readonly property int   shadowX: shape.shadowX || 0
+  readonly property int   shadowY: shape.shadowY || 0
+  readonly property color shadowColor: shape.shadowColor || "#00000000"
+  readonly property bool  hasShadow: shadowX !== 0 || shadowY !== 0
+  // Multiply every corner radius by this (Style does it for its own tokens).
+  readonly property real  radiusScale: shape.radiusScale === undefined ? 1.0 : shape.radiusScale
+  function r(px) { return Math.round(px * radiusScale) }
+
+  // ---------------------------------------------------------------- desk
+  readonly property color deskBackground: desk.background || base
+  readonly property color deskGrid: desk.grid || "transparent"
+  readonly property bool  deskHasGrid: !!desk.grid
 }
