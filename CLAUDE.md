@@ -25,6 +25,8 @@ package/.config/package/ -> ~/.config/package
 | qt | Qt theme settings: qt6ct → Kvantum (local CatppuccinMocha theme), kdeglobals + KDE colour scheme |
 | dolphin | Dolphin file manager settings (dolphinrc; Dolphin rewrites it, expect churn) |
 | scripts | Utility scripts for Hyprland/Waybar |
+| theme | Desktop themes: `~/.config/theme/<name>/theme.json` (+ per-app fragments), applied by `theme-switch` |
+| fonts | User fonts (Space Grotesk, OFL) -> `~/.local/share/fonts` |
 | vivo | vivo (AMD/1200p Vivobook, the main driver) — AMD TDP scripts, keyboard RGB, Sunshine streaming, per-machine Hyprland/waybar fragments |
 | lenovo | lenovo (Intel/1080p laptop) — per-machine Hyprland/waybar fragments | |
 
@@ -40,9 +42,9 @@ This repo is single-branch (`master`); machine differences live in **stow packag
 
 ```bash
 # on vivo (main driver):
-stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts vivo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts theme fonts vivo
 # on lenovo:
-stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts lenovo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts theme fonts lenovo
 ```
 
 A file lives in **either** a shared package **or** a machine package (never both — stow would conflict). Files that differ per machine but both need use a shared base that `source`s/`include`s/`require`s a machine fragment (e.g. `hyprland.lua` requires `monitor.lua`/`machine.lua`). vivo-only extras (AMD TDP, keyboard RGB, Sunshine) live in `vivo/` so lenovo doesn't carry them.
@@ -51,7 +53,7 @@ A file lives in **either** a shared package **or** a machine package (never both
 
 ```bash
 cd ~/.dotfiles
-stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts vivo   # on vivo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts theme fonts vivo   # on vivo
 # replace `vivo` with `lenovo` on the lenovo machine
 ```
 
@@ -69,6 +71,7 @@ stow -D package_name
 | `CTRL + ALT + T` | Terminal (alternative) |
 | `CTRL + ALT + W` | Terminal in ~/Work |
 | `SUPER + D` | Launcher (quickshell) |
+| `SUPER + T` | Theme picker (quickshell) |
 | `SUPER + A` | Toggle the assistant panel (Ori) |
 | `SUPER + SHIFT + A` | Let the orb out to live on the desktop / call it home to the bar |
 | `SUPER + Q` | Close the assistant panel if it is up, else close the window |
@@ -202,6 +205,29 @@ Located in `scripts/.local/bin/`:
   EV_KEY only — the MX Master emits motion on its own, so waking on pointer
   movement un-blanked the desk within seconds (measured)
 - `imv-dir` - Open imv with directory navigation
+
+## Themes
+
+One source of truth per theme: `theme/.config/theme/<name>/theme.json` (palette, fills,
+shape, fonts, per-app names) plus fragments next to it (`hypr.lua`, `kitty.conf`,
+`kdeglobals.ini`, `qt6ct-colors.conf`). Themes: `catppuccin-mocha` (default, today's look),
+`neo-brutal-light`, `neo-brutal-dark`.
+
+```bash
+theme-switch neo-brutal-light   # apply live + persist; theme-switch --list; no arg = current
+theme-switch catppuccin-mocha   # the escape hatch
+```
+
+The active name lives in `~/.local/state/theme/current` (untracked; absent = catppuccin).
+- **Quickshell** `Theme.qml` watches that file and the theme's json: live, no restart.
+  Branch on `Theme.brutal` for structural differences; `HardShadow.qml` draws the offset shadow.
+- **Hyprland** `hyprland.lua` ends with `theme_apply()`, run at login/reload and via `hyprctl eval`.
+- **kitty** keeps catppuccin inline and includes the active theme's fragment after it.
+- **Qt/GTK**: theme-switch edits only the theme keys of the TRACKED `kdeglobals`,
+  `qt6ct.conf`, `kvantum.kvconfig` and gtk `settings.ini`. On catppuccin they are byte-for-byte
+  the committed files; **on any other theme `git status` shows them modified — do not commit
+  them that way.** Qt apps pick up a switch on restart.
+- Kvantum `NeoBrutal*` are generated from CatppuccinMocha by `~/.config/theme/tools/genkv.py`.
 
 ## Hyprland Lua config (0.56+)
 
