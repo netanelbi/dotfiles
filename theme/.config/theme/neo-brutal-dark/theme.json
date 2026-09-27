@@ -21,13 +21,22 @@
   "shape": {
     "radiusScale": 0.0,
     "border": 3,
-    "borderColor": "#000000",
-    "shadowX": 5, "shadowY": 5, "shadowColor": "#000000"
+    "borderColor": "#EDE8DF",
+    "shadowX": 5, "shadowY": 5, "shadowColor": "#C9B8FF"
   },
   "font": {
     "bar": "JetBrainsMono Nerd Font",
     "ui": "Space Grotesk",
     "panel": "Space Grotesk",
     "panelMono": "JetBrainsMono Nerd Font"
+  },
+  "apps": {
+    "kvantum": "NeoBrutalDark",
+    "kdeColorScheme": "NeoBrutalDark",
+    "qt6ctColors": "~/.config/theme/neo-brutal-dark/qt6ct-colors.conf",
+    "qtFont": "\"Space Grotesk,12,-1,5,400,0,0,0,0,0,0,0,0,0,0,1\"",
+    "gtkTheme": "Adwaita-dark",
+    "gtkPreferDark": "true",
+    "gtkColorScheme": "prefer-dark"
   }
 }

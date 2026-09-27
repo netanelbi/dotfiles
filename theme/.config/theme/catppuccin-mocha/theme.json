@@ -29,5 +29,14 @@
     "ui": "JetBrainsMono Nerd Font",
     "panel": "Adwaita Sans",
     "panelMono": "Adwaita Mono"
+  },
+  "apps": {
+    "kvantum": "CatppuccinMocha",
+    "kdeColorScheme": "CatppuccinMocha",
+    "qt6ctColors": "~/.config/qt6ct/colors/catppuccin-mocha.conf",
+    "qtFont": "\"Noto Sans,12,-1,5,400,0,0,0,0,0,0,0,0,0,0,1\"",
+    "gtkTheme": "Adwaita-dark",
+    "gtkPreferDark": "true",
+    "gtkColorScheme": "prefer-dark"
   }
 }

@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+"""theme-switch -- apply a desktop theme live, everywhere, and persist it.
+
+  theme-switch <name>     apply <name> (idempotent)
+  theme-switch --list     list themes, `*` marks the active one
+  theme-switch            print the active theme
+
+Themes live in ~/.config/theme/<name>/ (stow pkg `theme`): theme.json is the
+source of truth, plus per-surface fragments this script and the configs read:
+  hypr.lua          Hyprland look; hyprland.lua's theme_apply() loads it
+                    (at login from the state file, live via `hyprctl eval`)
+  kitty.conf        colours; kitty.conf includes ~/.local/state/theme/kitty.conf,
+                    a symlink kept here
+  kdeglobals.ini    the colour groups of ~/.config/kdeglobals, merged in place
+  qt6ct-colors.conf qt6ct palette (catppuccin keeps its file in qt/)
+  theme.json:apps   Kvantum theme, KDE colour scheme, qt6ct palette + font, GTK
+
+State: ~/.local/state/theme/current (plain name; absent = catppuccin-mocha).
+Quickshell watches it; the Theme singleton re-reads theme.json by itself.
+
+Files in the repo (kvantum.kvconfig, qt6ct.conf, kdeglobals) are edited line
+by line, key by key, so switching back to catppuccin-mocha restores them byte
+for byte. Everything is checked before anything is written; if a step still
+fails, the previous theme is re-applied and the exit status is non-zero.
+Fonts: Space Grotesk ships in the `fonts` stow package (OFL, OFL.txt beside it).
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+HOME = os.path.expanduser("~")
+THEMES = os.path.join(HOME, ".config/theme")
+STATE = os.path.join(HOME, ".local/state/theme")
+CURRENT = os.path.join(STATE, "current")
+DEFAULT = "catppuccin-mocha"
+
+KVANTUM = os.path.join(HOME, ".config/Kvantum/kvantum.kvconfig")
+QT6CT = os.path.join(HOME, ".config/qt6ct/qt6ct.conf")
+KDEGLOBALS = os.path.join(HOME, ".config/kdeglobals")
+# GTK reads these at startup and gtk-application-prefer-dark-theme beats the
+# gsettings colour scheme (measured: GTK3 stayed prefer-dark on a light gsettings).
+GTK3_INI = os.path.join(HOME, ".config/gtk-3.0/settings.ini")
+GTK4_INI = os.path.join(HOME, ".config/gtk-4.0/settings.ini")
+QS = ["qs", "-p", os.path.join(HOME, ".config/quickshell")]
+
+
+class Fail(Exception):
+    pass
+
+
+def available():
+    out = []
+    for n in sorted(os.listdir(THEMES)) if os.path.isdir(THEMES) else []:
+        if os.path.isfile(os.path.join(THEMES, n, "theme.json")):
+            out.append(n)
+    return out
+
+
+def current():
+    try:
+        with open(CURRENT) as f:
+            n = f.read().strip()
+            return n or DEFAULT
+    except FileNotFoundError:
+        return DEFAULT
+
+
+def real(path):
+    """Write through stow symlinks: rename() must replace the repo file, not the link."""
+    return os.path.realpath(path)
+
+
+def atomic_write(path, data):
+    path = real(path)
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            if f.read() == data.encode():
+                return False
+        mode = os.stat(path).st_mode & 0o7777
+    else:
+        mode = 0o644
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".theme-switch.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return True
+
+
+def atomic_symlink(target, link):
+    if os.path.islink(link) and os.readlink(link) == target:
+        return
+    tmp = link + ".tmp"
+    if os.path.lexists(tmp):
+        os.unlink(tmp)
+    os.symlink(target, tmp)
+    os.replace(tmp, link)
+
+
+def set_key(text, group, key, value):
+    """Set key=value inside [group] of an INI text, touching nothing else."""
+    lines = text.split("\n")
+    in_group, gstart, gend = False, None, None
+    for i, l in enumerate(lines):
+        if l.startswith("["):
+            if in_group:
+                gend = i
+                break
+            in_group = l.strip() == f"[{group}]"
+            if in_group:
+                gstart = i
+        elif in_group and l.split("=", 1)[0] == key:
+            lines[i] = f"{key}={value}"
+            return "\n".join(lines)
+    if gstart is None:
+        body = text.rstrip("\n")
+        return f"{body}\n\n[{group}]\n{key}={value}\n"
+    # key missing: append after the group's last non-blank line
+    end = gend if gend is not None else len(lines)
+    j = end
+    while j - 1 > gstart and lines[j - 1].strip() == "":
+        j -= 1
+    lines.insert(j, f"{key}={value}")
+    return "\n".join(lines)
+
+
+def parse_ini(text):
+    out, group = [], None
+    for l in text.splitlines():
+        l = l.strip()
+        if not l or l.startswith("#") or l.startswith(";"):
+            continue
+        if l.startswith("[") and l.endswith("]"):
+            group = l[1:-1]
+        elif "=" in l and group:
+            k, v = l.split("=", 1)
+            out.append((group, k, v))
+        else:
+            raise Fail(f"bad line in fragment: {l!r}")
+    return out
+
+
+def load(name):
+    """Validate a theme completely before anything is written."""
+    if name not in available():
+        raise Fail(f"unknown theme {name!r}; available: {', '.join(available()) or '(none)'}")
+    d = os.path.join(THEMES, name)
+    with open(os.path.join(d, "theme.json")) as f:
+        t = json.load(f)
+    apps = t.get("apps")
+    if not isinstance(apps, dict):
+        raise Fail(f"{name}/theme.json has no \"apps\" object")
+    for k in ("kvantum", "kdeColorScheme", "qt6ctColors", "qtFont", "gtkTheme", "gtkPreferDark", "gtkColorScheme"):
+        if not apps.get(k):
+            raise Fail(f"{name}/theme.json apps.{k} missing")
+    for frag in ("hypr.lua", "kitty.conf", "kdeglobals.ini"):
+        if not os.path.isfile(os.path.join(d, frag)):
+            raise Fail(f"{name}/{frag} missing")
+    kv = os.path.join(HOME, ".config/Kvantum", apps["kvantum"], apps["kvantum"] + ".kvconfig")
+    if not os.path.isfile(kv):
+        raise Fail(f"Kvantum theme {apps['kvantum']} not installed ({kv})")
+    qc = os.path.expanduser(apps["qt6ctColors"])
+    if not os.path.isfile(qc):
+        raise Fail(f"qt6ct palette {qc} missing")
+    cs = os.path.join(HOME, ".local/share/color-schemes", apps["kdeColorScheme"] + ".colors")
+    if not os.path.isfile(cs):
+        raise Fail(f"KDE colour scheme {cs} missing (stow qt?)")
+    with open(os.path.join(d, "kdeglobals.ini")) as f:
+        kdg = parse_ini(f.read())
+    return {"name": name, "dir": d, "json": t, "apps": apps, "qt6ctColors": qc, "kdeglobals": kdg}
+
+
+def run(cmd, check=True, timeout=10):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        if check:
+            raise Fail(f"{cmd[0]}: {e}")
+        return None
+    if check and p.returncode != 0:
+        raise Fail(f"{' '.join(cmd)}: {(p.stderr or p.stdout).strip()}")
+    return p
+
+
+# ---- steps ---------------------------------------------------------------
+
+def step_files(t):
+    a = t["apps"]
+    with open(real(KVANTUM)) as f:
+        s = f.read()
+    atomic_write(KVANTUM, set_key(s, "General", "theme", a["kvantum"]))
+
+    with open(real(QT6CT)) as f:
+        s = f.read()
+    s = set_key(s, "Appearance", "color_scheme_path", t["qt6ctColors"])
+    s = set_key(s, "Fonts", "general", a["qtFont"])
+    atomic_write(QT6CT, s)
+
+    with open(real(KDEGLOBALS)) as f:
+        s = f.read()
+    for group, k, v in t["kdeglobals"]:
+        s = set_key(s, group, k, v)
+    atomic_write(KDEGLOBALS, s)
+
+
+def step_kitty(t):
+    os.makedirs(STATE, exist_ok=True)
+    atomic_symlink(os.path.join(t["dir"], "kitty.conf"), os.path.join(STATE, "kitty.conf"))
+    # SIGUSR1 = reload config, in every kitty process (single_instance: usually one)
+    run(["pkill", "-USR1", "-x", "kitty"], check=False)
+
+
+def step_gtk(t):
+    a = t["apps"]
+    # key by key, so catppuccin-mocha restores the tracked files byte for byte
+    for ini, keys in ((GTK3_INI, {"gtk-application-prefer-dark-theme": a["gtkPreferDark"],
+                                  "gtk-theme-name": a["gtkTheme"]}),
+                      (GTK4_INI, {"gtk-application-prefer-dark-theme": a["gtkPreferDark"]})):
+        if not os.path.exists(ini):
+            continue
+        with open(real(ini)) as f:
+            s = f.read()
+        for k, v in keys.items():
+            s = set_key(s, "Settings", k, v)
+        atomic_write(ini, s)
+    if run(["gsettings", "--version"], check=False) is None:
+        return
+    run(["gsettings", "set", "org.gnome.desktop.interface", "color-scheme", a["gtkColorScheme"]])
+    run(["gsettings", "set", "org.gnome.desktop.interface", "gtk-theme", a["gtkTheme"]])
+
+
+def step_hypr(t):
+    if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        print("theme-switch: Hyprland not running; applies at next login", file=sys.stderr)
+        return
+    p = run(["hyprctl", "eval", f'theme_apply("{t["name"]}")'], check=False)
+    out = (p.stdout + p.stderr).strip() if p else "hyprctl missing"
+    if p is None or p.returncode != 0 or out.startswith("error"):
+        raise Fail(f"hyprctl eval theme_apply: {out}")
+
+
+def step_state(t):
+    os.makedirs(STATE, exist_ok=True)
+    atomic_write(CURRENT, t["name"] + "\n")
+    # Quickshell watches the file; the IPC poke is a belt-and-braces refresh.
+    run(QS + ["ipc", "call", "theme", "reload"], check=False, timeout=5)
+
+
+def apply(name):
+    t = load(name)  # raises before anything is touched
+    for step in (step_files, step_kitty, step_gtk, step_hypr, step_state):
+        try:
+            step(t)
+        except Fail:
+            raise
+        except Exception as e:
+            raise Fail(f"{step.__name__}: {e}") from e
+
+
+def main(argv):
+    if not argv:
+        print(current())
+        return 0
+    if argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    if argv[0] in ("-l", "--list"):
+        cur = current()
+        for n in available():
+            try:
+                with open(os.path.join(THEMES, n, "theme.json")) as f:
+                    j = json.load(f)
+                label, kind = j.get("label", n), ("dark" if j.get("dark") else "light")
+            except Exception:
+                label, kind = n, "?"
+            print(f"{'*' if n == cur else ' '} {n:20} {label} ({kind})")
+        return 0
+    name = argv[0]
+    prev = current()
+    try:
+        apply(name)
+    except Fail as e:
+        print(f"theme-switch: FAILED applying {name}: {e}", file=sys.stderr)
+        if name in available() and prev != name and prev in available():
+            print(f"theme-switch: rolling back to {prev}", file=sys.stderr)
+            try:
+                apply(prev)
+            except Fail as e2:
+                print(f"theme-switch: rollback FAILED too: {e2}", file=sys.stderr)
+        return 1
+    print(name)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

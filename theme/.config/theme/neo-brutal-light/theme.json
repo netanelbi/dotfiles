@@ -29,5 +29,14 @@
     "ui": "Space Grotesk",
     "panel": "Space Grotesk",
     "panelMono": "JetBrainsMono Nerd Font"
+  },
+  "apps": {
+    "kvantum": "NeoBrutalLight",
+    "kdeColorScheme": "NeoBrutalLight",
+    "qt6ctColors": "~/.config/theme/neo-brutal-light/qt6ct-colors.conf",
+    "qtFont": "\"Space Grotesk,12,-1,5,400,0,0,0,0,0,0,0,0,0,0,1\"",
+    "gtkTheme": "Adwaita",
+    "gtkPreferDark": "false",
+    "gtkColorScheme": "prefer-light"
   }
 }

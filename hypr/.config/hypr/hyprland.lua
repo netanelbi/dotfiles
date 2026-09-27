@@ -349,3 +349,38 @@ hl.layer_rule({
     match = { namespace = "^quickshell-ori-orb$" },
     no_anim = true,
 })
+
+---------------
+---- THEME ----
+---------------
+-- Desktop theme (scripts/.local/bin/theme-switch). The hl.config above IS
+-- catppuccin-mocha; the active theme's ~/.config/theme/<name>/hypr.lua returns
+-- function(base, rule) that restyles borders/rounding/shadow/gaps on top of it.
+-- base = values the theme must be able to restore (gaps_out comes from the
+-- machine fragment, so it is captured here, after require("machine")).
+-- rule = hl.window_rule, remembered so the next theme can disable it.
+-- theme_apply is global so theme-switch can call it live via `hyprctl eval`.
+-- Everything is pcall-guarded: a missing or broken theme never breaks login.
+THEME_BASE = { gaps_out = hl.get_config("general:gaps_out") }
+THEME_RULES = THEME_RULES or {}
+
+function theme_apply(name)
+    local home = os.getenv("HOME")
+    if not name then
+        local f = io.open(home .. "/.local/state/theme/current", "r")
+        name = f and f:read("l") or "catppuccin-mocha"
+        if f then f:close() end
+    end
+    if not name:match("^[%w_%-]+$") then error("bad theme name: " .. name) end
+    local fn = assert(loadfile(home .. "/.config/theme/" .. name .. "/hypr.lua"))()
+    for _, r in ipairs(THEME_RULES) do pcall(function() r:set_enabled(false) end) end
+    THEME_RULES = {}
+    fn(THEME_BASE, function(spec)
+        local r = hl.window_rule(spec)
+        THEME_RULES[#THEME_RULES + 1] = r
+        return r
+    end)
+    return name
+end
+
+pcall(theme_apply)
