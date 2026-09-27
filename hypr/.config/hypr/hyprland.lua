@@ -130,6 +130,7 @@ hl.bind(mainMod .. " + Return", hl.dsp.exec_cmd(terminal))
 hl.bind("CTRL + ALT + T",       hl.dsp.exec_cmd(terminal))
 hl.bind("CTRL + ALT + W",       hl.dsp.exec_cmd(terminal .. " --working-directory ~/Work"))
 hl.bind(mainMod .. " + D",      hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call apps toggle"))
+hl.bind(mainMod .. " + T",      hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call theme toggle"))
 hl.bind(mainMod .. " + E",      hl.dsp.exec_cmd("dolphin"))
 
 -- Window management

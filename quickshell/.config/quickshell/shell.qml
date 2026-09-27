@@ -12,6 +12,7 @@ import "launchers"
 import "screensaver"
 import "services"
 import "sharepicker"
+import "themepicker"
 import "wallpaper"
 
 // Entry point. One bar per connected monitor; Variants keeps that in sync as
@@ -33,6 +34,10 @@ ShellRoot {
   // this line is what constructs the five IpcHandlers (apps/clipboard/calc/
   // emoji/power) that `qs ipc call <target> toggle` talks to.
   Launchers { }
+
+  // SUPER + T: the theme picker, and `ipc call theme ...` (theme-switch pokes
+  // its `reload`).
+  ThemePicker { }
 
   // Volume / brightness / mute OSD, replacing swayosd-server.
   Osd { quiet: screensaver.active }
