@@ -26,7 +26,6 @@ package/.config/package/ -> ~/.config/package
 | dolphin | Dolphin file manager settings (dolphinrc; Dolphin rewrites it, expect churn) |
 | scripts | Utility scripts for Hyprland/Waybar |
 | theme | Desktop themes: `~/.config/theme/<name>/theme.json` (+ per-app fragments), applied by `theme-switch` |
-| fonts | User fonts (Space Grotesk, OFL) -> `~/.local/share/fonts` |
 | vivo | vivo (AMD/1200p Vivobook, the main driver) — AMD TDP scripts, keyboard RGB, Sunshine streaming, per-machine Hyprland/waybar fragments |
 | lenovo | lenovo (Intel/1080p laptop) — per-machine Hyprland/waybar fragments | |
 
@@ -42,9 +41,9 @@ This repo is single-branch (`master`); machine differences live in **stow packag
 
 ```bash
 # on vivo (main driver):
-stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts theme fonts vivo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts theme vivo
 # on lenovo:
-stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts theme fonts lenovo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts theme lenovo
 ```
 
 A file lives in **either** a shared package **or** a machine package (never both — stow would conflict). Files that differ per machine but both need use a shared base that `source`s/`include`s/`require`s a machine fragment (e.g. `hyprland.lua` requires `monitor.lua`/`machine.lua`). vivo-only extras (AMD TDP, keyboard RGB, Sunshine) live in `vivo/` so lenovo doesn't carry them.
@@ -53,7 +52,7 @@ A file lives in **either** a shared package **or** a machine package (never both
 
 ```bash
 cd ~/.dotfiles
-stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts theme fonts vivo   # on vivo
+stow hypr quickshell kitty fish starship fastfetch btop gtk qt dolphin scripts theme vivo   # on vivo
 # replace `vivo` with `lenovo` on the lenovo machine
 ```
 
@@ -210,11 +209,12 @@ Located in `scripts/.local/bin/`:
 
 One source of truth per theme: `theme/.config/theme/<name>/theme.json` (palette, fills,
 shape, fonts, per-app names) plus fragments next to it (`hypr.lua`, `kitty.conf`,
-`kdeglobals.ini`, `qt6ct-colors.conf`). Themes: `catppuccin-mocha` (default, today's look),
-`neo-brutal-light`, `neo-brutal-dark`.
+`kdeglobals.ini`, `qt6ct-colors.conf`). Themes: `catppuccin-mocha` (default). The
+neo-brutal themes were tried and removed; `Theme.brutal` branches and `HardShadow.qml` stay for
+any future theme with outlines and offset shadows. Super+T opens the picker.
 
 ```bash
-theme-switch neo-brutal-light   # apply live + persist; theme-switch --list; no arg = current
+theme-switch <name>             # apply live + persist; theme-switch --list; no arg = current
 theme-switch catppuccin-mocha   # the escape hatch
 ```
 
@@ -227,7 +227,6 @@ The active name lives in `~/.local/state/theme/current` (untracked; absent = cat
   `qt6ct.conf`, `kvantum.kvconfig` and gtk `settings.ini`. On catppuccin they are byte-for-byte
   the committed files; **on any other theme `git status` shows them modified — do not commit
   them that way.** Qt apps pick up a switch on restart.
-- Kvantum `NeoBrutal*` are generated from CatppuccinMocha by `~/.config/theme/tools/genkv.py`.
 
 ## Hyprland Lua config (0.56+)
 
