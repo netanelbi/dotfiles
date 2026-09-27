@@ -594,8 +594,8 @@ ScriptWidget {
     visible: root.overflowOpen && winModel.count > 0
     color: "transparent"
 
-    implicitWidth: Math.ceil(root.popupWidth)
-    implicitHeight: Math.ceil(card.implicitHeight)
+    implicitWidth: Math.ceil(root.popupWidth) + Theme.shadowX
+    implicitHeight: Math.ceil(card.implicitHeight) + Theme.shadowY
 
     anchor {
       item: chip
@@ -606,12 +606,15 @@ ScriptWidget {
       rect.y: 2
     }
 
+    HardShadow { target: card }
+
     Rectangle {
       id: card
       width: root.popupWidth
+      height: implicitHeight
       implicitHeight: rows.implicitHeight + 10
       color: Theme.tooltipBackground
-      border.width: 1
+      border.width: Theme.tooltipBorderWidth
       border.color: Theme.tooltipBorder
       radius: Style.module.radius
 
@@ -635,7 +638,7 @@ ScriptWidget {
 
             Rectangle {
               anchors.fill: parent
-              radius: 6
+              radius: Theme.r(6)
               color: Theme.hoverBackground
               opacity: rowMouse.containsMouse ? 1 : 0
               Behavior on opacity { NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth } }

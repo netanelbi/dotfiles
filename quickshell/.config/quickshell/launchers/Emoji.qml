@@ -111,7 +111,7 @@ Scope {
     prompt: "Emoji"
     accent: Theme.accent           // catppuccin.rasi: border-color @mauve
     panelWidth: 500
-    cornerRadius: 12
+    cornerRadius: Theme.r(12)
     placeholder: "Search emoji..."
     list: list
 
@@ -174,8 +174,8 @@ Scope {
               width: parent.width
               text: emojiRow.modelData.name
               elide: Text.ElideRight
-              color: Theme.text
-              font.family: Style.font.family
+              color: list.ink(emojiRow.current, Theme.text)
+              font.family: Style.font.ui
               font.pixelSize: Style.font.size
               font.weight: emojiRow.current ? Style.font.boldWeight : Style.font.normalWeight
               renderType: Text.NativeRendering
@@ -186,7 +186,7 @@ Scope {
               visible: emojiRow.current
               text: emojiRow.modelData.subgroup.split("-").join(" ")
               elide: Text.ElideRight
-              color: Theme.overlay0
+              color: list.ink(emojiRow.current, Theme.overlay0)
               font.family: Style.font.family
               font.pixelSize: Style.font.small
               renderType: Text.NativeRendering

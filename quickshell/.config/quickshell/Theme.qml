@@ -147,7 +147,8 @@ Singleton {
   // against style.css.
 
   // `.modules-left/.modules-center/.modules-right { background: alpha(@base, 0.95) }`
-  readonly property color islandBackground: alpha(base, 0.95)
+  // Brutal islands are opaque cream/ink blocks, not a 95% wash.
+  readonly property color islandBackground: brutal ? base : alpha(base, 0.95)
   // `#workspaces button:hover { background: alpha(@surface1, 0.5) }`
   readonly property color hoverBackground: alpha(surface1, 0.5)
   // Default module foreground (`#tray, #language, ... { color: @text }`)
@@ -164,8 +165,9 @@ Singleton {
 
   // `tooltip { background: @base; border: 1px solid @surface0 }`
   readonly property color tooltipBackground: base
-  readonly property color tooltipBorder: surface0
+  readonly property color tooltipBorder: brutal ? borderColor : surface0
   readonly property color tooltipText: text
+  readonly property int   tooltipBorderWidth: brutal ? chipBorder : 1
 
   // ------------------------------------------------------- fills (brutal chips)
   // Pastel surfaces with `onFill` text on top. For catppuccin they equal the ink
@@ -188,6 +190,43 @@ Singleton {
   // Multiply every corner radius by this (Style does it for its own tokens).
   readonly property real  radiusScale: shape.radiusScale === undefined ? 1.0 : shape.radiusScale
   function r(px) { return Math.round(px * radiusScale) }
+
+  // Chrome helpers: a panel/card/popup keeps its own border in catppuccin
+  // (`def`), and takes the theme's hard ink outline in brutal.
+  function frameColor(def) { return brutal ? borderColor : def }
+  function frameWidth(def) { return brutal ? borderWidth : def }
+  // Chips/buttons/inner boxes: one pixel lighter than the panel outline
+  // (the mockup's `calc(var(--bw) - 1px)`). 0 in catppuccin.
+  readonly property int chipBorder: brutal ? Math.max(1, borderWidth - 1) : 0
+  // Ink block (the mockup's clock): text colour as a fill, base as its text.
+  readonly property color inkFill: text
+  readonly property color onInk: base
+
+  // Pango colours baked into shell scripts are Catppuccin Mocha hex. Map one
+  // to the SAME-named colour of the active theme (identity in catppuccin).
+  readonly property var mochaNames: ({
+    "#1e1e2e": "base", "#181825": "mantle", "#11111b": "crust", "#cdd6f4": "text",
+    "#a6adc8": "subtext0", "#bac2de": "subtext1", "#313244": "surface0", "#45475a": "surface1",
+    "#585b70": "surface2", "#6c7086": "overlay0", "#89b4fa": "blue", "#b4befe": "lavender",
+    "#74c7ec": "sapphire", "#89dceb": "sky", "#94e2d5": "teal", "#a6e3a1": "green",
+    "#f9e2af": "yellow", "#fab387": "peach", "#eba0ac": "maroon", "#f38ba8": "red",
+    "#cba6f7": "mauve", "#f5c2e7": "pink", "#f2cdcd": "flamingo", "#f5e0dc": "rosewater"
+  })
+  function fromMocha(hex) {
+    var n = mochaNames[String(hex).toLowerCase()]
+    return n === undefined ? hex : lookup(n, hex)
+  }
+
+  // ------------------------------------------------ wallpaper weather art
+  // The live-weather effects drawn over the PHOTO wallpaper. Only catppuccin
+  // shows the photo (brutal themes draw the flat desk instead), so these are
+  // fixed art colours, not palette entries.
+  readonly property color weatherCloud: "#1e2030"
+  readonly property color weatherNight: "#0b0b14"
+  readonly property color weatherSnow:  "#e8eefc"
+  readonly property color weatherRain:  "#a6c8e8"
+  readonly property color weatherFog:   "#c8d3e8"
+  readonly property color weatherFlash: "#dce6ff"
 
   // ---------------------------------------------------------------- desk
   readonly property color deskBackground: desk.background || base

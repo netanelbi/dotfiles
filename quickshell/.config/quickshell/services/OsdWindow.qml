@@ -27,7 +27,8 @@ PanelWindow {
   // The window is `travel` px taller than the surface and sits `travel` px
   // lower, so the surface's RESTING position (y = 0) lands on swayosd's exact
   // bottom edge and the slide-in still has somewhere to come from.
-  margins.bottom: Math.round((win.screen ? win.screen.height : 0) * 0.15) - travel
+  // (minus the brutal shadow strip added below the surface; 0 in catppuccin)
+  margins.bottom: Math.round((win.screen ? win.screen.height : 0) * 0.15) - travel - Theme.shadowY
 
   readonly property int surfaceWidth: 343
   readonly property int surfaceHeight: 80
@@ -37,8 +38,9 @@ PanelWindow {
   // and the extra strip above is transparent and masked out.
   readonly property int travel: 10
 
-  implicitWidth: surfaceWidth
-  implicitHeight: surfaceHeight + travel
+  // Sized once to include the brutal hard shadow (0 in catppuccin).
+  implicitWidth: surfaceWidth + Theme.shadowX
+  implicitHeight: surfaceHeight + travel + Theme.shadowY
 
   color: "transparent"
 
@@ -51,6 +53,8 @@ PanelWindow {
   // Stay mapped until the fade-out has finished, then unmap so the surface is
   // not sitting in the compositor's overlay layer doing nothing.
   visible: showing || surface.opacity > 0
+
+  HardShadow { target: surface }
 
   Rectangle {
     id: surface
@@ -65,9 +69,9 @@ PanelWindow {
     // style.css `window { background: @base; border-radius: 10px;
     //                     border: 2px solid @mauve }`
     color: Theme.base
-    radius: 10
-    border.width: 2
-    border.color: Theme.mauve
+    radius: Theme.r(10)
+    border.width: Theme.frameWidth(2)
+    border.color: Theme.frameColor(Theme.mauve)
 
     // MOTION. swayosd maps and unmaps its surface with nothing in between --
     // it appears and vanishes on a frame boundary. Here it rises 10px and
@@ -146,9 +150,12 @@ PanelWindow {
         id: trough
         anchors.verticalCenter: parent.verticalCenter
         width: parent.width
-        height: 6
-        radius: 3
-        color: Theme.surface0
+        // Brutal: the mockup's outlined meter (.prog), taller, ink fill.
+        height: Theme.brutal ? 12 : 6
+        radius: Theme.r(3)
+        color: Theme.brutal ? Theme.mantle : Theme.surface0
+        border.width: Theme.chipBorder
+        border.color: Theme.borderColor
 
         Rectangle {
           height: parent.height

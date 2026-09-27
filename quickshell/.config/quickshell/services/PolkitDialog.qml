@@ -143,6 +143,8 @@ PanelWindow {
       scale: 0.96 + 0.04 * win.revealed
       y: (parent.height - height) / 2 + 12 * (1 - win.revealed)
 
+      HardShadow { target: card }
+
       Rectangle {
         id: card
         width: parent.width
@@ -150,9 +152,10 @@ PanelWindow {
         height: implicitHeight
 
         color: Theme.base
-        radius: 12
-        border.width: 2
-        border.color: win.accent
+        radius: Theme.r(12)
+        // Brutal: ink outline, red once an attempt has failed.
+        border.width: Theme.frameWidth(2)
+        border.color: Theme.brutal && !win.hasError ? Theme.borderColor : win.accent
 
         // The failure recolour reads as the card reacting, not as a repaint.
         Behavior on border.color {
@@ -204,7 +207,7 @@ PanelWindow {
               Text {
                 text: "Authentication Required"
                 color: Theme.text
-                font.family: Style.font.family
+                font.family: Style.font.ui
                 font.pixelSize: Style.font.size + 2
                 font.weight: Style.font.boldWeight
                 renderType: Text.NativeRendering
@@ -238,7 +241,7 @@ PanelWindow {
             text: win.flow ? win.flow.message : ""
             color: Theme.subtext1
             wrapMode: Text.WordWrap
-            font.family: Style.font.family
+            font.family: Style.font.ui
             font.pixelSize: Style.font.size
             renderType: Text.NativeRendering
           }
@@ -247,10 +250,11 @@ PanelWindow {
           Rectangle {
             width: parent.width
             height: 44
-            radius: 8
+            radius: Theme.r(8)
             color: Theme.surface0
-            border.width: 1
-            border.color: field.activeFocus ? win.accent : Theme.surface1
+            border.width: Theme.brutal ? Theme.chipBorder : 1
+            border.color: Theme.brutal && !win.hasError ? Theme.borderColor
+                        : (field.activeFocus ? win.accent : Theme.surface1)
 
             Behavior on border.color {
               ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
@@ -298,7 +302,7 @@ PanelWindow {
 
               cursorDelegate: Rectangle {
                 width: 2
-                radius: 1
+                radius: Theme.r(1)
                 color: win.accent
 
                 SequentialAnimation on opacity {

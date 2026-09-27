@@ -91,9 +91,11 @@ BarWidget {
           var value = k1 !== undefined ? v1 : v2
           switch (key) {
           case "foreground":
-          case "color":       style.push("color:" + value); return ""
+          // Scripts bake in Mocha hex; fromMocha maps it to the active theme
+          // (identity in catppuccin).
+          case "color":       style.push("color:" + Theme.fromMocha(value)); return ""
           case "background":
-          case "bgcolor":     style.push("background-color:" + value); return ""
+          case "bgcolor":     style.push("background-color:" + Theme.fromMocha(value)); return ""
           case "weight":      style.push("font-weight:" + value); return ""
           case "size":        style.push("font-size:" + value); return ""
           case "style":       style.push("font-style:" + value); return ""

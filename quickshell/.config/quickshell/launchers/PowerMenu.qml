@@ -70,7 +70,7 @@ Scope {
     searchEnabled: false
     accent: Theme.accent           // powermenu.rasi: border-color @mauve
     panelWidth: 200
-    cornerRadius: 16
+    cornerRadius: Theme.r(16)
     list: list
 
     onPresented: if (root.group) root.group.claim(panel)
@@ -106,7 +106,7 @@ Scope {
             anchors.verticalCenter: parent.verticalCenter
             text: powerRow.modelData.icon
             // element selected.normal { text-color: @mauve }
-            color: powerRow.current ? list.accent : Theme.text
+            color: list.ink(powerRow.current, powerRow.current ? list.accent : Theme.text)
             font.family: Style.font.family
             font.pixelSize: Style.font.size
             renderType: Text.NativeRendering
@@ -119,8 +119,8 @@ Scope {
           Text {
             anchors.verticalCenter: parent.verticalCenter
             text: powerRow.modelData.label
-            color: powerRow.current ? list.accent : Theme.text
-            font.family: Style.font.family
+            color: list.ink(powerRow.current, powerRow.current ? list.accent : Theme.text)
+            font.family: Style.font.ui
             font.pixelSize: Style.font.small
             font.weight: powerRow.current ? Style.font.boldWeight : Style.font.normalWeight
             renderType: Text.NativeRendering

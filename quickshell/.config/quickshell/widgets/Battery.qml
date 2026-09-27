@@ -114,6 +114,16 @@ BarWidget {
       smoothStateColor.b + (Theme.foreground.b - smoothStateColor.b) * blink,
       1)
 
+  // Brutal: the state as a filled chip (green / yellow / red) with ink text;
+  // the critical blink then fades the ink into the chip.
+  chipColor: charging ? Theme.fillGreen
+      : (critical ? Theme.fillRed : (warning ? Theme.fillYellow : Theme.fillGreen))
+  readonly property color textColor: chipped
+      ? Qt.rgba(chipInk.r + (chipColor.r - chipInk.r) * blink,
+                chipInk.g + (chipColor.g - chipInk.g) * blink,
+                chipInk.b + (chipColor.b - chipInk.b) * blink, 1)
+      : displayColor
+
   SequentialAnimation {
     running: root.critical && !root.charging
     loops: Animation.Infinite
@@ -126,7 +136,7 @@ BarWidget {
   Text {
     id: glyph
     text: root.icon
-    color: root.displayColor
+    color: root.textColor
     font.family: Style.font.family
     font.pixelSize: Style.font.size
     renderType: Text.NativeRendering
@@ -149,7 +159,7 @@ BarWidget {
   Text {
     id: label
     text: root.capacity + "%"
-    color: root.displayColor
+    color: root.textColor
     font.family: Style.font.family
     font.pixelSize: Style.font.size
     renderType: Text.NativeRendering

@@ -111,6 +111,8 @@ PanelWindow {
     // swaync(1), Control Center Keyboard Shortcuts.
     Keys.onPressed: function (event) { center.handleKey(event) }
 
+    HardShadow { target: panel }
+
     Rectangle {
       id: panel
 
@@ -123,9 +125,9 @@ PanelWindow {
       width: center.store.centerPanelWidth
 
       color: Theme.base
-      radius: 12
-      border.width: 2
-      border.color: Theme.surface0
+      radius: Theme.r(12)
+      border.width: Theme.frameWidth(2)
+      border.color: Theme.frameColor(Theme.surface0)
       clip: true
 
       opacity: center.revealed
@@ -153,7 +155,7 @@ PanelWindow {
               anchors.verticalCenter: parent.verticalCenter
               text: "Notifications"    // widget-config.title.text
               color: Theme.text
-              font.family: Style.font.family
+              font.family: Style.font.ui
               font.pixelSize: Style.font.size + 2   // .widget-title 16px
               font.weight: Style.font.boldWeight
               renderType: Text.NativeRendering
@@ -167,8 +169,10 @@ PanelWindow {
               anchors.verticalCenter: parent.verticalCenter
               width: clearLabel.implicitWidth + 24   // padding: 6px 12px
               height: clearLabel.implicitHeight + 12
-              radius: 8
-              color: clearArea.containsMouse ? Theme.red : Theme.surface0
+              radius: Theme.r(8)
+              color: clearArea.containsMouse ? (Theme.brutal ? Theme.fillRed : Theme.red) : Theme.surface0
+              border.width: Theme.chipBorder
+              border.color: Theme.borderColor
 
               Behavior on color {
                 ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
@@ -178,7 +182,7 @@ PanelWindow {
                 id: clearLabel
                 anchors.centerIn: parent
                 text: "Clear All"
-                color: clearArea.containsMouse ? Theme.base : Theme.text
+                color: clearArea.containsMouse ? (Theme.brutal ? Theme.onFill : Theme.base) : Theme.text
                 font.family: Style.font.family
                 font.pixelSize: Style.font.size
                 renderType: Text.NativeRendering
@@ -217,7 +221,7 @@ PanelWindow {
               anchors.verticalCenter: parent.verticalCenter
               text: "Do Not Disturb"   // widget-config.dnd.text
               color: Theme.text
-              font.family: Style.font.family
+              font.family: Style.font.ui
               font.pixelSize: Style.font.size
               renderType: Text.NativeRendering
             }
@@ -231,8 +235,10 @@ PanelWindow {
               anchors.verticalCenter: parent.verticalCenter
               width: 48
               height: 27
-              radius: 12               // .widget-dnd > switch
-              color: center.store.dnd ? Theme.mauve : Theme.surface0
+              radius: Theme.r(12)               // .widget-dnd > switch
+              color: center.store.dnd ? (Theme.brutal ? Theme.fillViolet : Theme.mauve) : Theme.surface0
+              border.width: Theme.chipBorder
+              border.color: Theme.borderColor
 
               Behavior on color {
                 ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
@@ -241,8 +247,8 @@ PanelWindow {
               Rectangle {
                 width: 21
                 height: 21
-                radius: 10             // switch slider
-                color: Theme.text
+                radius: Theme.r(10)             // switch slider
+                color: Theme.brutal ? Theme.borderColor : Theme.text
                 anchors.verticalCenter: parent.verticalCenter
                 x: center.store.dnd ? parent.width - width - 3 : 3
 
@@ -321,7 +327,7 @@ PanelWindow {
             anchors.right: parent.right
             anchors.rightMargin: 2
             width: 4
-            radius: 2
+            radius: Theme.r(2)
             color: Theme.surface2
             visible: list.contentHeight > list.height
             opacity: list.moving || listHover.hovered ? 0.9 : 0.35
@@ -350,10 +356,10 @@ PanelWindow {
         anchors.bottom: parent.bottom
         anchors.margins: 12
         height: 52
-        radius: 10
+        radius: Theme.r(10)
         color: Theme.surface0
-        border.width: 1
-        border.color: Theme.surface1
+        border.width: Theme.brutal ? Theme.chipBorder : 1
+        border.color: Theme.frameColor(Theme.surface1)
         visible: opacity > 0.01
         opacity: center.store.lastIgnore ? 1 : 0
         y: 12 + (1 - opacity) * 8
@@ -387,8 +393,10 @@ PanelWindow {
           anchors.verticalCenter: parent.verticalCenter
           width: undoLabel.implicitWidth + 20
           height: undoLabel.implicitHeight + 10
-          radius: 8
-          color: undoArea.containsMouse ? Theme.mauve : Theme.surface1
+          radius: Theme.r(8)
+          color: undoArea.containsMouse ? (Theme.brutal ? Theme.fillYellow : Theme.mauve) : Theme.surface1
+          border.width: Theme.chipBorder
+          border.color: Theme.borderColor
 
           Behavior on color {
             ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
@@ -398,7 +406,7 @@ PanelWindow {
             id: undoLabel
             anchors.centerIn: parent
             text: "Undo"
-            color: undoArea.containsMouse ? Theme.base : Theme.text
+            color: undoArea.containsMouse ? (Theme.brutal ? Theme.onFill : Theme.base) : Theme.text
             font.family: Style.font.family
             font.pixelSize: Style.font.size
             font.weight: Style.font.boldWeight

@@ -37,7 +37,7 @@ ScriptWidget {
 
   // `padding: 4px 10px` + the 2px border, matching the workspace pills beside it.
   horizontalPadding: Style.module.paddingH
-  implicitHeight: Style.bar.islandHeight - 4
+  implicitHeight: Style.bar.pillHeight
   radius: Style.module.radius
   borderWidth: Style.module.borderWidth
   borderColor: active ? Theme.attention : Theme.transparent
@@ -45,7 +45,9 @@ ScriptWidget {
   backgroundColor: Theme.transparent
   hoverHighlight: true
 
-  readonly property color glyphColor: active ? Theme.attention : Theme.inactive
+  // Brutal: active = a yellow chip with ink text instead of the gold outline.
+  chipColor: active ? Theme.fillYellow : Theme.transparent
+  readonly property color glyphColor: chipped ? chipInk : (active ? Theme.attention : Theme.inactive)
 
   // An empty scratchpad is `shown: false`, so BarWidget holds this widget at
   // `visible: false` -- and a Row positioner skips children that are not

@@ -17,7 +17,9 @@ Singleton {
   // config.jsonc: height 30, margin-top/left/right 2, spacing 0.
   // style.css:    .modules-* { border-radius: 14px; padding: 4px 12px; margin: 2px 0 }
   readonly property QtObject bar: QtObject {
-    readonly property int height: 30
+    // Brutal themes get a taller bar: a 3px outline eats 6px of the island,
+    // and the filled chips need air inside it (catppuccin: 30, as ever).
+    readonly property int height: Theme.brutal ? 36 : 30
     readonly property int marginTop: 2
     readonly property int marginSide: 2
     // margin: 2px 0 on the module boxes -> the island is 4px shorter than the bar.
@@ -25,9 +27,12 @@ Singleton {
     readonly property int islandHeight: height - 2 * islandInset
     readonly property int islandRadius: Theme.r(14)
     readonly property int islandPaddingH: 12
-    readonly property int islandPaddingV: 4
+    readonly property int islandPaddingV: Theme.brutal ? 5 : 4
     // Content height inside an island (islandHeight minus the 4px vertical padding).
     readonly property int slotHeight: islandHeight - 2 * islandPaddingV
+    // A padded pill (workspace, scratchpad) that nearly fills the island,
+    // kept inside the brutal outline (= islandHeight - 4 in catppuccin).
+    readonly property int pillHeight: islandHeight - 4 - 2 * Theme.borderWidth
     // config.jsonc "spacing": 0 -- modules are separated by their own padding.
     readonly property int islandSpacing: 0
 

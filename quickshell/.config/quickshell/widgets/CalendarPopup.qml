@@ -245,6 +245,8 @@ PanelWindow {
     }
 
     // ------------------------------------------------------------- the card
+    HardShadow { target: card }
+
     Rectangle {
       id: card
 
@@ -268,9 +270,9 @@ PanelWindow {
 
       // Same chrome as the notification cards: radius 12, @base, 2px @mauve.
       color: Theme.base
-      radius: 12
-      border.width: 2
-      border.color: Theme.accent
+      radius: Theme.r(12)
+      border.width: Theme.frameWidth(2)
+      border.color: Theme.frameColor(Theme.accent)
       clip: true
 
       Column {
@@ -291,7 +293,7 @@ PanelWindow {
             anchors.verticalCenter: parent.verticalCenter
             text: Qt.formatDate(new Date(popup.viewYear, popup.viewMonth, 1), "MMMM yyyy")
             color: Theme.text
-            font.family: Style.font.family
+            font.family: Style.font.ui
             font.pixelSize: Style.font.size
             font.weight: Style.font.boldWeight
             renderType: Text.NativeRendering
@@ -405,11 +407,13 @@ PanelWindow {
                 y: 2
                 width: 26
                 height: 26
-                radius: 13
-                color: cell.isToday ? Theme.accent
+                radius: Theme.r(13)
+                // Brutal: today is a yellow chip with an ink outline.
+                color: cell.isToday ? (Theme.brutal ? Theme.fillYellow : Theme.accent)
                      : (cellMouse.containsMouse ? Theme.hoverBackground : "transparent")
-                border.width: cell.isSelected && !cell.isToday ? 1 : 0
-                border.color: Theme.accent
+                border.width: Theme.brutal ? (cell.isToday || cell.isSelected ? Theme.chipBorder : 0)
+                                           : (cell.isSelected && !cell.isToday ? 1 : 0)
+                border.color: Theme.brutal ? Theme.borderColor : Theme.accent
 
                 Behavior on color { ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth } }
 
@@ -418,7 +422,7 @@ PanelWindow {
                   anchors.centerIn: parent
                   width: parent.width + 6
                   height: parent.height + 6
-                  radius: width / 2
+                  radius: width / 2 * Theme.radiusScale
                   color: "transparent"
                   border.width: 1
                   border.color: Theme.alpha(Theme.accent, 0.6)
@@ -429,7 +433,8 @@ PanelWindow {
                 Text {
                   anchors.centerIn: parent
                   text: cell.date.getDate()
-                  color: cell.isToday ? Theme.base : (cell.inMonth ? Theme.text : Theme.overlay0)
+                  color: cell.isToday ? (Theme.brutal ? Theme.onFill : Theme.base)
+                                      : (cell.inMonth ? Theme.text : Theme.overlay0)
                   font.family: Style.font.family
                   font.pixelSize: Style.font.size - 2
                   font.weight: cell.isToday || cell.isSelected ? Style.font.boldWeight : Style.font.normalWeight
@@ -450,7 +455,7 @@ PanelWindow {
                     required property int index
                     width: 4
                     height: 4
-                    radius: 2
+                    radius: Theme.r(2)
                     // Always the calendar's colour. The dots sit BELOW the day
                     // disc, on the card background -- painting today's in
                     // Theme.base to contrast with the mauve disc made them
@@ -636,7 +641,7 @@ PanelWindow {
               Rectangle {
                 anchors.fill: parent
                 anchors.rightMargin: 2
-                radius: 6
+                radius: Theme.r(6)
                 // joinMouse too: it sits above rowMouse and swallows the
                 // hover, which otherwise left the row looking inert exactly
                 // while the cursor was on its button.
@@ -658,7 +663,7 @@ PanelWindow {
                 anchors.verticalCenter: parent.verticalCenter
                 width: 3
                 height: 24
-                radius: 1.5
+                radius: 1.5 * Theme.radiusScale
                 color: popup.calendarColor(row.modelData.calendar)
               }
 
@@ -713,7 +718,7 @@ PanelWindow {
                   width: parent.width
                   text: row.modelData.summary
                   color: Theme.text
-                  font.family: Style.font.family
+                  font.family: Style.font.ui
                   font.pixelSize: Style.font.size - 2
                   elide: Text.ElideRight
                   renderType: Text.NativeRendering
@@ -743,8 +748,12 @@ PanelWindow {
                 anchors.verticalCenter: parent.verticalCenter
                 width: joinLabel.implicitWidth + 14
                 height: 20
-                radius: 6
-                color: joinMouse.containsMouse ? Theme.accent : Theme.alpha(Theme.accent, 0.16)
+                radius: Theme.r(6)
+                // Brutal: the mockup's green "Join" chip.
+                color: Theme.brutal ? Theme.fillGreen
+                     : (joinMouse.containsMouse ? Theme.accent : Theme.alpha(Theme.accent, 0.16))
+                border.width: Theme.chipBorder
+                border.color: Theme.borderColor
                 scale: joinMouse.pressed ? 0.92 : 1
 
                 Behavior on color { ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth } }
@@ -754,7 +763,7 @@ PanelWindow {
                   id: joinLabel
                   anchors.centerIn: parent
                   text: "Join"
-                  color: joinMouse.containsMouse ? Theme.base : Theme.accent
+                  color: Theme.brutal ? Theme.onFill : (joinMouse.containsMouse ? Theme.base : Theme.accent)
                   font.family: Style.font.family
                   font.pixelSize: Style.font.size - 4
                   font.weight: Style.font.boldWeight
@@ -781,7 +790,7 @@ PanelWindow {
             anchors.right: parent.right
             anchors.rightMargin: 1
             width: 2
-            radius: 1
+            radius: Theme.r(1)
             color: Theme.surface2
             visible: eventList.contentHeight > eventList.height
             y: eventList.contentHeight <= 0 ? 0
@@ -828,7 +837,7 @@ PanelWindow {
 
     Rectangle {
       anchors.fill: parent
-      radius: 6
+      radius: Theme.r(6)
       color: navMouse.containsMouse ? Theme.hoverBackground : "transparent"
       scale: navMouse.pressed ? 0.9 : 1
       Behavior on color { ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth } }

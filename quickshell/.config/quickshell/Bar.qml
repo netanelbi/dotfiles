@@ -39,7 +39,9 @@ PanelWindow {
     right: Style.bar.marginSide
   }
 
-  implicitHeight: Style.bar.height
+  // Brutal islands cast a hard shadow below/right of themselves; the surface
+  // is sized ONCE to include it (0 in catppuccin, so 30 as ever).
+  implicitHeight: Style.bar.height + Theme.shadowY
   color: "transparent"
 
   // ---------------------------------------------------------------- chrome
@@ -75,7 +77,8 @@ PanelWindow {
     Island {
       id: leftIsland
       anchors.left: parent.left
-      anchors.verticalCenter: parent.verticalCenter
+      anchors.top: parent.top
+      anchors.topMargin: Style.bar.islandInset
 
       // LEFT SECTION -- waybar's "modules-left", in its order:
       //   hyprland/workspaces, custom/scratchpad, custom/windows.
@@ -108,7 +111,8 @@ PanelWindow {
     Island {
       id: centerIsland
       anchors.horizontalCenter: parent.horizontalCenter
-      anchors.verticalCenter: parent.verticalCenter
+      anchors.top: parent.top
+      anchors.topMargin: Style.bar.islandInset
       // An unread answer breathes around the whole pill -- the state has to
       // read from across the room, and a 10px orb cannot carry it alone.
       aura: OriClient.unread
@@ -129,6 +133,10 @@ PanelWindow {
       BarWidget {
         id: clockWidget
         property bool longFormat: false
+        // Brutal: the mockup's ink block with base-coloured text.
+        backgroundColor: Theme.brutal ? Theme.inkFill : Theme.transparent
+        hoverHighlight: !Theme.brutal
+        readonly property color ink: Theme.brutal ? Theme.onInk : Theme.foreground
         tooltip: Qt.formatDateTime(clock.date, "dddd, d MMMM yyyy") + "\nright-click for the long format"
         // waybar's format-alt lived on the left click. It moved to the right
         // button so the left one can open the calendar -- the toggle is still
@@ -138,7 +146,7 @@ PanelWindow {
 
         Text {
           text: ""
-          color: Theme.foreground
+          color: clockWidget.ink
           font.family: Style.font.family
           font.pixelSize: Style.font.size
           font.weight: Style.font.boldWeight
@@ -148,7 +156,7 @@ PanelWindow {
         Text {
           id: clockLabel
           text: Qt.formatDateTime(clock.date, clockWidget.longFormat ? "dddd, d MMMM yyyy" : "ddd dd MMM  HH:mm")
-          color: Theme.foreground
+          color: clockWidget.ink
           font.family: Style.font.family
           font.pixelSize: Style.font.size
           font.weight: Style.font.boldWeight
@@ -211,7 +219,10 @@ PanelWindow {
     Island {
       id: rightIsland
       anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
+      // Room for its shadow inside the surface (0 in catppuccin).
+      anchors.rightMargin: Theme.shadowX
+      anchors.top: parent.top
+      anchors.topMargin: Style.bar.islandInset
 
       // RIGHT SECTION -- tray, bluetooth, network, audio, battery.
       // Order is waybar's "modules-right", left to right.
@@ -242,7 +253,7 @@ PanelWindow {
     screen: bar.screen
     anchorItem: clockWidget
     barOriginX: Style.bar.marginSide
-    cardTop: Style.bar.marginTop + Style.bar.height + 4
+    cardTop: Style.bar.marginTop + Style.bar.height + Theme.shadowY + 4
   }
 
   // Calendar reminders run whether or not the popover is ever opened, so the
@@ -267,6 +278,8 @@ PanelWindow {
     + orbDock.x + orbDock.width / 2
   readonly property real orbDockY: Style.bar.marginTop + Style.bar.height / 2
   onOrbDockXChanged: publishDock()
+  // The bar's height is theme-dependent, so a live switch moves the dock point.
+  onOrbDockYChanged: publishDock()
   function publishDock() {
     if (bar.screen) OriClient.setOrbDock(bar.screen.name, bar.orbDockX, bar.orbDockY)
   }
@@ -278,6 +291,20 @@ PanelWindow {
   component Island: Rectangle {
     id: island
     default property alias content: islandRow.data
+
+    // Brutal: the hard offset shadow, as a child drawn outside the island
+    // and below it (z -1 puts it under the island's own fill).
+    Rectangle {
+      z: -1
+      x: Theme.shadowX
+      y: Theme.shadowY
+      width: island.width
+      height: island.height
+      radius: island.radius
+      color: Theme.shadowColor
+      visible: Theme.hasShadow
+      antialiasing: false
+    }
 
     // The unread aura: a sky ring breathing just outside the pill while an
     // answer sits unread. Only the centre island sets it (OriClient.unread).
@@ -311,6 +338,8 @@ PanelWindow {
     height: Style.bar.islandHeight
     radius: Style.bar.islandRadius
     color: Theme.islandBackground
+    border.width: Theme.borderWidth
+    border.color: Theme.borderColor
     // An empty section paints nothing at all, matching waybar's empty boxes.
     opacity: empty ? 0 : 1
     visible: opacity > 0.01
@@ -366,8 +395,8 @@ PanelWindow {
 
     visible: bar.tooltipTarget !== null && bar.tooltipText !== "" && (bar.tooltipOpen || bubble.opacity > 0.01)
     color: "transparent"
-    implicitWidth: Math.ceil(bubble.implicitWidth)
-    implicitHeight: Math.ceil(bubble.implicitHeight)
+    implicitWidth: Math.ceil(bubble.implicitWidth) + Theme.shadowX
+    implicitHeight: Math.ceil(bubble.implicitHeight) + Theme.shadowY
 
     anchor {
       id: tooltipAnchor
@@ -381,10 +410,12 @@ PanelWindow {
       onAnchoring: {
         var target = bar.tooltipTarget
         if (!target) return
-        tooltipAnchor.rect.x = Math.round(target.width / 2 - tooltipWindow.implicitWidth / 2)
+        tooltipAnchor.rect.x = Math.round(target.width / 2 - (tooltipWindow.implicitWidth - Theme.shadowX) / 2)
         tooltipAnchor.rect.y = Math.round(target.height + 8)
       }
     }
+
+    HardShadow { target: bubble }
 
     Rectangle {
       id: bubble
@@ -392,7 +423,7 @@ PanelWindow {
       implicitWidth: tooltipLabel.implicitWidth + 20
       implicitHeight: tooltipLabel.implicitHeight + 14
       color: Theme.tooltipBackground
-      border.width: 1
+      border.width: Theme.tooltipBorderWidth
       border.color: Theme.tooltipBorder
       radius: Style.module.radius
 

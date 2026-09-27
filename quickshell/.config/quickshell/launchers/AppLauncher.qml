@@ -174,7 +174,7 @@ Scope {
     prompt: "Apps"
     accent: Theme.accent           // catppuccin.rasi: border-color @mauve
     panelWidth: 500
-    cornerRadius: 12
+    cornerRadius: Theme.r(12)
     placeholder: "Search..."
     list: list
 
@@ -234,7 +234,7 @@ Scope {
             // Themes miss icons; a tinted initial beats an empty hole.
             Rectangle {
               anchors.fill: parent
-              radius: 10
+              radius: Theme.r(10)
               visible: appIcon.status !== Image.Ready
               color: Theme.alpha(list.accent, 0.18)
 
@@ -259,8 +259,8 @@ Scope {
               width: parent.width
               text: appRow.modelData.name
               elide: Text.ElideRight
-              color: Theme.text
-              font.family: Style.font.family
+              color: list.ink(appRow.current, Theme.text)
+              font.family: Style.font.ui
               font.pixelSize: Style.font.size
               font.weight: appRow.current ? Style.font.boldWeight : Style.font.normalWeight
               renderType: Text.NativeRendering
@@ -271,8 +271,8 @@ Scope {
               visible: text !== ""
               text: appRow.modelData.comment !== "" ? appRow.modelData.comment : appRow.modelData.genericName
               elide: Text.ElideRight
-              color: Theme.overlay0
-              font.family: Style.font.family
+              color: list.ink(appRow.current, Theme.overlay0)
+              font.family: Style.font.ui
               font.pixelSize: Style.font.small
               renderType: Text.NativeRendering
             }

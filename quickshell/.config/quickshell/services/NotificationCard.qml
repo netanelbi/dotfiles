@@ -118,6 +118,8 @@ Item {
   }
 
   // ----------------------------------------------------------------- card
+  HardShadow { target: card }
+
   Rectangle {
     id: card
 
@@ -128,9 +130,10 @@ Item {
     width: root.cardWidth
     implicitHeight: content.implicitHeight + actions.implicitHeight
 
-    radius: 12                               // .notification border-radius
+    radius: Theme.r(12)                               // .notification border-radius
     color: Theme.base                        // .notification background
-    border.width: 2
+    // Brutal: the outline is drawn by `frame` below, ON TOP of the hover tint.
+    border.width: Theme.brutal ? 0 : 2
     border.color: root.notif
       ? (root.notif.urgency === NotificationUrgency.Critical ? Theme.red
         : root.notif.urgency === NotificationUrgency.Low ? Theme.green
@@ -138,6 +141,20 @@ Item {
       : Theme.mauve
 
     opacity: root.shown ? 1 : 0
+
+    // Brutal ink outline, above the children so the hover tint cannot wash
+    // it out. A critical notification keeps its red outline.
+    Rectangle {
+      id: frame
+      z: 10
+      anchors.fill: parent
+      visible: Theme.brutal
+      color: "transparent"
+      radius: card.radius
+      border.width: Theme.borderWidth
+      border.color: root.notif && root.notif.urgency === NotificationUrgency.Critical
+                    ? Theme.red : Theme.borderColor
+    }
 
     Behavior on x {
       NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing }
@@ -158,10 +175,10 @@ Item {
       width: parent.width
       implicitHeight: contentRow.implicitHeight + 2 * 16
       color: defaultArea.containsMouse || root.selected ? Theme.hoverBackground : Theme.transparent
-      topLeftRadius: card.radius - 2
-      topRightRadius: card.radius - 2
-      bottomLeftRadius: actions.visible ? 0 : card.radius - 2
-      bottomRightRadius: actions.visible ? 0 : card.radius - 2
+      topLeftRadius: Math.max(0, card.radius - 2)
+      topRightRadius: Math.max(0, card.radius - 2)
+      bottomLeftRadius: actions.visible ? 0 : Math.max(0, card.radius - 2)
+      bottomRightRadius: actions.visible ? 0 : Math.max(0, card.radius - 2)
 
       Behavior on color {
         ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
@@ -200,7 +217,7 @@ Item {
 
           ClippingRectangle {
             anchors.fill: parent
-            radius: 8                // .image border-radius
+            radius: Theme.r(8)                // .image border-radius
             color: Theme.transparent
 
             Image {
@@ -252,7 +269,7 @@ Item {
               anchors.rightMargin: root.showTime ? 8 : 0
               text: root.notif ? root.notif.summary : ""
               color: Theme.text
-              font.family: Style.font.family
+              font.family: Style.font.ui
               font.pixelSize: Style.font.size          // .summary 14px
               font.weight: Style.font.boldWeight
               elide: Text.ElideRight
@@ -281,7 +298,7 @@ Item {
             visible: text !== ""
             text: root.notif ? root.notif.body : ""
             color: Theme.subtext1
-            font.family: Style.font.family
+            font.family: Style.font.ui
             font.pixelSize: Style.font.size - 1        // .body 13px
             wrapMode: Text.WordWrap
             // The server advertises body-markup, so bodies arrive as Pango
@@ -307,9 +324,11 @@ Item {
         anchors.margins: 8                             // .close-button margin
         width: closeGlyph.implicitWidth + 16           // padding: 2px 8px
         height: closeGlyph.implicitHeight + 4
-        radius: 6                                      // .close-button radius
+        radius: Theme.r(6)                                      // .close-button radius
         opacity: defaultArea.containsMouse || closeArea.containsMouse || actionsHover.hovered ? 1 : 0
-        color: closeArea.containsMouse ? Theme.red : Theme.surface0
+        color: closeArea.containsMouse ? (Theme.brutal ? Theme.fillRed : Theme.red) : Theme.surface0
+        border.width: Theme.chipBorder
+        border.color: Theme.borderColor
 
         Behavior on opacity {
           NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
@@ -322,7 +341,7 @@ Item {
           id: closeGlyph
           anchors.centerIn: parent
           text: "✕"
-          color: closeArea.containsMouse ? Theme.base : Theme.text
+          color: closeArea.containsMouse ? (Theme.brutal ? Theme.onFill : Theme.base) : Theme.text
           font.family: Style.font.family
           font.pixelSize: Style.font.size - 2
           renderType: Text.NativeRendering
@@ -355,9 +374,11 @@ Item {
         anchors.topMargin: 8
         width: ignoreGlyph.implicitWidth + 16
         height: ignoreGlyph.implicitHeight + 4
-        radius: 6
+        radius: Theme.r(6)
         opacity: defaultArea.containsMouse || closeArea.containsMouse || actionsHover.hovered ? 1 : 0
-        color: ignoreArea.containsMouse ? Theme.attention : Theme.surface0
+        color: ignoreArea.containsMouse ? (Theme.brutal ? Theme.fillYellow : Theme.attention) : Theme.surface0
+        border.width: Theme.chipBorder
+        border.color: Theme.borderColor
 
         Behavior on opacity {
           NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
@@ -371,7 +392,7 @@ Item {
           anchors.centerIn: parent
           // nf-md-bell_off -- the same struck bell the bar uses for dnd.
           text: "󰂛"
-          color: ignoreArea.containsMouse ? Theme.base : Theme.text
+          color: ignoreArea.containsMouse ? (Theme.brutal ? Theme.onFill : Theme.base) : Theme.text
           font.family: Style.font.family
           font.pixelSize: Style.font.size - 2
           renderType: Text.NativeRendering
@@ -472,8 +493,12 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: actions.cellWidth - 2 * actions.cellPad
                     height: 34
-                    radius: 12
-                    color: actionArea.containsMouse ? Theme.surface1 : Theme.surface0
+                    radius: Theme.r(12)
+                    // Brutal: an outlined chip that fills yellow under the pointer.
+                    color: Theme.brutal ? (actionArea.containsMouse ? Theme.fillYellow : Theme.mantle)
+                                        : (actionArea.containsMouse ? Theme.surface1 : Theme.surface0)
+                    border.width: Theme.chipBorder
+                    border.color: Theme.borderColor
 
                     Behavior on color {
                       ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
@@ -483,7 +508,8 @@ Item {
                       anchors.centerIn: parent
                       width: parent.width - 24
                       text: actionCell.modelData.text
-                      color: actionArea.pressed ? Theme.lavender
+                      color: Theme.brutal ? (actionArea.containsMouse ? Theme.onFill : Theme.text)
+                        : actionArea.pressed ? Theme.lavender
                         : actionArea.containsMouse ? Theme.mauve : Theme.text
                       horizontalAlignment: Text.AlignHCenter
                       elide: Text.ElideRight

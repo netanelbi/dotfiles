@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Services.UPower
+import ".."
 
 // Live wallpaper. The photo drifts, the real weather is polled every 15
 // minutes, and the desktop reacts to it: rain, snow, fog, storm flashes, a
@@ -18,6 +19,13 @@ import Quickshell.Services.UPower
 //   qs -p <config> ipc call wallpaper force rain|snow|fog|storm|clear|cloudy|night|off
 Scope {
   id: root
+
+  // The photo + live weather is the catppuccin wallpaper. A brutal theme draws
+  // a flat desk colour with a grid instead, and then NOTHING below runs: no
+  // weather poll, no particles, no drift, no fog.
+  readonly property bool live: !Theme.brutal
+  // Desk grid pitch, px.
+  readonly property int gridStep: 24
 
   // ------------------------------------------------------------ weather
   property real   temp: 0
@@ -35,13 +43,14 @@ Scope {
   readonly property bool wetReal: dataOk && (precip > 0 || ["Rain", "Drizzle", "Showers", "Thunderstorm"].indexOf(desc) !== -1)
   readonly property bool snowReal: dataOk && (desc === "Snow" || desc === "Snow showers")
 
-  readonly property bool showRain:  forced === "rain"  || forced === "storm" || (forced === "" && wetReal && !snowReal)
-  readonly property bool showSnow:  forced === "snow"  || (forced === "" && snowReal)
-  readonly property bool showFog:   forced === "fog"   || (forced === "" && dataOk && desc === "Fog")
-  readonly property bool showStorm: forced === "storm" || (forced === "" && dataOk && desc === "Thunderstorm")
-  readonly property bool showNight: forced === "night" || (forced === "" && dataOk && !isDay)
+  readonly property bool showRain:  live && (forced === "rain"  || forced === "storm" || (forced === "" && wetReal && !snowReal))
+  readonly property bool showSnow:  live && (forced === "snow"  || (forced === "" && snowReal))
+  readonly property bool showFog:   live && (forced === "fog"   || (forced === "" && dataOk && desc === "Fog"))
+  readonly property bool showStorm: live && (forced === "storm" || (forced === "" && dataOk && desc === "Thunderstorm"))
+  readonly property bool showNight: live && (forced === "night" || (forced === "" && dataOk && !isDay))
   // Clear skies leave the photo alone; overcast cools and flattens it.
-  readonly property real cloudWash: forced === "clear"  ? 0
+  readonly property real cloudWash: !live ? 0
+                                  : forced === "clear"  ? 0
                                   : forced === "cloudy" ? 0.28
                                   : (dataOk ? Math.min(0.30, cloud / 100 * 0.30) : 0)
 
@@ -66,7 +75,7 @@ Scope {
   Process {
     id: weatherProc
     command: ["weather-now"]
-    running: true
+    running: root.live
     stdout: StdioCollector {
       onStreamFinished: {
         try {
@@ -81,7 +90,9 @@ Scope {
     }
   }
 
-  Timer { interval: 15 * 60 * 1000; running: true; repeat: true; onTriggered: weatherProc.running = true }
+  Timer { interval: 15 * 60 * 1000; running: root.live; repeat: true; onTriggered: weatherProc.running = true }
+  // Switching back to the photo: fetch the sky now rather than in <=15 min.
+  onLiveChanged: if (live) weatherProc.running = true
 
   Variants {
     model: Quickshell.screens
@@ -92,7 +103,7 @@ Scope {
       screen: modelData
 
       anchors { top: true; bottom: true; left: true; right: true }
-      color: "#11111b"
+      color: root.live ? Theme.crust : Theme.deskBackground
       WlrLayershell.layer: WlrLayer.Background
       WlrLayershell.exclusionMode: ExclusionMode.Ignore
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
@@ -103,11 +114,42 @@ Scope {
       // stops a gale from making it fall sideways off-screen.
       readonly property real slant: Math.min(0.55, root.wind / 45)
 
+      // ----------------------------------------------------------- desk
+      // Brutal themes: flat desk colour (the window's own fill) plus a grid of
+      // 1px lines. Static -- built once per theme switch, never repainted.
+      Item {
+        anchors.fill: parent
+        visible: !root.live && Theme.deskHasGrid
+
+        Repeater {
+          model: parent.visible ? Math.ceil(win.width / root.gridStep) : 0
+          Rectangle {
+            required property int index
+            x: index * root.gridStep
+            width: 1
+            height: win.height
+            color: Theme.deskGrid
+          }
+        }
+        Repeater {
+          model: parent.visible ? Math.ceil(win.height / root.gridStep) : 0
+          Rectangle {
+            required property int index
+            y: index * root.gridStep
+            width: win.width
+            height: 1
+            color: Theme.deskGrid
+          }
+        }
+      }
+
       // ---------------------------------------------------------- photo
       Image {
         id: photo
         anchors.fill: parent
-        source: "file:///usr/share/hypr/wall2.png"
+        visible: root.live
+        // Not even loaded under a brutal theme.
+        source: root.live ? "file:///usr/share/hypr/wall2.png" : ""
         fillMode: Image.PreserveAspectCrop
         asynchronous: true
         cache: true
@@ -145,7 +187,7 @@ Scope {
       // Overcast cools and flattens the photo rather than just dimming it.
       Rectangle {
         anchors.fill: parent
-        color: "#1e2030"
+        color: Theme.weatherCloud
         opacity: root.cloudWash
         Behavior on opacity { NumberAnimation { duration: 3000; easing.type: Easing.InOutSine } }
       }
@@ -155,7 +197,7 @@ Scope {
       // or light text stops being readable.
       Rectangle {
         anchors.fill: parent
-        color: "#0b0b14"
+        color: Theme.weatherNight
         opacity: root.showNight ? 0.18 : 0
         Behavior on opacity { NumberAnimation { duration: 4000; easing.type: Easing.InOutSine } }
       }
@@ -205,7 +247,7 @@ Scope {
           t += 0.02
 
           if (snowing) {
-            ctx.fillStyle = "#e8eefc"
+            ctx.fillStyle = String(Theme.weatherSnow)
             for (var i = 0; i < drops.length; i++) {
               var f = drops[i]
               ctx.globalAlpha = f.op
@@ -218,7 +260,7 @@ Scope {
               if (f.y - f.len > height) { f.y = -f.len; f.x = Math.random() * width }
             }
           } else {
-            ctx.strokeStyle = "#a6c8e8"        // cool and desaturated, not neon
+            ctx.strokeStyle = String(Theme.weatherRain)   // cool and desaturated, not neon
             ctx.lineWidth = 1
             for (var j = 0; j < drops.length; j++) {
               var d = drops[j]
@@ -263,9 +305,9 @@ Scope {
             opacity: index === 0 ? 0.20 : 0.14
             gradient: Gradient {
               orientation: Gradient.Vertical
-              GradientStop { position: 0.0; color: "#00c8d3e8" }
-              GradientStop { position: 0.5; color: "#ffc8d3e8" }
-              GradientStop { position: 1.0; color: "#00c8d3e8" }
+              GradientStop { position: 0.0; color: Theme.alpha(Theme.weatherFog, 0) }
+              GradientStop { position: 0.5; color: Theme.weatherFog }
+              GradientStop { position: 1.0; color: Theme.alpha(Theme.weatherFog, 0) }
             }
             // MUST be gated on visibility. `visible: false` on the parent stops
             // PAINTING, not animating -- these two bands kept running forever
@@ -288,7 +330,7 @@ Scope {
       Rectangle {
         id: flash
         anchors.fill: parent
-        color: "#dce6ff"
+        color: Theme.weatherFlash
         opacity: 0
         visible: root.showStorm
 
@@ -318,6 +360,7 @@ Scope {
         anchors.bottom: parent.bottom
         anchors.margins: 46
         spacing: 2
+        visible: root.live
         opacity: root.dataOk ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 800 } }
 
@@ -325,19 +368,19 @@ Scope {
           anchors.right: parent.right
           text: root.dataOk ? Math.round(root.temp) + "°" : ""
           font.family: "JetBrainsMono Nerd Font"; font.pixelSize: 64; font.weight: Font.Light
-          color: "#cdd6f4"; opacity: 0.85
+          color: Theme.text; opacity: 0.85
         }
         Text {
           anchors.right: parent.right
           text: root.forced === "" ? root.desc : root.desc + "  ·  [" + root.forced + "]"
           font.family: "JetBrainsMono Nerd Font"; font.pixelSize: 17
-          color: "#cdd6f4"; opacity: 0.65
+          color: Theme.text; opacity: 0.65
         }
         Text {
           anchors.right: parent.right
           text: root.city + (root.wind > 0 ? "   " + Math.round(root.wind) + " km/h" : "")
           font.family: "JetBrainsMono Nerd Font"; font.pixelSize: 13
-          color: "#a6adc8"; opacity: 0.5
+          color: Theme.subtext0; opacity: 0.5
         }
       }
     }

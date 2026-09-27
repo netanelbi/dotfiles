@@ -41,7 +41,7 @@ BarWidget {
   // A workspace button is taller than the default indicator slot -- it carries
   // 4px of padding plus a 2px outline, and in waybar it very nearly fills the
   // island.
-  readonly property int pillHeight: Style.bar.islandHeight - 4
+  readonly property int pillHeight: Style.bar.pillHeight
   implicitHeight: pillHeight
 
   // ------------------------------------------------------------ hyprland
@@ -189,8 +189,11 @@ BarWidget {
           height: root.pillHeight
           radius: Style.module.radius
 
-          color: isUrgent ? Theme.urgent
-                          : (isHovered ? Theme.hoverBackground : Theme.transparent)
+          // Brutal: the active workspace is a yellow chip with an ink outline,
+          // an urgent one a red chip (the mockup's `.ws .on`).
+          color: isUrgent ? (Theme.brutal ? Theme.fillRed : Theme.urgent)
+                          : (Theme.brutal && isActive ? Theme.fillYellow
+                             : (isHovered ? Theme.hoverBackground : Theme.transparent))
 
           // Each pill owns its outline and simply CROSS-FADES it in and out,
           // which is waybar's own model (`#workspaces button.active` has the
@@ -198,8 +201,9 @@ BarWidget {
           // Rectangle that slid between pills read as too busy: on a switch it
           // travelled the whole row, and Hyprland destroying emptied
           // workspaces meant the row moved underneath it at the same time.
-          border.width: Style.module.borderWidth
-          border.color: (isActive && !isUrgent) ? Theme.accent : Theme.transparent
+          border.width: Theme.brutal ? Theme.chipBorder : Style.module.borderWidth
+          border.color: Theme.brutal ? ((isActive || isUrgent) ? Theme.borderColor : Theme.transparent)
+                                     : ((isActive && !isUrgent) ? Theme.accent : Theme.transparent)
 
           Behavior on border.color {
             ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
@@ -218,8 +222,8 @@ BarWidget {
             anchors.centerIn: parent
             // waybar's `format: "{name}"`.
             text: pill.workspace !== null ? pill.workspace.name : String(pill.modelData)
-            color: pill.isUrgent ? Theme.base
-                                 : (pill.isActive ? Theme.accent
+            color: pill.isUrgent ? (Theme.brutal ? Theme.onFill : Theme.base)
+                                 : (pill.isActive ? (Theme.brutal ? Theme.onFill : Theme.accent)
                                                   : (pill.isHovered ? Theme.accentAlt : Theme.inactive))
             font.family: Style.font.family
             font.pixelSize: Style.font.size

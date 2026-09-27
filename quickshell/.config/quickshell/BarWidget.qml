@@ -89,6 +89,13 @@ Item {
   property bool hoverHighlight: interactive
   property color hoverColor: Theme.hoverBackground
 
+  // Brutal only: a filled pastel chip with an ink outline (the mockup's
+  // battery / active states). Leave transparent for no chip; ignored in
+  // catppuccin. Children should colour their text `chipInk` when `chipped`.
+  property color chipColor: "transparent"
+  readonly property bool chipped: Theme.brutal && chipColor.a > 0
+  readonly property color chipInk: Theme.onFill
+
   readonly property bool hovered: mouse.containsMouse
   readonly property bool pressed: mouse.pressed
 
@@ -98,9 +105,10 @@ Item {
     anchors.leftMargin: root.sideMargin
     anchors.rightMargin: root.sideMargin
     radius: root.radius
-    color: root.hoverHighlight && root.hovered ? root.hoverColor : root.backgroundColor
-    border.width: root.borderWidth
-    border.color: root.borderColor
+    color: root.chipped ? root.chipColor
+         : (root.hoverHighlight && root.hovered ? root.hoverColor : root.backgroundColor)
+    border.width: root.chipped ? Theme.chipBorder : root.borderWidth
+    border.color: root.chipped ? Theme.borderColor : root.borderColor
 
     // waybar snaps; we cross-fade.
     Behavior on color { ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth } }

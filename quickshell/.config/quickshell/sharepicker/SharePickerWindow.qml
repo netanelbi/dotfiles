@@ -235,6 +235,8 @@ PanelWindow {
   readonly property int contentHeight: Math.min(maxContentHeight, rows * cellHeight)
   readonly property int cardHeight: contentHeight + chromeHeight
 
+  HardShadow { target: card }
+
   Rectangle {
     id: card
 
@@ -247,9 +249,9 @@ PanelWindow {
 
     color: Theme.base
     // .notification / rofi window: 12px radius, 2px accent border on @base.
-    radius: 12
-    border.width: Style.module.borderWidth
-    border.color: Theme.accent
+    radius: Theme.r(12)
+    border.width: Theme.frameWidth(Style.module.borderWidth)
+    border.color: Theme.frameColor(Theme.accent)
 
     opacity: win.shown ? 1 : 0
     scale: win.shown ? 1 : 0.97
@@ -287,7 +289,7 @@ PanelWindow {
           anchors.verticalCenter: parent.verticalCenter
           text: "Share your screen"
           color: Theme.foreground
-          font.family: Style.font.family
+          font.family: Style.font.ui
           font.pixelSize: Style.font.size
           font.weight: Style.font.boldWeight
         }
@@ -312,8 +314,11 @@ PanelWindow {
               width: pill.implicitWidth + 2 * Style.bar.islandPaddingH
               height: 28
               radius: Style.module.radius
-              color: current ? Theme.accent
+              // Brutal: the current tab is a yellow chip, ink outlined.
+              color: current ? (Theme.brutal ? Theme.fillYellow : Theme.accent)
                              : (pillHover.hovered ? Theme.hoverBackground : Theme.surface0)
+              border.width: Theme.chipBorder
+              border.color: Theme.borderColor
 
               Behavior on color { ColorAnimation { duration: Style.anim.colorDuration } }
 
@@ -321,7 +326,7 @@ PanelWindow {
                 id: pill
                 anchors.centerIn: parent
                 text: modelData.label + "  " + modelData.n
-                color: parent.current ? Theme.base : Theme.foreground
+                color: parent.current ? (Theme.brutal ? Theme.onFill : Theme.base) : Theme.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.tiny
                 font.weight: parent.current ? Style.font.boldWeight : Style.font.normalWeight
@@ -402,12 +407,12 @@ PanelWindow {
                 anchors.verticalCenter: parent.verticalCenter
                 width: 14
                 height: 14
-                radius: 4
+                radius: Theme.r(4)
                 color: win.controller && win.controller.allowToken
-                  ? Theme.accent : Theme.transparent
+                  ? (Theme.brutal ? Theme.fillYellow : Theme.accent) : Theme.transparent
                 border.width: Style.module.borderWidth
-                border.color: win.controller && win.controller.allowToken
-                  ? Theme.accent : Theme.surface2
+                border.color: Theme.brutal ? Theme.borderColor
+                  : (win.controller && win.controller.allowToken ? Theme.accent : Theme.surface2)
                 Behavior on color { ColorAnimation { duration: Style.anim.colorDuration } }
               }
 

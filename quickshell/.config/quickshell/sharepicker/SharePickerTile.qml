@@ -57,8 +57,9 @@ Item {
 
   Rectangle {
     anchors.fill: parent
-    radius: Style.module.radius + 2
-    color: tile.selected ? Theme.alpha(Theme.accent, 0.22)
+    radius: Theme.r(10)   // Style.module.radius + 2
+    // Brutal: the mockup's selected file tile -- a half-strength yellow wash.
+    color: tile.selected ? (Theme.brutal ? Theme.alpha(Theme.fillYellow, 0.55) : Theme.alpha(Theme.accent, 0.22))
                          : (hover.hovered ? Theme.hoverBackground : Theme.transparent)
 
     Behavior on color { ColorAnimation { duration: Style.anim.colorDuration } }
@@ -80,8 +81,8 @@ Item {
       // surface0, not crust: an unpainted frame should read as a lit panel
       // waiting for content, not as a black hole in the card.
       color: Theme.surface0
-      border.width: tile.selected ? Style.module.borderWidth : 1
-      border.color: tile.selected ? Theme.accent : Theme.surface2
+      border.width: Theme.brutal ? Theme.chipBorder : (tile.selected ? Style.module.borderWidth : 1)
+      border.color: Theme.brutal ? Theme.borderColor : (tile.selected ? Theme.accent : Theme.surface2)
 
       Behavior on border.color { ColorAnimation { duration: Style.anim.colorDuration } }
 

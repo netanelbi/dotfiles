@@ -34,6 +34,9 @@ Item {
   // listview { spacing: 4px }
   property int rowSpacing: 4
   property color accent: Theme.accent
+  // Text colour for a row: brutal draws the current row as a yellow chip, so
+  // its text turns ink (onFill); otherwise `normal` (unchanged in catppuccin).
+  function ink(current, normal) { return Theme.brutal && current ? Theme.onFill : normal }
 
   readonly property int visibleRows: Math.min(count, rows)
   readonly property int naturalHeight: count === 0
@@ -81,11 +84,12 @@ Item {
     cacheBuffer: root.rowHeight * 4
 
     // element selected.normal { background: @surface1; border: 1px solid <accent> }
+    // Brutal: a yellow chip with an ink outline (the mockup's `.side .sel`).
     highlight: Rectangle {
-      color: Theme.surface1
-      radius: 6
-      border.width: 1
-      border.color: root.accent
+      color: Theme.brutal ? Theme.fillYellow : Theme.surface1
+      radius: Theme.r(6)
+      border.width: Theme.brutal ? Theme.chipBorder : 1
+      border.color: Theme.frameColor(root.accent)
       opacity: view.count > 0 ? 1 : 0
 
       Behavior on border.color {
@@ -116,7 +120,7 @@ Item {
     anchors.topMargin: root.inset
     anchors.bottomMargin: root.inset
     width: 4
-    radius: 2
+    radius: Theme.r(2)
     color: Theme.surface0
     opacity: visible ? 1 : 0
 

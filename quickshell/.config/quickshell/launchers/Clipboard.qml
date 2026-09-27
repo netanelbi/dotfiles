@@ -133,7 +133,7 @@ Scope {
     prompt: "Clipboard"
     accent: Theme.accent           // catppuccin.rasi: border-color @mauve
     panelWidth: 900
-    cornerRadius: 12
+    cornerRadius: Theme.r(12)
     placeholder: "Search clipboard..."
     list: list
 
@@ -183,7 +183,7 @@ Scope {
             Rectangle {
               anchors.fill: parent
               visible: clipRow.isImage
-              radius: 6
+              radius: Theme.r(6)
               color: Theme.surface0
               clip: true
 
@@ -208,7 +208,7 @@ Scope {
               anchors.centerIn: parent
               visible: !clipRow.isImage
               text: "󰅍"
-              color: clipRow.current ? list.accent : Theme.overlay0
+              color: list.ink(clipRow.current, clipRow.current ? list.accent : Theme.overlay0)
               font.family: Style.font.family
               font.pixelSize: Style.font.size + 8
               renderType: Text.NativeRendering
@@ -228,7 +228,7 @@ Scope {
               width: parent.width
               text: clipRow.modelData.display
               elide: Text.ElideRight
-              color: Theme.text
+              color: list.ink(clipRow.current, Theme.text)
               font.family: Style.font.family
               font.pixelSize: Style.font.size
               font.weight: clipRow.current ? Style.font.boldWeight : Style.font.normalWeight
@@ -239,7 +239,7 @@ Scope {
               width: parent.width
               visible: clipRow.isImage && clipRow.current
               text: "Alt+P to open in imv"
-              color: Theme.overlay0
+              color: list.ink(clipRow.current, Theme.overlay0)
               font.family: Style.font.family
               font.pixelSize: Style.font.small
               renderType: Text.NativeRendering
@@ -287,7 +287,7 @@ Scope {
         anchors.fill: parent
         anchors.margins: 1
         color: Theme.mantle
-        radius: 8
+        radius: Theme.r(8)
 
         // Vertical hairline separating the two panes.
         Rectangle {

@@ -39,6 +39,10 @@ Item {
   readonly property bool collapsed: multi && !expanded
   // Cards peeking out from under the top one, capped at two like swaync's.
   readonly property int peeks: collapsed ? Math.min(2, entries.length - 1) : 0
+  // How far each stub peeks out below the one above it. Brutal adds the shadow
+  // depth, so every card's hard shadow lands on the stub below and still
+  // leaves the stub's own 6px (and its outline) showing (6 in catppuccin).
+  readonly property int peekStep: 6 + Theme.shadowY
   // The measured width of a control-center row in the running swaync; the
   // list around it is sized to match.
   readonly property int cardWidth: store.centerCardWidth
@@ -51,6 +55,7 @@ Item {
     return ""
   }
 
+  readonly property bool critical: !!head && !!head.notif && head.notif.urgency === NotificationUrgency.Critical
   readonly property color urgencyColor: {
     if (!head || !head.notif) return Theme.mauve
     var u = head.notif.urgency
@@ -131,7 +136,7 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           text: root.appKey
           color: Theme.text
-          font.family: Style.font.family
+          font.family: Style.font.ui
           font.pixelSize: Style.font.size
           font.weight: Style.font.boldWeight
           renderType: Text.NativeRendering
@@ -154,8 +159,10 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         width: groupCloseLabel.implicitWidth + 16   // padding: 4px 8px
         height: groupCloseLabel.implicitHeight + 8
-        radius: 6
-        color: groupCloseArea.containsMouse ? Theme.red : Theme.surface0
+        radius: Theme.r(6)
+        color: groupCloseArea.containsMouse ? (Theme.brutal ? Theme.fillRed : Theme.red) : Theme.surface0
+        border.width: Theme.chipBorder
+        border.color: Theme.borderColor
 
         Behavior on color {
           ColorAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
@@ -165,7 +172,7 @@ Item {
           id: groupCloseLabel
           anchors.centerIn: parent
           text: "✕"
-          color: groupCloseArea.containsMouse ? Theme.base : Theme.text
+          color: groupCloseArea.containsMouse ? (Theme.brutal ? Theme.onFill : Theme.base) : Theme.text
           font.family: Style.font.family
           font.pixelSize: Style.font.size - 2
           renderType: Text.NativeRendering
@@ -202,30 +209,40 @@ Item {
         width: stack.width
         // The stubs stick out below the top card, so the holder is taller
         // than the card by their overhang.
-        height: card.height + (index === 0 ? root.peeks * 6 : 0)
+        height: card.height + (index === 0 ? root.peeks * root.peekStep : 0)
 
         // Collapsed stack: rounded stubs of the cards underneath, each inset
         // and pushed 6px further down than the last.
         Repeater {
           model: holder.index === 0 ? root.peeks : 0
 
-          Rectangle {
-            id: stub
+          // Each stub casts its own hard shadow in brutal (a wrapper, so the
+          // shadow can be its sibling); catppuccin paints the stub alone.
+          Item {
+            id: stubLayer
             required property int index
-
             z: -1 - index
-            x: 12 + 6 * (index + 1)
-            y: 6 + 6 * (index + 1)
-            width: root.cardWidth - 12 * (index + 1)
-            height: card.cardHeight
-            radius: 12
-            color: Theme.base
-            border.width: 2
-            border.color: root.urgencyColor
-            opacity: 1 - 0.25 * index
 
-            Behavior on border.color {
-              ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
+            HardShadow { target: stub }
+
+            Rectangle {
+              id: stub
+              readonly property int index: stubLayer.index
+
+              x: 12 + 6 * (index + 1)
+              y: 6 + root.peekStep * (index + 1)
+              width: root.cardWidth - 12 * (index + 1)
+              height: card.cardHeight
+              radius: Theme.r(12)
+              color: Theme.base
+              border.width: Theme.frameWidth(2)
+              // Brutal: ink, except a critical head keeps its red outline.
+              border.color: Theme.brutal && !root.critical ? Theme.borderColor : root.urgencyColor
+              opacity: 1 - 0.25 * index
+
+              Behavior on border.color {
+                ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
+              }
             }
           }
         }

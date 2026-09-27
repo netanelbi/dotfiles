@@ -40,8 +40,10 @@ PanelWindow {
   property bool promptPill: true
   // The `window { border-color }` of the matching .rasi.
   property color accent: Theme.accent
+  // Brutal only: the pastel the prompt pill is filled with (ink text on it).
+  property color accentFill: Theme.fillViolet
   property int panelWidth: 500
-  property int cornerRadius: 12
+  property int cornerRadius: Theme.r(12)
   // powermenu.rasi sets `entry { enabled: false }`.
   property bool searchEnabled: true
   property string placeholder: "Search..."
@@ -212,16 +214,19 @@ PanelWindow {
       scale: 0.96 + 0.04 * panel.revealed
       y: (parent.height - height) / 2 + 12 * (1 - panel.revealed)
 
+      HardShadow { target: card }
+
       Rectangle {
         id: card
         width: parent.width
-        implicitHeight: header.height + body.implicitHeight
+        // header.y and the trailing term are the brutal outline (0 in catppuccin).
+        implicitHeight: header.y + header.height + body.implicitHeight + (Theme.brutal ? Theme.borderWidth : 0)
         height: implicitHeight
 
         color: Theme.base
         radius: panel.cornerRadius
-        border.width: 2
-        border.color: panel.accent
+        border.width: Theme.frameWidth(2)
+        border.color: Theme.frameColor(panel.accent)
         clip: true
 
         Behavior on border.color {
@@ -231,13 +236,26 @@ PanelWindow {
         // ------------------------------------------------------- inputbar
         Rectangle {
           id: header
-          width: parent.width
           height: headerRow.implicitHeight + 2 * headerPadding
           readonly property int headerPadding: 12
 
-          color: Theme.surface0
-          topLeftRadius: panel.cornerRadius - 2
-          topRightRadius: panel.cornerRadius - 2
+          // Brutal: the mockup's title strip -- mantle, ink rule below, drawn
+          // inside the card's outline.
+          color: Theme.brutal ? Theme.mantle : Theme.surface0
+          x: Theme.brutal ? Theme.borderWidth : 0
+          y: Theme.brutal ? Theme.borderWidth : 0
+          width: parent.width - 2 * x
+          topLeftRadius: Math.max(0, panel.cornerRadius - 2)
+          topRightRadius: Math.max(0, panel.cornerRadius - 2)
+
+          Rectangle {
+            visible: Theme.brutal
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: Theme.borderWidth
+            color: Theme.borderColor
+          }
           bottomLeftRadius: 0
           bottomRightRadius: 0
 
@@ -256,8 +274,10 @@ PanelWindow {
               visible: panel.prompt !== "" && panel.promptPill
               width: promptLabel.implicitWidth + 24
               height: promptLabel.implicitHeight + 12
-              radius: 6
-              color: panel.accent
+              radius: Theme.r(6)
+              color: Theme.brutal ? panel.accentFill : panel.accent
+              border.width: Theme.chipBorder
+              border.color: Theme.borderColor
               anchors.verticalCenter: parent.verticalCenter
 
               Behavior on color {
@@ -268,7 +288,7 @@ PanelWindow {
                 id: promptLabel
                 anchors.centerIn: parent
                 text: panel.prompt
-                color: Theme.base
+                color: Theme.brutal ? Theme.onFill : Theme.base
                 font.family: Style.font.family
                 font.pixelSize: Style.font.small
                 font.weight: Style.font.boldWeight
@@ -330,7 +350,7 @@ PanelWindow {
                 // with the text rather than jumping.
                 cursorDelegate: Rectangle {
                   width: 2
-                  radius: 1
+                  radius: Theme.r(1)
                   color: panel.accent
 
                   SequentialAnimation on opacity {

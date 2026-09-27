@@ -66,7 +66,8 @@ ScriptWidget {
     var out = []
     var re = /<span\s+color='(#[0-9a-fA-F]{3,8})'>([^<]*)<\/span>/g
     var match
-    while ((match = re.exec(markup)) !== null) out.push({ color: match[1], glyph: match[2] })
+    // The script's hex is Mocha; fromMocha maps it to the active theme.
+    while ((match = re.exec(markup)) !== null) out.push({ color: Theme.fromMocha(match[1]), glyph: match[2] })
     return out
   }
 
