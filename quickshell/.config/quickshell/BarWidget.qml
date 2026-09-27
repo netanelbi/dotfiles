@@ -59,6 +59,10 @@ Item {
 
   implicitWidth: shown ? fullWidth : 0
   implicitHeight: Style.bar.slotHeight
+  // Centred in its row: the orb's perch is a full island tall, so a Row that
+  // holds it top-aligns every slot-high widget beside it -- invisible on a
+  // transparent widget, but the brutal clock block rode up onto the outline.
+  anchors.verticalCenter: parent ? parent.verticalCenter : undefined
   opacity: shown ? 1 : 0
   visible: opacity > 0.01
   clip: true
