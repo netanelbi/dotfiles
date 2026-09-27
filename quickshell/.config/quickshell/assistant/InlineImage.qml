@@ -80,8 +80,8 @@ Item {
     anchors.rightMargin: pic.width - Math.ceil(pic.paintedWidth)
     visible: shot.ready
     color: Theme.transparent
-    border.width: 1
-    border.color: Theme.surface1
+    border.width: Theme.brutal ? 2 : 1
+    border.color: Theme.brutal ? Theme.borderColor : Theme.surface1
   }
 
   Text {

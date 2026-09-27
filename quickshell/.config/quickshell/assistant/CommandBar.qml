@@ -144,10 +144,11 @@ Rectangle {
   // inside it may.
   implicitHeight: Math.min(hint.implicitHeight + 14 + root.matches.length * 26 + 8, 220)
 
-  color: Theme.alpha(Theme.mantle, 0.94)
-  border.width: 1
-  border.color: Theme.alpha(root.accent, 0.35)
-  radius: 10
+  // Brutal: an opaque card with an ink edge.
+  color: Theme.brutal ? Theme.base : Theme.alpha(Theme.mantle, 0.94)
+  border.width: Theme.brutal ? Theme.borderWidth : 1
+  border.color: Theme.brutal ? Theme.borderColor : Theme.alpha(root.accent, 0.35)
+  radius: Theme.r(10)
   opacity: root.open ? 1 : 0
   visible: opacity > 0
 
@@ -243,15 +244,19 @@ Rectangle {
 
       width: list.width
       height: 26
-      radius: 4
+      radius: Theme.r(4)
       readonly property bool on: index === root.current
-      color: on ? Theme.surface1 : "transparent"
+      // Brutal: the selection is a yellow fill with an ink edge; its text
+      // turns to onFill.
+      color: on ? (Theme.brutal ? Theme.fillYellow : Theme.surface1) : Theme.transparent
+      border.width: on && Theme.brutal ? 2 : 0
+      border.color: Theme.borderColor
 
       Rectangle {
         width: 2
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom
                   leftMargin: 2; topMargin: 3; bottomMargin: 3 }
-        radius: 1
+        radius: Theme.r(1)
         color: root.accent
         opacity: parent.on ? 1 : 0
       }
@@ -263,7 +268,7 @@ Rectangle {
         // typed with one and `ollama/glm-5.2` is not, and a row that shows the
         // wrong one teaches the wrong thing about what Enter will insert.
         text: (root.arging ? "" : "/") + String(modelData.name)
-        color: parent.on ? Theme.text : Theme.subtext0
+        color: parent.on ? (Theme.brutal ? Theme.onFill : Theme.text) : Theme.subtext0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
@@ -277,7 +282,7 @@ Rectangle {
         anchors { left: name.right; right: parent.right; leftMargin: 10
                   rightMargin: 8; verticalCenter: parent.verticalCenter }
         text: String(modelData.description || "").split("\n")[0]
-        color: Theme.overlay0
+        color: Theme.brutal && parent.on ? Theme.onFill : Theme.overlay0
         elide: Text.ElideRight
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta - 2

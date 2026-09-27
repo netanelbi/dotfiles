@@ -43,26 +43,28 @@ Column {
 
         width: parent.width
         height: 40
-        radius: 8
-        color: optArea.containsMouse
+        radius: Theme.r(8)
+        // Brutal: option buttons are blue fills with an ink edge.
+        color: Theme.brutal ? (optArea.containsMouse ? Theme.fillBlue : Theme.alpha(Theme.fillBlue, 0.45))
+          : optArea.containsMouse
           ? Theme.alpha(Theme.sapphire, 0.25)
           : Theme.alpha(Theme.sapphire, 0.12)
-        border.width: 1
-        border.color: Theme.alpha(Theme.sapphire, 0.4)
+        border.width: Theme.brutal ? 2 : 1
+        border.color: Theme.brutal ? Theme.borderColor : Theme.alpha(Theme.sapphire, 0.4)
 
         Behavior on color { ColorAnimation { duration: Style.anim.quick } }
 
         Text {
           anchors { left: parent.left; leftMargin: 14; verticalCenter: parent.verticalCenter }
           text: modelData
-          color: Theme.text
+          color: Theme.brutal ? Theme.onFill : Theme.text
           font.family: Style.font.panelFamily
           font.pixelSize: Style.font.panelBody
         }
         Text {
           anchors { right: parent.right; rightMargin: 14; verticalCenter: parent.verticalCenter }
           text: "→"
-          color: optArea.containsMouse ? Theme.sapphire : Theme.overlay0
+          color: Theme.brutal ? Theme.onFill : optArea.containsMouse ? Theme.sapphire : Theme.overlay0
           font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelBody
           renderType: Text.QtRendering
@@ -84,10 +86,11 @@ Column {
   Rectangle {
     width: parent.width
     height: 40
-    radius: 8
-    color: Theme.alpha(Theme.base, 0.8)
-    border.width: 1
-    border.color: field.activeFocus ? Theme.sapphire : Theme.alpha(Theme.sapphire, 0.25)
+    radius: Theme.r(8)
+    color: Theme.brutal ? Theme.base : Theme.alpha(Theme.base, 0.8)
+    border.width: Theme.brutal ? 2 : 1
+    border.color: Theme.brutal ? Theme.borderColor
+      : field.activeFocus ? Theme.sapphire : Theme.alpha(Theme.sapphire, 0.25)
 
     TextField {
       id: field

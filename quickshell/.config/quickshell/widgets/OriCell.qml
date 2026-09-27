@@ -355,7 +355,7 @@ Item {
       y: Style.ori.keelY
       height: keel.thickness
       // Rounded caps, so it reads as a drawn stroke and not as a table border.
-      radius: height / 2
+      radius: Theme.brutal ? 0 : height / 2
       color: Theme.alpha(root.tint, root.ruleAlpha)
 
       Behavior on color {
@@ -388,8 +388,10 @@ Item {
       y: Style.ori.keelY - 1
       width: keel.width + 14 * root.flash
       height: 3
-      radius: 1.5
-      color: Theme.alpha(Qt.lighter(Theme.sky, 1.5), root.flash)
+      radius: Theme.brutal ? 0 : 1.5
+      // Lighter reads as brighter only on a dark ground; on a light one the
+      // ink colour itself is the bright stroke.
+      color: Theme.alpha(Theme.dark ? Qt.lighter(Theme.sky, 1.5) : Theme.sky, root.flash)
     }
   }
 
@@ -461,7 +463,8 @@ Item {
       // ENLARGES the mark instead -- a shape-scale change is still legible at
       // a glance, and the halo and flash carry the rest.
       text: "\u26A1\uFE0E"
-      color: root.holding ? Qt.lighter(root.tint, 1 + 0.4 * root.flash) : root.tint
+      color: root.holding ? (Theme.dark ? Qt.lighter(root.tint, 1 + 0.4 * root.flash)
+                                        : Qt.darker(root.tint, 1 + 0.4 * root.flash)) : root.tint
       opacity: (root.thinking || root.background) ? root.breath : root.markAlpha
       font.family: Style.font.family
       font.pixelSize: root.holding ? Style.font.size + 2 : Style.font.size

@@ -175,7 +175,7 @@ PanelWindow {
   implicitWidth: wide
       ? (panel.screen ? panel.screen.width : panelWidth + 24)
       : panelWidth + 24
-  color: "transparent"
+  color: Theme.transparent
 
   visible: opened || revealed > 0.001
   property real revealed: 0
@@ -237,6 +237,14 @@ PanelWindow {
     : OriClient.bgCount > 0 ? Theme.accent
     : OriClient.warm ? Theme.sapphire
     : Theme.inactive
+  // The same state as a pastel fill, for the brutal chips (ink text on it).
+  readonly property color accentFill:
+      OriClient.error !== "" ? Theme.fillRed
+    : liveToolSafe !== "" ? Theme.fillViolet
+    : OriClient.busy ? Theme.fillBlue
+    : OriClient.bgCount > 0 ? Theme.fillViolet
+    : OriClient.warm ? Theme.fillBlue
+    : Theme.surface1
 
   // workTool is lastTool even when the hold has expired -- right for the orb,
   // which gates on `working`, wrong for a fresh turn that is busy but has not
@@ -430,10 +438,17 @@ PanelWindow {
       color: Theme.transparent
       border.width: grow
       border.color: Theme.alpha(panel.accent, [0.14, 0.07, 0.035][index])
+      // Brutal has no soft light: its card casts a hard shadow instead.
+      visible: !Theme.brutal
       opacity: card.opacity
       Behavior on border.color { ColorAnimation { duration: Style.anim.colorDuration } }
     }
   }
+
+  // The brutal theme's hard offset shadow (paints nothing under catppuccin).
+  // Fits the fixed surface: card.x 16 + panelWidth + 5 < panelWidth + 24, and
+  // the card's 8px bottom inset takes the 5 below.
+  HardShadow { target: card }
 
   Rectangle {
     id: card
@@ -453,15 +468,19 @@ PanelWindow {
     // Glass: a translucent crust over the compositor's blur (layer rule on
     // this namespace in hyprland.lua), so the windows under it become soft
     // colour rather than readable text. Same glass as the orb mock's panel.
-    color: Theme.alpha(Theme.base, 0.6)
-    radius: 12
-    border.width: 1
+    // Brutal: an opaque card with an ink edge -- no glass (the layer rule's
+    // blur then has nothing to show through, ignore_alpha keeps it off the
+    // transparent strip).
+    color: Theme.brutal ? Theme.base : Theme.alpha(Theme.base, 0.6)
+    radius: Theme.r(12)
+    border.width: Theme.brutal ? Theme.borderWidth : 1
     // The edge of the card is the furthest-away readout there is: dim when
     // nothing is happening, lit in the accent of whatever is. Kept neutral for
     // effort on purpose -- Netanel tried the effort heat scale here and asked
     // for it on the composer edge alone; the full-card flash at every cycle
     // was louder than the signal.
-    border.color: OriClient.busy || OriClient.error !== ""
+    border.color: Theme.brutal ? Theme.borderColor
+      : OriClient.busy || OriClient.error !== ""
       ? Theme.alpha(panel.accent, 0.9) : Theme.alpha(panel.accent, 0.5)
     clip: true
 
@@ -475,7 +494,8 @@ PanelWindow {
       anchors { top: parent.top; left: parent.left; right: parent.right
                 margins: card.border.width }
       height: 44
-      color: Theme.transparent
+      // Brutal: a title bar, like the windows' own (mantle strip, ink rule).
+      color: Theme.brutal ? Theme.mantle : Theme.transparent
       topLeftRadius: card.radius - card.border.width
       topRightRadius: card.radius - card.border.width
 
@@ -487,11 +507,23 @@ PanelWindow {
         phase: clock.elapsedTime
       }
 
+      // Brutal: the name sits on a pastel chip in the state's colour, the way
+      // the windows' title bars carry their app name. Accent-as-text would
+      // fail contrast on cream; ink on a fill does not.
+      Rectangle {
+        visible: Theme.brutal
+        anchors { fill: title; leftMargin: -6; rightMargin: -6; topMargin: -3; bottomMargin: -3 }
+        color: panel.accentFill
+        border.width: 2
+        border.color: Theme.borderColor
+        Behavior on color { ColorAnimation { duration: Style.anim.colorDuration } }
+      }
+
       Text {
         id: title
         anchors { left: mark.right; leftMargin: 10; verticalCenter: parent.verticalCenter }
         text: "ORI"
-        color: panel.accent
+        color: Theme.brutal ? Theme.onFill : panel.accent
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta - 1
         font.letterSpacing: 3
@@ -504,6 +536,7 @@ PanelWindow {
         anchors { left: title.right; right: pathText.left; leftMargin: 12; rightMargin: 12
                   verticalCenter: parent.verticalCenter }
         height: 1
+        visible: !Theme.brutal
         gradient: Gradient {
           orientation: Gradient.Horizontal
           GradientStop { position: 0.0; color: Theme.alpha(panel.accent, 0.6) }
@@ -527,7 +560,7 @@ PanelWindow {
       Rectangle {
         id: newBtn
         anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
-        width: 24; height: 24; radius: 6
+        width: 24; height: 24; radius: Theme.r(6)
         color: newArea.containsMouse ? Theme.hoverBackground : Theme.transparent
 
         Behavior on color {
@@ -554,8 +587,8 @@ PanelWindow {
 
       Rectangle {
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: 1
-        color: Theme.alpha(panel.accent, 0.15)
+        height: Theme.brutal ? Theme.borderWidth : 1
+        color: Theme.brutal ? Theme.borderColor : Theme.alpha(panel.accent, 0.15)
       }
     }
 
@@ -1390,8 +1423,10 @@ PanelWindow {
       anchors { right: composer.right; bottom: composer.top; rightMargin: 12; bottomMargin: 6 }
       width: toastText.implicitWidth + 20
       height: toastText.implicitHeight + 10
-      radius: height / 2
-      color: Theme.surface1
+      radius: Theme.brutal ? 0 : height / 2
+      color: Theme.brutal ? Theme.fillGreen : Theme.surface1
+      border.width: Theme.brutal ? 2 : 0
+      border.color: Theme.borderColor
       opacity: 0
       visible: opacity > 0
 
@@ -1399,7 +1434,7 @@ PanelWindow {
         id: toastText
         anchors.centerIn: parent
         text: "copied"
-        color: Theme.subtext0
+        color: Theme.brutal ? Theme.onFill : Theme.subtext0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
@@ -1446,7 +1481,7 @@ PanelWindow {
     // fits, which is most of the time.
     Rectangle {
       width: 2
-      radius: 1
+      radius: Theme.r(1)
       x: transcript.x + transcript.width - 3
       // visibleArea is reported in the list's own coordinates, which BottomToTop
       // has already flipped -- at rest, parked on the newest turn, yPosition is
@@ -1564,8 +1599,10 @@ PanelWindow {
                 leftMargin: 10; rightMargin: 10; bottomMargin: 4 }
       height: OriClient.speaking ? 24 : 0
       visible: height > 0
-      color: Theme.alpha(Theme.yellow, 0.10)
-      radius: 6
+      color: Theme.brutal ? Theme.fillYellow : Theme.alpha(Theme.yellow, 0.10)
+      radius: Theme.r(6)
+      border.width: Theme.brutal ? 2 : 0
+      border.color: Theme.borderColor
       clip: true
 
       Behavior on height {
@@ -1585,7 +1622,7 @@ PanelWindow {
         anchors { left: speakMark.right; leftMargin: 8; right: speakAge.left; rightMargin: 8
                   verticalCenter: parent.verticalCenter }
         text: String(OriClient.speakJob ? OriClient.speakJob.label || "speaking" : "")
-        color: Theme.subtext0
+        color: Theme.brutal ? Theme.onFill : Theme.subtext0
         elide: Text.ElideRight
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
@@ -1596,7 +1633,7 @@ PanelWindow {
         id: speakAge
         anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
         text: OriClient.speakJob ? fmt.duration(panel.nowMs - OriClient.speakJob.since) : ""
-        color: Theme.overlay0
+        color: Theme.brutal ? Theme.onFill : Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
@@ -1723,7 +1760,7 @@ PanelWindow {
                 leftMargin: card.border.width; rightMargin: card.border.width }
       height: OriClient.error !== "" || OriClient.notice !== ""
               ? errText.implicitHeight + 12 : 0
-      color: OriClient.error !== "" ? Theme.alpha(Theme.red, 0.15)
+      color: OriClient.error !== "" ? (Theme.brutal ? Theme.fillRed : Theme.alpha(Theme.red, 0.15))
                                     : Theme.alpha(Theme.sapphire, 0.12)
       clip: true
 
@@ -1735,7 +1772,7 @@ PanelWindow {
         id: errText
         anchors { left: parent.left; right: parent.right; top: parent.top; margins: 6 }
         text: OriClient.error !== "" ? OriClient.error : OriClient.notice
-        color: OriClient.error !== "" ? Theme.red : Theme.subtext0
+        color: OriClient.error !== "" ? (Theme.brutal ? Theme.onFill : Theme.red) : Theme.subtext0
         wrapMode: Text.Wrap
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
@@ -1753,10 +1790,11 @@ PanelWindow {
       // Grows with the draft up to a ceiling, then the field scrolls. The card
       // is a fixed size, so this only moves the boundary between the two panes.
       height: Math.max(64, Math.min(entry.implicitHeight, 120) + 20)
-      radius: 12
-      color: Theme.alpha(Theme.mantle, 0.72)
-      border.width: 1
-      border.color: Theme.alpha(panel.accent, entry.activeFocus ? 0.55 : 0.30)
+      radius: Theme.r(12)
+      color: Theme.brutal ? Theme.base : Theme.alpha(Theme.mantle, 0.72)
+      border.width: Theme.brutal ? Theme.borderWidth - 1 : 1
+      border.color: Theme.brutal ? Theme.borderColor
+        : Theme.alpha(panel.accent, entry.activeFocus ? 0.55 : 0.30)
       Behavior on border.color { ColorAnimation { duration: Style.anim.quick } }
 
       // The key hint, where the mock keeps it.
@@ -1788,6 +1826,8 @@ PanelWindow {
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
         width: 120
         radius: parent.radius
+        // Brutal is flat: no light pooled under the orb.
+        visible: !Theme.brutal
         gradient: Gradient {
           orientation: Gradient.Horizontal
           GradientStop { position: 0.0; color: Theme.alpha(caret.tint, 0.32) }
@@ -2038,20 +2078,24 @@ PanelWindow {
       anchors { left: parent.left; right: parent.right; bottom: parent.bottom
                 margins: card.border.width }
       height: 24
-      color: Theme.alpha(Theme.mantle, 0.6)
+      color: Theme.brutal ? Theme.mantle : Theme.alpha(Theme.mantle, 0.6)
       bottomLeftRadius: card.radius - card.border.width
       bottomRightRadius: card.radius - card.border.width
 
       Rectangle {
         id: gaugeTrack
         anchors { left: parent.left; right: parent.right; top: parent.top }
-        height: 2
-        color: Theme.surface0
+        // Brutal: the gauge rides the footer's ink rule, in pastel fill.
+        height: Theme.brutal ? Theme.borderWidth : 2
+        color: Theme.brutal ? Theme.borderColor : Theme.surface0
 
         Rectangle {
           anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
           width: parent.width * OriClient.contextFraction
-          color: OriClient.contextFraction < 0.7 ? Theme.sapphire
+          color: Theme.brutal
+            ? (OriClient.contextFraction < 0.7 ? Theme.fillBlue
+              : OriClient.contextFraction < 0.9 ? Theme.fillYellow : Theme.fillRed)
+            : OriClient.contextFraction < 0.7 ? Theme.sapphire
             : OriClient.contextFraction < 0.9 ? Theme.yellow : Theme.red
 
           Behavior on width {

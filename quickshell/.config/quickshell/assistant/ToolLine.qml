@@ -120,11 +120,20 @@ Item {
   // thing you act on rather than a note that something is out there somewhere.
   // Anchored right, so a number that changes width every frame while the call
   // runs cannot push the sentence beside it around.
+  // Brutal: a handed-off job's pid is a status chip -- pastel fill, ink text.
+  Rectangle {
+    visible: Theme.brutal && line.bg !== null
+    anchors { fill: cost; leftMargin: -4; rightMargin: -4; topMargin: -1; bottomMargin: -1 }
+    color: Theme.fillViolet
+    border.width: 2
+    border.color: Theme.borderColor
+  }
+
   Text {
     id: cost
-    anchors { right: parent.right; baseline: head.baseline }
+    anchors { right: parent.right; rightMargin: Theme.brutal && line.bg ? 4 : 0; baseline: head.baseline }
     text: line.bg ? "↳ bg " + line.bg.pid : fmt.duration(line.ms)
-    color: line.bg ? line.accent : Theme.overlay0
+    color: line.bg ? (Theme.brutal ? Theme.onFill : line.accent) : Theme.overlay0
     font.family: Style.font.panelMono
     font.pixelSize: Style.font.panelMeta
     font.weight: line.bg ? Style.font.boldWeight : Style.font.normalWeight

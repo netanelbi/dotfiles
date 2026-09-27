@@ -141,12 +141,13 @@ Rectangle {
 
   // Denser than the card it sits on: a list is read, and glass under glass
   // would let the transcript show through the rows.
-  color: Theme.alpha(Theme.mantle, 0.94)
-  border.width: 1
-  border.color: Theme.alpha(root.accent, 0.35)
+  // Brutal: an opaque card with an ink edge.
+  color: Theme.brutal ? Theme.base : Theme.alpha(Theme.mantle, 0.94)
+  border.width: Theme.brutal ? Theme.borderWidth : 1
+  border.color: Theme.brutal ? Theme.borderColor : Theme.alpha(root.accent, 0.35)
   opacity: 0
   visible: opacity > 0
-  radius: 10
+  radius: Theme.r(10)
 
   Behavior on opacity {
     NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
@@ -358,10 +359,11 @@ Rectangle {
     anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 8 }
     height: root.renaming ? 36 : 0
     visible: root.renaming
-    radius: 8
-    color: Theme.alpha(Theme.base, 0.8)
-    border.width: 1
-    border.color: Theme.alpha(root.accent, renameField.activeFocus ? 0.9 : 0.3)
+    radius: Theme.r(8)
+    color: Theme.brutal ? Theme.base : Theme.alpha(Theme.base, 0.8)
+    border.width: Theme.brutal ? 2 : 1
+    border.color: Theme.brutal ? Theme.borderColor
+      : Theme.alpha(root.accent, renameField.activeFocus ? 0.9 : 0.3)
 
     TextField {
       id: renameField
@@ -438,15 +440,19 @@ Rectangle {
 
         height: label.implicitHeight + meta.implicitHeight + 14
         width: list.width
-        radius: 4
-        color: on ? Theme.surface1 : "transparent"
+        radius: Theme.r(4)
+        // Brutal: the selection is a yellow fill with an ink edge; its text
+      // turns to onFill.
+        color: on ? (Theme.brutal ? Theme.fillYellow : Theme.surface1) : Theme.transparent
+        border.width: on && Theme.brutal ? 2 : 0
+        border.color: Theme.borderColor
 
         // Selection rail.
         Rectangle {
           width: 2
           anchors { left: parent.left; top: parent.top; bottom: parent.bottom
                     leftMargin: 2; topMargin: 3; bottomMargin: 3 }
-          radius: 1
+          radius: Theme.r(1)
           color: root.accent
           opacity: parent.on ? 1 : 0
         }
@@ -474,7 +480,7 @@ Rectangle {
             if (n.length > 52) n = n.slice(0, 52) + "…"
             return (parent.depth > 0 ? "↳ " : "") + n
           }
-          color: parent.r.alive ? Theme.text : Theme.subtext0
+          color: Theme.brutal && parent.on ? Theme.onFill : parent.r.alive ? Theme.text : Theme.subtext0
           elide: Text.ElideRight
           font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelBody
@@ -502,7 +508,7 @@ Rectangle {
             if (parent.r.task) return line + "  ·  " + parent.r.task
             return line
           }
-          color: Theme.overlay0
+          color: Theme.brutal && parent.on ? Theme.onFill : Theme.overlay0
           elide: Text.ElideRight
           font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelMeta

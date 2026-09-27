@@ -29,7 +29,7 @@ PanelWindow {
   WlrLayershell.layer: WlrLayer.Overlay
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
   exclusionMode: ExclusionMode.Ignore
-  color: "transparent"
+  color: Theme.transparent
 
   anchors { top: true; left: true; bottom: true; right: true }
   // The surface is the whole screen, always. A smaller box that grew and
@@ -547,8 +547,11 @@ PanelWindow {
 
       Rectangle {
         anchors.fill: parent
-        radius: height / 2
-        color: Theme.alpha(Theme.base, 0.75)
+        // Brutal: a square cream tag with an ink edge instead of a soft pill.
+        radius: Theme.brutal ? 0 : height / 2
+        color: Theme.brutal ? Theme.base : Theme.alpha(Theme.base, 0.75)
+        border.width: Theme.brutal ? 2 : 0
+        border.color: Theme.borderColor
       }
 
       Text {
@@ -560,7 +563,7 @@ PanelWindow {
         font.pixelSize: 11
         font.letterSpacing: 2
         font.capitalization: Font.AllUppercase
-        style: Text.Raised
+        style: Theme.brutal ? Text.Normal : Text.Raised
         styleColor: Theme.alpha(Theme.crust, 0.9)
       }
     }
@@ -576,8 +579,11 @@ PanelWindow {
 
       Rectangle {
         anchors.fill: parent
-        radius: height / 2
-        color: Theme.alpha(Theme.base, 0.75)
+        // Brutal: a square cream tag with an ink edge instead of a soft pill.
+        radius: Theme.brutal ? 0 : height / 2
+        color: Theme.brutal ? Theme.base : Theme.alpha(Theme.base, 0.75)
+        border.width: Theme.brutal ? 2 : 0
+        border.color: Theme.borderColor
       }
 
       Text {
@@ -590,7 +596,7 @@ PanelWindow {
         horizontalAlignment: Text.AlignHCenter
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.tiny
-        style: Text.Raised
+        style: Theme.brutal ? Text.Normal : Text.Raised
         styleColor: Theme.alpha(Theme.crust, 0.9)
       }
     }
@@ -624,8 +630,10 @@ PanelWindow {
       // bleed through exactly where the eye lands first.
       Rectangle {
         anchors.fill: parent
-        radius: 12
-        color: Theme.alpha(Theme.base, 0.6)
+        radius: Theme.r(12)
+        color: Theme.brutal ? Theme.base : Theme.alpha(Theme.base, 0.6)
+        border.width: Theme.brutal ? 2 : 0
+        border.color: Theme.borderColor
       }
 
       Text {

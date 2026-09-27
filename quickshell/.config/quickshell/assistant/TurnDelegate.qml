@@ -355,13 +355,22 @@ Item {
                     Math.max(said.implicitWidth, shots.implicitWidth) + 24)
     x: turnItem.width - width - 12
     height: asked.implicitHeight + 16
-    radius: 10
+    radius: Theme.r(10)
     // The one blunted corner points back at the composer the message came
     // from, the way the notification cards enter from the edge they arrived on.
-    bottomRightRadius: 3
-    color: Theme.alpha(Theme.sapphire, 0.10)
-    border.width: 1
+    bottomRightRadius: Theme.r(3)
+    // Brutal: the terminal's prompt row -- a pale violet band with a violet
+    // rule on its left edge (below), no outline.
+    color: Theme.brutal ? Theme.alpha(Theme.fillViolet, 0.35) : Theme.alpha(Theme.sapphire, 0.10)
+    border.width: Theme.brutal ? 0 : 1
     border.color: Theme.alpha(Theme.sapphire, 0.22)
+
+    Rectangle {
+      visible: Theme.brutal
+      anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+      width: 4
+      color: Theme.fillViolet
+    }
 
     // The question's own rail, and the mirror of the answer's spine: an answer
     // hangs off a rail at x=0 that breathes while it is being written, so a
@@ -376,7 +385,7 @@ Item {
       anchors { right: parent.right; top: parent.top; bottom: parent.bottom
                 topMargin: 8; bottomMargin: 8 }
       width: 2
-      radius: 1
+      radius: Theme.r(1)
       color: turnItem.landed ? Theme.surface2 : turnItem.accent
       opacity: turnItem.landed ? 1 : turnItem.breath
 
@@ -522,7 +531,7 @@ Item {
       y: 1
       width: 2
       height: parent.height - 4
-      radius: 1
+      radius: Theme.r(1)
       color: turnItem.pending ? turnItem.accent : Theme.surface1
       opacity: turnItem.pending ? turnItem.breath : 1
 
@@ -681,8 +690,21 @@ Item {
             Rectangle {
               anchors.fill: parent
               visible: piece.code
-              radius: 6
-              color: Theme.alpha(Theme.surface0, 0.55)
+              radius: Theme.r(6)
+              // Brutal: a bordered cream box, like the terminal's tool blocks.
+              color: Theme.brutal ? Theme.mantle : Theme.alpha(Theme.surface0, 0.55)
+              border.width: Theme.brutal ? Theme.borderWidth - 1 : 0
+              border.color: Theme.borderColor
+            }
+
+            // The same box behind a tool batch, brutal only. The batch pads
+            // itself by the same amount (0 under catppuccin), so nothing moves.
+            Rectangle {
+              anchors.fill: batch
+              visible: piece.isTool && Theme.brutal && batch.height > 0
+              color: Theme.mantle
+              border.width: Theme.borderWidth - 1
+              border.color: Theme.borderColor
             }
 
             // The bullet, in the gutter its item hangs off.
@@ -813,6 +835,9 @@ Item {
               // not there.
               height: piece.isTool ? implicitHeight : 0
               spacing: 3
+              // Brutal only: room inside the box drawn behind it.
+              padding: Theme.brutal ? 8 : 0
+              readonly property real innerWidth: width - leftPadding - rightPadding
 
               readonly property var done: piece.isTool ? turnItem.doneOf(piece.cs) : []
               readonly property int liveAt: piece.isTool ? turnItem.liveOf(piece.cs) : -1
@@ -844,7 +869,7 @@ Item {
               // ------------------------------------------------- the tally
               // What is over, as a number. Click it to see what the number was.
               Item {
-                width: parent.width
+                width: batch.innerWidth
                 visible: batch.done.length > 0 && !batch.open
                 height: visible ? tally.implicitHeight : 0
 
@@ -900,7 +925,7 @@ Item {
               // live row and any background job keep that toggle, since neither
               // is inside here.
               Item {
-                width: parent.width
+                width: batch.innerWidth
                 visible: batch.open
                 height: visible ? rows.implicitHeight : 0
 
@@ -947,7 +972,7 @@ Item {
               // still shows it, `\u21b3 bg <pid>` and all.
               // --------------------------------------------- the call in flight
               ToolLine {
-                width: batch.width
+                width: batch.innerWidth
                 visible: batch.liveAt >= 0
                 height: visible ? implicitHeight : 0
                 call: batch.liveAt >= 0 ? piece.cs[batch.liveAt] : turnItem.noPiece

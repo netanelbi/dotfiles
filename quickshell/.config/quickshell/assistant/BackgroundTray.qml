@@ -84,8 +84,10 @@ Item {
 
     Rectangle {
       anchors.fill: parent
-      color: Theme.alpha(Theme.surface0, 0.5)
-      radius: 6
+      color: Theme.brutal ? Theme.mantle : Theme.alpha(Theme.surface0, 0.5)
+      radius: Theme.r(6)
+      border.width: Theme.brutal ? 2 : 0
+      border.color: Theme.borderColor
     }
 
     // The mark. Braille-dense rather than a spinner: it says "several things"

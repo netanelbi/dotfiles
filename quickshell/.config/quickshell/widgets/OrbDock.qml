@@ -46,8 +46,8 @@ Item {
     anchors.centerIn: parent
     width: 14; height: 14; radius: 7
     color: Theme.alpha(Theme.crust, 0.95)
-    border.width: 1
-    border.color: Theme.alpha(Theme.mauve, 0.25)
+    border.width: Theme.brutal ? 2 : 1
+    border.color: Theme.brutal ? Theme.borderColor : Theme.alpha(Theme.mauve, 0.25)
     opacity: root.inPanel ? 1 : 0
     scale: root.inPanel ? 1 : 0.4
     Behavior on opacity { NumberAnimation { duration: Style.anim.quick } }

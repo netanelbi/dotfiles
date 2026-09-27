@@ -81,6 +81,16 @@ Item {
     : mode === "ready"     ? Theme.sky
     : Theme.mauve
 
+  // The orb's hot centre and its small marks. White under catppuccin; on a
+  // brutal desk white vanishes into cream, so it glows in the pastel fill of
+  // its state and its marks are drawn in ink.
+  readonly property color hot: !Theme.brutal ? "white"
+    : mode === "listening" || mode === "thinking" || mode === "ready" ? Theme.fillBlue
+    : mode === "done"      ? Theme.fillGreen
+    : mode === "failed"    ? Theme.fillRed
+    : Theme.fillViolet
+  readonly property color mark: Theme.brutal ? Theme.onFill : "white"
+
   readonly property bool busy: alive && (mode !== "idle" || poked)
   readonly property real haloD: size * 3.4
 
@@ -191,7 +201,7 @@ Item {
       width: orb.size * 1.1
       height: width
       radius: width / 2
-      color: "transparent"
+      color: Theme.transparent
       border.width: 1.2
       border.color: orb.tint
       opacity: 0
@@ -242,7 +252,7 @@ Item {
     ShapePath {
       strokeColor: orb.tint
       strokeWidth: (orb.mode === "thinking" || orb.mode === "working") ? 1.4 : 1
-      fillColor: "transparent"
+      fillColor: Theme.transparent
       strokeStyle: ShapePath.DashLine
       dashPattern: [ring.dashOn, ring.dashOff]
       capStyle: ShapePath.RoundCap
@@ -279,7 +289,7 @@ Item {
         x: sats.width / 2 + Math.cos(a) * sats.width / 2 - r
         y: sats.height / 2 + Math.sin(a) * sats.width / 2 - r
         width: r * 2; height: r * 2; radius: r
-        color: "white"
+        color: orb.mark
       }
     }
   }
@@ -304,8 +314,8 @@ Item {
         centerX: orb.size / 2; centerY: orb.size / 2
         focalX: centerX; focalY: centerY
         centerRadius: orb.size / 2
-        GradientStop { position: 0.0;  color: "white" }
-        GradientStop { position: 0.35; color: Qt.rgba(1, 1, 1, 0.9) }
+        GradientStop { position: 0.0;  color: orb.hot }
+        GradientStop { position: 0.35; color: Theme.alpha(orb.hot, 0.9) }
         GradientStop { position: 0.62; color: Theme.alpha(orb.tint, 0.9) }
         GradientStop { position: 1.0;  color: Theme.alpha(orb.tint, 0.0) }
       }
@@ -314,12 +324,26 @@ Item {
   }
 
   // The bright pinhead at the very centre.
+  // Brutal only: the core's edge in ink, so the character keeps a hard
+  // outline on a light desk (the soft falloff alone reads as a smudge there).
+  Rectangle {
+    visible: Theme.brutal
+    anchors.centerIn: parent
+    width: orb.size * 0.72
+    height: width
+    radius: width / 2
+    scale: core.scale
+    color: Theme.transparent
+    border.width: Math.max(1, orb.size / 12)
+    border.color: Theme.onFill
+  }
+
   Rectangle {
     anchors.centerIn: parent
     width: orb.size * 0.3
     height: width
     radius: width / 2
-    color: "white"
+    color: orb.mark
     opacity: orb.mode === "done" ? 0 : 0.95
     Behavior on opacity { NumberAnimation { duration: 200 } }
   }
@@ -329,7 +353,7 @@ Item {
   Text {
     anchors.centerIn: parent
     text: "✓"
-    color: "white"
+    color: orb.mark
     font.pixelSize: orb.size * 0.75
     font.bold: true
     opacity: orb.mode === "done" ? 1 : 0

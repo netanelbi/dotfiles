@@ -120,7 +120,7 @@ PanelWindow {
 
   // Fixed, forever. See the rules above.
   implicitHeight: Style.ori.veilHeight
-  color: "transparent"
+  color: Theme.transparent
 
   Fmt { id: fmt }
 
@@ -430,6 +430,24 @@ PanelWindow {
   // Sized to the block plus padding rather than to a fixed rectangle, so three
   // short lines do not lay a card the height of a paragraph over someone's
   // inbox.
+  // Card and shadow fade as ONE: in brutal the pair is flattened into a layer
+  // that carries the opacity, so the shadow never shows through a half-faded
+  // card. Under catppuccin there is no shadow and no layer, and the opacity
+  // lands on the card exactly as it did when the card carried it itself.
+  Item {
+    anchors.fill: parent
+    opacity: veil.poolT
+    layer.enabled: Theme.hasShadow
+
+  // Brutal: the dropped island casts the bar's hard shadow (nothing otherwise).
+  // Runs from the surface's top edge, not from card.y + shadowY, so there is
+  // no notch between the bar and the shadow's right-hand strip.
+  HardShadow {
+    target: card
+    y: 0
+    height: card.y + card.height + Theme.shadowY
+  }
+
   Rectangle {
     id: card
     readonly property int pad: 12
@@ -443,21 +461,23 @@ PanelWindow {
     // colour, it reads as the bar growing downward, which is the one thing it
     // actually is.
     x: Math.round(veil.blockX - pad)
-    y: 0
+    // Brutal: tuck the top edge under the surface's top so only the sides and
+    // bottom carry the ink border -- the bar above already draws its own.
+    y: Theme.brutal ? -Theme.borderWidth : 0
     width: Style.ori.veilBlockWidth + 2 * pad
-    height: Style.ori.veilBlockY + Math.round(block.height) + pad
+    height: Style.ori.veilBlockY + Math.round(block.height) + pad + (Theme.brutal ? Theme.borderWidth : 0)
     topLeftRadius: 0
     topRightRadius: 0
     bottomLeftRadius: Style.bar.islandRadius
     bottomRightRadius: Style.bar.islandRadius
     color: Theme.base
-    border.width: 1
-    border.color: Theme.alpha(Theme.surface1, 0.9)
-    opacity: veil.poolT
+    border.width: Theme.brutal ? Theme.borderWidth : 1
+    border.color: Theme.brutal ? Theme.borderColor : Theme.alpha(Theme.surface1, 0.9)
 
     Behavior on height {
       NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
     }
+  }
   }
 
   // -------------------------------------------------------------- the tether
