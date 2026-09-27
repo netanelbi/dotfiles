@@ -1,9 +1,9 @@
 ---
 name: semif-local-setup
 summary: SemIf: ~/Development/Personal/semif, uv python 3.13 + llama-cpp-python CPU, 96 tok/s prefill
-pinned: true
+pinned: false
 created: 2026-09-23
-modified: 2026-09-23
+modified: 2026-09-27
 ---
 SemIf (github.com/TheoLeeCJ/SemIf) cloned to ~/Development/Personal/semif, models/Qwen_Qwen3.5-4B-Q4_K_M.gguf (3.01 GB, sha256 13c16f42...).
 
