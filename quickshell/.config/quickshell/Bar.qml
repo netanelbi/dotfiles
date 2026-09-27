@@ -53,9 +53,14 @@ PanelWindow {
     height: parent.height
 
     // Startup: the bar drops in rather than blinking into existence.
-    opacity: 0
-    y: -Style.bar.height
-    Component.onCompleted: introAnimation.start()
+    // The start pose is ASSIGNED, not bound: an animation does not break a
+    // binding, so `y: -Style.bar.height` re-fired on every theme switch that
+    // changed the bar height and parked the islands above the screen.
+    Component.onCompleted: {
+      content.opacity = 0
+      content.y = -Style.bar.height
+      introAnimation.start()
+    }
 
     // A hot reload can race the animation driver on a second output: the
     // intro never ticks and the bar stays at opacity 0 forever -- seen on
