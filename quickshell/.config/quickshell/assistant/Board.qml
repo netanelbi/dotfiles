@@ -17,6 +17,7 @@ import "Md.js" as Md
 //   qs -p ~/.config/quickshell ipc call board move main 900 120
 //   qs -p ~/.config/quickshell ipc call board screen main DP-2
 //   qs -p ~/.config/quickshell ipc call board read main
+//   qs -p ~/.config/quickshell ipc call board fullscreen main
 //   qs -p ~/.config/quickshell ipc call board snapshot main /tmp/snap.png
 //   qs -p ~/.config/quickshell ipc call board close main
 //   qs -p ~/.config/quickshell ipc call board list
@@ -116,6 +117,13 @@ Scope {
       return c ? c.resize(String(w), String(h)) : "error"
     }
 
+    // Fill the screen with a board, or put it back. The header's ⛶ button
+    // calls the same function.
+    function fullscreen(name: string): string {
+      var c = root.get(name)
+      return c ? c.toggleFullscreen() : "error"
+    }
+
     // Put a board on a named monitor.
     function screen(name: string, monitor: string): string {
       var c = root.get(name)
@@ -197,6 +205,14 @@ Scope {
     property real posY: -1
     property string placedOn: ""
 
+    // Full screen: while the card fills the screen these four hold the
+    // geometry to put back when it is toggled off, or when it is resized.
+    property bool maximized: false
+    property real restoreW: 0
+    property real restoreH: 0
+    property real restoreX: 0
+    property real restoreY: 0
+
     function open() { board.opened = true }
 
     function showQml(path: string): string {
@@ -265,11 +281,47 @@ Scope {
       OriClient.ask("[" + board.name + "] " + text)
     }
 
+    // The full-screen toggle behind the header's ⛶ button. Fills the screen
+    // down to the bar strip and remembers the size and place it had, so the
+    // next press lands the card back exactly there.
+    function toggleFullscreen(): string {
+      var s = board.screen
+      if (!s) return "no screen"
+      if (board.maximized) {
+        var rw = board.restoreW, rh = board.restoreH
+        board.maximized = false
+        board.cardWidth = Math.max(240, Math.min(1600, rw))
+        board.cardHeight = Math.max(160, Math.min(2000, rh))
+        board.posX = board.restoreX
+        board.posY = board.restoreY
+        clampPos()
+        return board.name + " back to " + board.cardWidth + "x" + board.cardHeight
+      }
+      board.restoreW = board.cardWidth
+      board.restoreH = board.cardHeight
+      board.restoreX = board.posX
+      board.restoreY = board.posY
+      board.maximized = true
+      var top = Style.bar.marginTop + Style.bar.height
+      board.posX = 0
+      board.posY = top
+      board.cardWidth = Math.max(240, s.width - 24)
+      board.cardHeight = Math.max(160, s.height - top - 24)
+      return board.name + " full screen " + board.cardWidth + "x" + board.cardHeight
+    }
+
     // Clamp so a drag (or a resize) can never park the card over the panel
     // strip or off the screen.
     function clampPos() {
       var s = board.screen
       if (!s) return
+      // A full-screen card is meant to cover the panel strip, so it is the
+      // one case allowed to start at x = 0 -- but still kept on the screen.
+      if (board.maximized) {
+        board.posX = Math.max(0, Math.min(board.posX, Math.max(0, s.width - cardWidth - 12)))
+        board.posY = Math.max(0, Math.min(board.posY, Math.max(0, s.height - cardHeight - 12)))
+        return
+      }
       var minX = panelReserved()
       board.posX = Math.max(minX, Math.min(board.posX, s.width - cardWidth - 12))
       board.posY = Math.max(0, Math.min(board.posY, s.height - cardHeight - 40))
@@ -288,6 +340,8 @@ Scope {
     function resize(w: string, h: string): string {
       var nw = Number(w), nh = Number(h)
       if (isNaN(nw) || isNaN(nh)) return "refused: resize needs two numbers"
+      // An explicit size wins over full screen -- and the ⛶ icon flips back.
+      board.maximized = false
       board.cardWidth = Math.max(240, Math.min(1600, Math.round(nw)))
       board.cardHeight = Math.max(160, Math.min(2000, Math.round(nh)))
       board.clampPos()
@@ -464,7 +518,7 @@ Scope {
         var p = findFreeSpot()
         if (p.x >= 0) { board.posX = p.x; board.posY = p.y }
         board.placedOn = sn
-      } else if (overlapsAny(board.posX, board.posY, cardWidth, cardHeight)) {
+      } else if (!board.maximized && overlapsAny(board.posX, board.posY, cardWidth, cardHeight)) {
         // A placed board that now collides (another board spawned, panel
         // opened) gives way -- being visible beats staying put.
         var p2 = findFreeSpot()
@@ -600,13 +654,37 @@ Scope {
         }
 
         Rectangle {
-          anchors { left: boardTitle.right; right: closeBtn.left; leftMargin: 12; rightMargin: 12
+          anchors { left: boardTitle.right; right: maxBtn.left; leftMargin: 12; rightMargin: 12
                     verticalCenter: parent.verticalCenter }
           height: 1
           gradient: Gradient {
             orientation: Gradient.Horizontal
             GradientStop { position: 0.0; color: Theme.alpha(Theme.sapphire, 0.5) }
             GradientStop { position: 1.0; color: Theme.alpha(Theme.sapphire, 0.0) }
+          }
+        }
+
+        // Full screen, next to the ✕. Remembers where the card was, so the
+        // same button brings it back.
+        Rectangle {
+          id: maxBtn
+          anchors { right: closeBtn.left; rightMargin: 2; verticalCenter: parent.verticalCenter }
+          width: 24; height: 24; radius: 6
+          color: maxArea.containsMouse ? Theme.hoverBackground : Theme.transparent
+          Text {
+            anchors.centerIn: parent
+            text: board.maximized ? "⤡" : "⛶"
+            color: maxArea.containsMouse ? Theme.text : Theme.overlay0
+            font.family: Style.font.panelMono
+            font.pixelSize: Style.font.panelBody - 1
+            renderType: Text.QtRendering
+          }
+          MouseArea {
+            id: maxArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: board.toggleFullscreen()
           }
         }
 
