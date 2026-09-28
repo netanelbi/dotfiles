@@ -358,7 +358,8 @@ hl.layer_rule({
 -- function(base, rule) that restyles borders/rounding/shadow/gaps on top of it.
 -- base = values the theme must be able to restore (gaps_out comes from the
 -- machine fragment, so it is captured here, after require("machine")).
--- rule = hl.window_rule, remembered so the next theme can disable it.
+-- rule = hl.window_rule, layer = hl.layer_rule; both remembered so the next
+-- theme can disable them (Quickshell's namespaces are all "quickshell-*").
 -- theme_apply is global so theme-switch can call it live via `hyprctl eval`.
 -- Everything is pcall-guarded: a missing or broken theme never breaks login.
 THEME_BASE = { gaps_out = hl.get_config("general:gaps_out") }
@@ -375,11 +376,17 @@ function theme_apply(name)
     local fn = assert(loadfile(home .. "/.config/theme/" .. name .. "/hypr.lua"))()
     for _, r in ipairs(THEME_RULES) do pcall(function() r:set_enabled(false) end) end
     THEME_RULES = {}
-    fn(THEME_BASE, function(spec)
-        local r = hl.window_rule(spec)
-        THEME_RULES[#THEME_RULES + 1] = r
-        return r
-    end)
+    local function keep(make)
+        return function(spec)
+            -- Hyprland keys rules by name and a re-used name keeps its old
+            -- effects, so every theme's rules get names of their own.
+            spec.name = "theme-" .. name .. "-" .. (spec.name or #THEME_RULES)
+            local r = make(spec)
+            THEME_RULES[#THEME_RULES + 1] = r
+            return r
+        end
+    end
+    fn(THEME_BASE, keep(hl.window_rule), keep(hl.layer_rule))
     return name
 end
 

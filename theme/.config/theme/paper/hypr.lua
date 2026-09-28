@@ -1,28 +1,26 @@
--- Catppuccin Mocha: Hyprland look. Must equal the defaults in hyprland.lua's
--- hl.config EXACTLY -- this is what `theme-switch catppuccin-mocha` restores live.
--- Every key another theme touches is set here too, or it would leak across;
--- keys hyprland.lua leaves alone are pinned at Hyprland's own defaults.
--- Loaded by theme_apply() in hyprland.lua: base = the machine's own values
--- (gaps_out from machine.lua), rule/layer = hl.window_rule/hl.layer_rule that
--- the next switch undoes.
+-- Paper: Hyprland look. A printed page: 1px ink hairline, square corners, no
+-- shadow, no blur, generous margins. The focused window's rule is full ink,
+-- the rest are pencil grey (the mockup draws every frame in ink, but with no
+-- title bars that would leave focus invisible).
+-- Keys must mirror catppuccin-mocha/hypr.lua (see the note there).
 return function(base, rule, layer)
     hl.config({
         general = {
-            gaps_in     = 5,
-            gaps_out    = base.gaps_out,
-            border_size = 2,
+            gaps_in     = 9,   -- window gap 18 = the mockup's --gap
+            gaps_out    = 24,
+            border_size = 1,
             col = {
-                active_border   = { colors = { "rgba(cba6f7ee)", "rgba(89b4faee)" }, angle = 45 },
-                inactive_border = "rgba(585b70aa)",
+                active_border   = "rgb(1d1b18)",
+                inactive_border = "rgb(a8a296)",
             },
         },
         decoration = {
-            rounding         = 10,
+            rounding         = 0,
             rounding_power   = 2,
             active_opacity   = 1,
             inactive_opacity = 1,
             blur = {
-                enabled           = true,
+                enabled           = false,
                 size              = 6,
                 passes            = 2,
                 noise             = 0.0117,
@@ -33,15 +31,13 @@ return function(base, rule, layer)
                 popups            = false,
             },
             shadow = {
-                enabled        = true,
+                enabled        = false,
                 range          = 20,
                 render_power   = 3,
                 sharp          = false,
                 offset         = "0 0",
                 scale          = 1,
                 color          = "rgba(00000080)",
-                -- Explicit, = color. rgba(ffffffff) is NOT an "unset" sentinel on
-                -- 0.56: it drew a white shadow round every unfocused window.
                 color_inactive = "rgba(00000080)",
             },
             glow = {
@@ -53,5 +49,10 @@ return function(base, rule, layer)
             },
         },
     })
-    -- popup/scratchpad borders: hyprland.lua's own rules already are catppuccin.
+    rule({ name = "popups",
+        match = { class = "^(blueman-manager|impala-popup|bluetui-popup|wiremix-popup)$" },
+        border_color = "rgb(1d1b18) rgb(1d1b18)", rounding = 0, opacity = "1.0 1.0" })
+    -- the scratchpad is marked in the one colour paper allows: ink red
+    rule({ name = "scratchpad", match = { workspace = "special:magic" },
+        border_color = "rgb(b3261e) rgb(b3261e)" })
 end
