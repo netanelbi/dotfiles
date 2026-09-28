@@ -1,0 +1,52 @@
+{
+  "name": "neon-dusk",
+  "label": "Neon Dusk",
+  "dark": true,
+  "brutal": false,
+  "swatch": ["#0d0221", "#261447", "#ff38ac", "#2de2e6", "#f6c945"],
+  "palette": {
+    "base": "#140532", "mantle": "#0d0221", "crust": "#07011a",
+    "text": "#f3e9ff", "subtext0": "#a891d0", "subtext1": "#c9b6ea",
+    "surface0": "#221047", "surface1": "#2f1a5c", "surface2": "#402874", "overlay0": "#8670b4",
+    "blue": "#7f9bff", "lavender": "#b9a4ff", "sapphire": "#5cc8ff", "sky": "#6ff0f2",
+    "teal": "#2de2e6", "green": "#5ef2b0", "yellow": "#f6c945", "peach": "#ff9f5c",
+    "maroon": "#ff7a95", "red": "#ff4f6d", "mauve": "#c08cff", "pink": "#ff38ac",
+    "flamingo": "#ff8fcf", "rosewater": "#ffc2e6"
+  },
+  "fill": {
+    "yellow": "#f6c945", "red": "#ff4f6d", "green": "#2de2e6", "blue": "#7f9bff", "violet": "#ff38ac",
+    "onFill": "#0d0221"
+  },
+  "roles": {
+    "accent": "#ff38ac", "onAccent": "#0d0221", "accent2": "#2de2e6",
+    "focus": "#2de2e6", "selection": "#2de2e62e", "onSelection": "#2de2e6",
+    "ok": "#2de2e6", "okBg": "#2de2e61f", "warn": "#f6c945", "warnBg": "#f6c94524", "err": "#ff4f6d",
+    "hover": "#ff38ac24"
+  },
+  "surface": { "opacity": 0.88, "blur": true },
+  "desk": { "mode": "image", "image": "wallpaper.png", "background": "#0d0221", "grid": "" },
+  "shape": {
+    "radiusScale": 0.5, "radius": 6, "chipRadius": 4, "bubbleRadius": 6,
+    "border": 1, "borderColor": "#ff38ac8c", "borderActive": "#2de2e6", "borderSoft": "#9d70ff47",
+    "shadowX": 0, "shadowY": 0, "shadowColor": "#00000000",
+    "softShadow": null,
+    "glow": { "radius": 22, "color": "#ff38ac59", "activeColor": "#2de2e666" }
+  },
+  "bar": {
+    "mode": "strip", "height": 34, "margin": 8, "radius": 6,
+    "background": "#0d0221cc", "border": "#ff38ac8c", "hairline": "",
+    "workspaces": "pills",
+    "clock": { "bg": "#00000000", "fg": "#2de2e6", "font": "JetBrainsMono Nerd Font", "weight": 600, "italic": false, "size": 13, "letterSpacing": 2, "glow": "#2de2e6" }
+  },
+  "font": {
+    "bar": "JetBrainsMono Nerd Font", "ui": "Chakra Petch", "panel": "Chakra Petch",
+    "panelMono": "JetBrainsMono Nerd Font", "mono": "JetBrainsMono Nerd Font"
+  },
+  "ori": { "question": "accent", "answer": "bubble", "well": "#ff38ac12", "emphasis": "#ff38ac", "inputRadius": 6 },
+  "apps": {
+    "kvantum": "NeonDusk", "kdeColorScheme": "NeonDusk",
+    "qt6ctColors": "~/.config/theme/neon-dusk/qt6ct-colors.conf",
+    "qtFont": "\"Chakra Petch,12,-1,5,500,0,0,0,0,0,0,0,0,0,0,1\"",
+    "gtkTheme": "Adwaita-dark", "gtkPreferDark": "true", "gtkColorScheme": "prefer-dark"
+  }
+}

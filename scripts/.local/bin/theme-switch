@@ -11,6 +11,12 @@ source of truth, plus per-surface fragments this script and the configs read:
                     (at login from the state file, live via `hyprctl eval`)
   kitty.conf        colours; kitty.conf includes ~/.local/state/theme/kitty.conf,
                     a symlink kept here
+  hyprlock.conf     $lock_* variables; hypr/hyprlock.conf sources
+                    ~/.local/state/theme/hyprlock.conf, a symlink kept here
+                    (read at the next lock -- hyprlock is never poked)
+  gtk.css           GTK4/libadwaita colour overrides; gtk-4.0/gtk.css @imports
+                    ~/.local/state/theme/gtk.css, a symlink kept here
+                    (catppuccin's is comment-only, so the link always resolves)
   kdeglobals.ini    the colour groups of ~/.config/kdeglobals, merged in place
   qt6ct-colors.conf qt6ct palette (catppuccin keeps its file in qt/)
   theme.json:apps   Kvantum theme, KDE colour scheme, qt6ct palette + font, GTK
@@ -18,11 +24,11 @@ source of truth, plus per-surface fragments this script and the configs read:
 State: ~/.local/state/theme/current (plain name; absent = catppuccin-mocha).
 Quickshell watches it; the Theme singleton re-reads theme.json by itself.
 
-Files in the repo (kvantum.kvconfig, qt6ct.conf, kdeglobals) are edited line
+Files in the repo (kvantum.kvconfig, qt6ct.conf, kdeglobals, dolphinrc) are edited line
 by line, key by key, so switching back to catppuccin-mocha restores them byte
 for byte. Everything is checked before anything is written; if a step still
 fails, the previous theme is re-applied and the exit status is non-zero.
-Fonts: Space Grotesk ships in the `fonts` stow package (OFL, OFL.txt beside it).
+Fonts: the themes' faces ship in the `fonts` stow package (OFL, OFL.txt beside each).
 """
 import json
 import os
@@ -37,9 +43,14 @@ STATE = os.path.join(HOME, ".local/state/theme")
 CURRENT = os.path.join(STATE, "current")
 DEFAULT = "catppuccin-mocha"
 
+HYPRLOCK = os.path.join(HOME, ".config/hypr/hyprlock.conf")
 KVANTUM = os.path.join(HOME, ".config/Kvantum/kvantum.kvconfig")
 QT6CT = os.path.join(HOME, ".config/qt6ct/qt6ct.conf")
 KDEGLOBALS = os.path.join(HOME, ".config/kdeglobals")
+# Dolphin pins its own colour scheme ([UiSettings] ColorScheme); without the pin it
+# falls back to a built-in light scheme, not kdeglobals (measured). So keep the pin
+# and point it at the theme's scheme (a .colors basename).
+DOLPHINRC = os.path.join(HOME, ".config/dolphinrc")
 # GTK reads these at startup and gtk-application-prefer-dark-theme beats the
 # gsettings colour scheme (measured: GTK3 stayed prefer-dark on a light gsettings).
 GTK3_INI = os.path.join(HOME, ".config/gtk-3.0/settings.ini")
@@ -150,6 +161,36 @@ def parse_ini(text):
     return out
 
 
+def lock_vars(text):
+    """{name: value} of the `$lock_* = value` lines of a hyprlock config."""
+    out = {}
+    for l in text.splitlines():
+        m = re.match(r"\s*\$(lock_\w+)\s*=(.*)$", l)
+        if m:
+            out[m.group(1)] = m.group(2).strip()
+    return out
+
+
+def check_hyprlock(name, path):
+    """A fragment may only redefine variables hyprlock.conf declares: hyprlock
+    ignores a faulty line and locks anyway, so a typo would pass silently."""
+    with open(HYPRLOCK) as f:
+        known = lock_vars(f.read())
+    with open(path) as f:
+        text = f.read()
+    for l in text.splitlines():
+        l = l.strip()
+        if l and not l.startswith("#") and not re.match(r"\$lock_\w+\s*=", l):
+            raise Fail(f"{name}/hyprlock.conf: not a $lock_* assignment: {l!r}")
+    for k, v in lock_vars(text).items():
+        if k not in known:
+            raise Fail(f"{name}/hyprlock.conf: ${k} is not used by {HYPRLOCK}")
+        if k == "lock_bg_path" and v not in ("", "screenshot"):
+            img = os.path.expanduser(v)
+            if not os.path.isfile(img):
+                raise Fail(f"{name}/hyprlock.conf: background {img} missing")
+
+
 def load(name):
     """Validate a theme completely before anything is written."""
     if name not in available():
@@ -163,7 +204,7 @@ def load(name):
     for k in ("kvantum", "kdeColorScheme", "qt6ctColors", "qtFont", "gtkTheme", "gtkPreferDark", "gtkColorScheme"):
         if not apps.get(k):
             raise Fail(f"{name}/theme.json apps.{k} missing")
-    for frag in ("hypr.lua", "kitty.conf", "kdeglobals.ini"):
+    for frag in ("hypr.lua", "kitty.conf", "kdeglobals.ini", "hyprlock.conf", "gtk.css"):
         if not os.path.isfile(os.path.join(d, frag)):
             raise Fail(f"{name}/{frag} missing")
     kv = os.path.join(HOME, ".config/Kvantum", apps["kvantum"], apps["kvantum"] + ".kvconfig")
@@ -177,6 +218,7 @@ def load(name):
         raise Fail(f"KDE colour scheme {cs} missing (stow qt?)")
     with open(os.path.join(d, "kdeglobals.ini")) as f:
         kdg = parse_ini(f.read())
+    check_hyprlock(name, os.path.join(d, "hyprlock.conf"))
     return {"name": name, "dir": d, "json": t, "apps": apps, "qt6ctColors": qc, "kdeglobals": kdg}
 
 
@@ -212,6 +254,11 @@ def step_files(t):
         s = set_key(s, group, k, v)
     atomic_write(KDEGLOBALS, s)
 
+    if os.path.exists(DOLPHINRC):
+        with open(real(DOLPHINRC)) as f:
+            s = f.read()
+        atomic_write(DOLPHINRC, set_key(s, "UiSettings", "ColorScheme", a["kdeColorScheme"]))
+
 
 def step_kitty(t):
     os.makedirs(STATE, exist_ok=True)
@@ -220,8 +267,16 @@ def step_kitty(t):
     run(["pkill", "-USR1", "-x", "kitty"], check=False)
 
 
+def step_lock(t):
+    os.makedirs(STATE, exist_ok=True)
+    atomic_symlink(os.path.join(t["dir"], "hyprlock.conf"), os.path.join(STATE, "hyprlock.conf"))
+
+
 def step_gtk(t):
     a = t["apps"]
+    os.makedirs(STATE, exist_ok=True)
+    # GTK4 apps read it at startup (gtk-4.0/gtk.css imports the link)
+    atomic_symlink(os.path.join(t["dir"], "gtk.css"), os.path.join(STATE, "gtk.css"))
     # key by key, so catppuccin-mocha restores the tracked files byte for byte
     for ini, keys in ((GTK3_INI, {"gtk-application-prefer-dark-theme": a["gtkPreferDark"],
                                   "gtk-theme-name": a["gtkTheme"]}),
@@ -258,7 +313,7 @@ def step_state(t):
 
 def apply(name):
     t = load(name)  # raises before anything is touched
-    for step in (step_files, step_kitty, step_gtk, step_hypr, step_state):
+    for step in (step_files, step_kitty, step_lock, step_gtk, step_hypr, step_state):
         try:
             step(t)
         except Fail:

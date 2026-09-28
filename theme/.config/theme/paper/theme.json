@@ -1,0 +1,51 @@
+{
+  "name": "paper",
+  "label": "Paper",
+  "dark": false,
+  "brutal": false,
+  "swatch": ["#f2efe8", "#fbfaf6", "#1d1b18", "#b3261e", "#d9d4c8"],
+  "palette": {
+    "base": "#fbfaf6", "mantle": "#f3f0e8", "crust": "#f2efe8",
+    "text": "#1d1b18", "subtext0": "#6b665d", "subtext1": "#45413a",
+    "surface0": "#ece8dd", "surface1": "#d9d4c8", "surface2": "#c4beb0", "overlay0": "#8a857b",
+    "blue": "#1f4e8c", "lavender": "#4b4a8c", "sapphire": "#1f5f80", "sky": "#1d6a7a",
+    "teal": "#1f5f5a", "green": "#2f5d3a", "yellow": "#7a5a00", "peach": "#9a4a12",
+    "maroon": "#8c2a2a", "red": "#b3261e", "mauve": "#6b3f8c", "pink": "#9a2f66",
+    "flamingo": "#8c3b3b", "rosewater": "#7a4a3a"
+  },
+  "fill": {
+    "yellow": "#ece8dd", "red": "#b3261e", "green": "#ece8dd", "blue": "#ece8dd", "violet": "#ece8dd",
+    "onFill": "#1d1b18"
+  },
+  "roles": {
+    "accent": "#1d1b18", "onAccent": "#fbfaf6", "accent2": "#b3261e",
+    "focus": "#1d1b18", "selection": "#1d1b18", "onSelection": "#fbfaf6",
+    "ok": "#2f5d3a", "okBg": "#00000000", "warn": "#b3261e", "warnBg": "#00000000", "err": "#b3261e",
+    "hover": "#ece8dd"
+  },
+  "surface": { "opacity": 1.0, "blur": false },
+  "desk": { "mode": "image", "image": "wallpaper.png", "background": "#f2efe8", "grid": "" },
+  "shape": {
+    "radiusScale": 0.0, "radius": 0, "chipRadius": 0, "bubbleRadius": 0,
+    "border": 1, "borderColor": "#1d1b18", "borderActive": "#1d1b18", "borderSoft": "#d9d4c8",
+    "shadowX": 0, "shadowY": 0, "shadowColor": "#00000000",
+    "softShadow": null, "glow": null
+  },
+  "bar": {
+    "mode": "flat", "height": 32, "margin": 0, "radius": 0,
+    "background": "#fbfaf6", "border": "", "hairline": "#1d1b18",
+    "workspaces": "underline",
+    "clock": { "bg": "#00000000", "fg": "#1d1b18", "font": "Newsreader", "weight": 400, "italic": true, "size": 16, "letterSpacing": 0.5, "glow": "" }
+  },
+  "font": {
+    "bar": "IBM Plex Mono", "ui": "Newsreader", "panel": "Newsreader",
+    "panelMono": "IBM Plex Mono", "mono": "IBM Plex Mono"
+  },
+  "ori": { "question": "underline", "answer": "rule", "well": "#f3f0e8", "emphasis": "#b3261e", "inputRadius": 0 },
+  "apps": {
+    "kvantum": "Paper", "kdeColorScheme": "Paper",
+    "qt6ctColors": "~/.config/theme/paper/qt6ct-colors.conf",
+    "qtFont": "\"Newsreader,12,-1,5,400,0,0,0,0,0,0,0,0,0,0,1\"",
+    "gtkTheme": "Adwaita", "gtkPreferDark": "false", "gtkColorScheme": "prefer-light"
+  }
+}

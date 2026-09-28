@@ -1,0 +1,51 @@
+{
+  "name": "void",
+  "label": "Void",
+  "dark": true,
+  "brutal": false,
+  "swatch": ["#0e0e10", "#141417", "#e6e6e6", "#ff7a59", "#6b6b73"],
+  "palette": {
+    "base": "#141417", "mantle": "#0e0e10", "crust": "#0a0a0b",
+    "text": "#e6e6e6", "subtext0": "#8e8e97", "subtext1": "#b4b4bc",
+    "surface0": "#1a1a1e", "surface1": "#222227", "surface2": "#2a2a30", "overlay0": "#6b6b73",
+    "blue": "#8ab4f8", "lavender": "#b4b4f0", "sapphire": "#7cc4e8", "sky": "#8fd8e8",
+    "teal": "#7fd6c4", "green": "#8fd694", "yellow": "#e8c77a", "peach": "#ffa07a",
+    "maroon": "#ff9a8a", "red": "#ff7a59", "mauve": "#c3a6ff", "pink": "#f0a0c8",
+    "flamingo": "#f0b4b4", "rosewater": "#f0d0c8"
+  },
+  "fill": {
+    "yellow": "#e8c77a", "red": "#ff7a59", "green": "#8fd694", "blue": "#8ab4f8", "violet": "#c3a6ff",
+    "onFill": "#0e0e10"
+  },
+  "roles": {
+    "accent": "#e6e6e6", "onAccent": "#0e0e10", "accent2": "#ff7a59",
+    "focus": "#ff7a59", "selection": "#e6e6e6", "onSelection": "#0e0e10",
+    "ok": "#8fd694", "okBg": "#00000000", "warn": "#ff7a59", "warnBg": "#00000000", "err": "#ff7a59",
+    "hover": "#1f1f24"
+  },
+  "surface": { "opacity": 1.0, "blur": false },
+  "desk": { "mode": "flat", "image": "", "background": "#0e0e10", "grid": "" },
+  "shape": {
+    "radiusScale": 0.8, "radius": 10, "chipRadius": 6, "bubbleRadius": 10,
+    "border": 0, "borderColor": "#00000000", "borderActive": "#00000000", "borderSoft": "#222227",
+    "shadowX": 0, "shadowY": 0, "shadowColor": "#00000000",
+    "softShadow": null, "glow": null
+  },
+  "bar": {
+    "mode": "bare", "height": 30, "margin": 0, "radius": 0,
+    "background": "#00000000", "border": "", "hairline": "",
+    "workspaces": "dots",
+    "clock": { "bg": "#00000000", "fg": "#e6e6e6", "font": "JetBrainsMono Nerd Font", "weight": 600, "italic": false, "size": 13, "letterSpacing": 0, "glow": "" }
+  },
+  "font": {
+    "bar": "JetBrainsMono Nerd Font", "ui": "Inter", "panel": "Inter",
+    "panelMono": "JetBrainsMono Nerd Font", "mono": "JetBrainsMono Nerd Font"
+  },
+  "ori": { "question": "well", "answer": "plain", "well": "#1a1a1e", "emphasis": "#ff7a59", "inputRadius": 10 },
+  "apps": {
+    "kvantum": "Void", "kdeColorScheme": "Void",
+    "qt6ctColors": "~/.config/theme/void/qt6ct-colors.conf",
+    "qtFont": "\"Inter,11,-1,5,400,0,0,0,0,0,0,0,0,0,0,1\"",
+    "gtkTheme": "Adwaita-dark", "gtkPreferDark": "true", "gtkColorScheme": "prefer-dark"
+  }
+}

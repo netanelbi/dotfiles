@@ -1,0 +1,53 @@
+{
+  "name": "tonal",
+  "label": "Tonal",
+  "dark": false,
+  "brutal": false,
+  "swatch": ["#dfe7da", "#f6faf1", "#3e6a37", "#bfe0b4", "#b7497a"],
+  "palette": {
+    "base": "#f6faf1", "mantle": "#eef6e8", "crust": "#dfe7da",
+    "text": "#1a1d18", "subtext0": "#56614f", "subtext1": "#3c4538",
+    "surface0": "#e6eee0", "surface1": "#dbe6d4", "surface2": "#c9d4c2", "overlay0": "#75806f",
+    "blue": "#2f5f8a", "lavender": "#55588f", "sapphire": "#1f6480", "sky": "#1d6878",
+    "teal": "#1f6a60", "green": "#2c6a2a", "yellow": "#6f5200", "peach": "#8f4a14",
+    "maroon": "#8c2f3a", "red": "#ba1a1a", "mauve": "#6b4f8a", "pink": "#a33d6c",
+    "flamingo": "#8c3b4a", "rosewater": "#7a4a42"
+  },
+  "fill": {
+    "yellow": "#ffe08f", "red": "#ffdad6", "green": "#bfe0b4", "blue": "#cfe5ff", "violet": "#e3d9f0",
+    "onFill": "#0d2a0b"
+  },
+  "roles": {
+    "accent": "#3e6a37", "onAccent": "#ffffff", "accent2": "#b7497a",
+    "focus": "#3e6a37", "selection": "#bfe0b4", "onSelection": "#0d2a0b",
+    "container": "#bfe0b4", "onContainer": "#0d2a0b",
+    "ok": "#2c6a2a", "okBg": "#cdebc4", "warn": "#7a5900", "warnBg": "#ffe08f", "err": "#ba1a1a",
+    "hover": "#dbe6d4"
+  },
+  "surface": { "opacity": 1.0, "blur": false },
+  "desk": { "mode": "image", "image": "wallpaper.png", "background": "#dfe7da", "grid": "" },
+  "shape": {
+    "radiusScale": 1.8, "radius": 26, "chipRadius": 12, "bubbleRadius": 20,
+    "border": 0, "borderColor": "#00000000", "borderActive": "#00000000", "borderSoft": "#00000000",
+    "shadowX": 0, "shadowY": 0, "shadowColor": "#00000000",
+    "softShadow": { "y": 2, "blur": 10, "color": "#00000024" },
+    "glow": null
+  },
+  "bar": {
+    "mode": "islands", "height": 36, "margin": 8, "radius": 999,
+    "background": "#f6faf1", "border": "", "hairline": "",
+    "workspaces": "pills",
+    "clock": { "bg": "#bfe0b4", "fg": "#0d2a0b", "font": "JetBrainsMono Nerd Font", "weight": 600, "italic": false, "size": 13, "letterSpacing": 0, "glow": "" }
+  },
+  "font": {
+    "bar": "JetBrainsMono Nerd Font", "ui": "Figtree", "panel": "Figtree",
+    "panelMono": "JetBrainsMono Nerd Font", "mono": "JetBrainsMono Nerd Font"
+  },
+  "ori": { "question": "accent", "answer": "bubble", "well": "#e6eee0", "emphasis": "#3e6a37", "inputRadius": 999 },
+  "apps": {
+    "kvantum": "Tonal", "kdeColorScheme": "Tonal",
+    "qt6ctColors": "~/.config/theme/tonal/qt6ct-colors.conf",
+    "qtFont": "\"Figtree,12,-1,5,400,0,0,0,0,0,0,0,0,0,0,1\"",
+    "gtkTheme": "Adwaita", "gtkPreferDark": "false", "gtkColorScheme": "prefer-light"
+  }
+}
