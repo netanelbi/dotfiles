@@ -1,0 +1,18 @@
+#!/bin/bash
+# lock-session-cmd — hypridle's lock_cmd. Closes the screensaver, waits until its
+# surfaces are really gone, THEN starts hyprlock.
+#
+# hyprlock's background is `path = screenshot`: a blurred capture of the screen
+# at the moment it locks. Starting it while the screensaver was still mapped
+# froze the screensaver art into the lock background. `ipc call screensaver stop`
+# returns before the layer surfaces unmap, so wait for Hyprland to stop listing
+# the "quickshell-screensaver" layer, then give it one more frame.
+if ! pidof hyprlock >/dev/null; then
+    qs -p ~/.config/quickshell ipc call screensaver stop >/dev/null 2>&1
+    for _ in $(seq 30); do
+        hyprctl layers -j | grep -q '"quickshell-screensaver"' || break
+        sleep 0.05
+    done
+    sleep 0.1
+    exec hyprlock
+fi

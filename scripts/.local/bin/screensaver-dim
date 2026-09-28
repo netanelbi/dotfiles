@@ -1,0 +1,35 @@
+#!/bin/bash
+# screensaver-dim on|off — dim the panel while the screensaver runs, and put it
+# back EXACTLY as it was. Called by quickshell's Screensaver on open and close.
+#
+#   on   only if the panel is brighter than TARGET_PCT of max: remember the level,
+#        then drop to the target. Already dimmed (state file present) -> no-op,
+#        so a second `on` can never overwrite the remembered level.
+#   off  restore the remembered level, but only if the panel still sits where
+#        `on` left it -- if you changed it meanwhile, your change wins.
+#
+# The state is this script's own file, not brightnessctl's single --save slot
+# (hypridle, the lid script and desk-blank all shared that slot, and a save taken
+# while dark restored 0). It lives in $XDG_RUNTIME_DIR, so it survives a
+# quickshell restart mid-screensaver and is gone after a reboot.
+set -u
+TARGET_PCT=40
+STATE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/screensaver-dim"
+
+case "${1:-}" in
+    on)
+        [ -f "$STATE" ] && exit 0
+        cur=$(brightnessctl get) max=$(brightnessctl max)
+        target=$(( max * TARGET_PCT / 100 ))
+        [ "$cur" -gt "$target" ] || exit 0
+        printf '%s %s\n' "$cur" "$target" > "$STATE"
+        brightnessctl -q set "$target"
+        ;;
+    off)
+        [ -f "$STATE" ] || exit 0
+        read -r saved target < "$STATE"
+        [ "$(brightnessctl get)" = "$target" ] && brightnessctl -q set "$saved"
+        rm -f "$STATE"
+        ;;
+    *) echo "usage: screensaver-dim on|off" >&2; exit 2 ;;
+esac

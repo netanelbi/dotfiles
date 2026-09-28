@@ -16,9 +16,10 @@ Scope {
   property bool active: false
 
   // Dim the real backlight while it runs; the art at full panel brightness is
-  // too much in a dark room. Restored on every close, key or lock alike.
+  // too much in a dark room. Restored exactly on every close, key or lock alike
+  // -- screensaver-dim keeps its own state, see the script.
   onActiveChanged: Quickshell.execDetached(
-    [Quickshell.env("HOME") + "/.local/bin/backlight-blank", root.active ? "dim" : "off"])
+    [Quickshell.env("HOME") + "/.local/bin/screensaver-dim", root.active ? "on" : "off"])
 
   function start() {
     if (root.active) return
