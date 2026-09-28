@@ -1,0 +1,5 @@
+#!/bin/sh
+# Build pad-hotkey into the scripts stow package (gitignored), then `stow -R scripts`.
+set -e
+here=$(dirname "$(readlink -f "$0")")
+cc -O2 -Wall -Wextra -o "$here/../../bin/pad-hotkey" "$here/pad-hotkey.c"

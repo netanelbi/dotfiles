@@ -188,6 +188,13 @@ Located in `scripts/.local/bin/`:
   `SUPER + O` (`toggle`), `hypr-lid-switch` and sunshine-prep/unprep
 - `screensaver-dim` - `on|off`. The screensaver's backlight dim to 40%, restored exactly
 
+**Gamepad** (shared)
+- `pad-hotkey` - Guide + R3 toggles MangoHud by pressing its `toggle_hud` combo (Shift_R+F12)
+  on a virtual uinput keyboard.
+  C source + `build` in `scripts/.local/src/pad-hotkey/` (binary gitignored, run `build` then
+  `stow -R scripts`); udev rule `system/etc/udev/rules.d/70-pad-hotkey.rules` starts one
+  `pad-hotkey@eventN` user unit per pad, stopped when it disconnects
+
 **Power / thermal** (shared)
 - `power-profile-cycle` - Cycle power profiles (mapped to `SUPER + B`); calls the
   optional `power-profile-tdp-hook` for per-profile TDP + freq-cap fix (vivo only)

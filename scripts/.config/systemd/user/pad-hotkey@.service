@@ -1,0 +1,8 @@
+[Unit]
+Description=Gamepad hotkeys on %I (Guide + R3 toggles MangoHud)
+# Started by udev (system/etc/udev/rules.d/70-pad-hotkey.rules); stops with the pad.
+BindsTo=dev-input-%i.device
+After=dev-input-%i.device
+
+[Service]
+ExecStart=%h/.local/bin/pad-hotkey /dev/input/%I
