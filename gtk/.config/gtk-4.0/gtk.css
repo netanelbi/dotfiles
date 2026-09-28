@@ -1,0 +1,3 @@
+@import 'colors.css';
+/* The desktop theme's GTK4 overrides: a symlink theme-switch keeps. */
+@import url("file:///home/netanel/.local/state/theme/gtk.css");
