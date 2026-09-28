@@ -17,7 +17,7 @@ Item {
   id: turnItem
 
   required property int index
-  property color accent: Theme.sapphire
+  property color accent: OriLook.busy
 
   // The list is BottomToTop, so index 0 is the NEWEST row.
   readonly property int row: OriClient.turns.count - 1 - index
@@ -355,15 +355,26 @@ Item {
                     Math.max(said.implicitWidth, shots.implicitWidth) + 24)
     x: turnItem.width - width - 12
     height: asked.implicitHeight + 16
-    radius: Theme.r(10)
+    radius: OriLook.bubbleRadius
     // The one blunted corner points back at the composer the message came
     // from, the way the notification cards enter from the edge they arrived on.
-    bottomRightRadius: Theme.r(3)
+    // v2 themes draw the prototype's even bubble.
+    bottomRightRadius: OriLook.v2 ? OriLook.bubbleRadius : Theme.r(3)
     // Brutal: the terminal's prompt row -- a pale violet band with a violet
-    // rule on its left edge (below), no outline.
-    color: Theme.brutal ? Theme.alpha(Theme.fillViolet, 0.35) : Theme.alpha(Theme.sapphire, 0.10)
-    border.width: Theme.brutal ? 0 : 1
+    // rule on its left edge (below), no outline. v2: an accent or well
+    // bubble with no edge, or (paper) no fill and an ink underline.
+    color: Theme.brutal ? Theme.alpha(Theme.fillViolet, 0.35)
+      : OriLook.v2 ? OriLook.questionFill : Theme.alpha(Theme.sapphire, 0.10)
+    border.width: Theme.brutal || OriLook.v2 ? 0 : 1
     border.color: Theme.alpha(Theme.sapphire, 0.22)
+
+    // Paper: the question is underlined in ink rather than filled.
+    Rectangle {
+      visible: OriLook.questionUnderlined
+      anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+      height: 1
+      color: Theme.text
+    }
 
     Rectangle {
       visible: Theme.brutal
@@ -387,7 +398,8 @@ Item {
       width: 2
       radius: Theme.r(1)
       color: turnItem.landed ? Theme.surface2 : turnItem.accent
-      opacity: turnItem.landed ? 1 : turnItem.breath
+      // v2 bubbles carry no settled rail: only the breath while it waits.
+      opacity: turnItem.landed ? (OriLook.v2 ? 0 : 1) : turnItem.breath
 
       Behavior on color {
         ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
@@ -402,7 +414,7 @@ Item {
 
       Text {
         text: "YOU"
-        color: Theme.sapphire
+        color: OriLook.v2 ? OriLook.questionLabel : Theme.sapphire
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta - 2
         font.letterSpacing: 3
@@ -416,7 +428,9 @@ Item {
         // still pay for a line of height.
         visible: text !== ""
         text: turnItem.turn ? turnItem.turn.text : ""
-        color: Theme.text
+        color: OriLook.v2 ? OriLook.questionText : Theme.text
+        // Paper sets the question in italic, like a pull quote.
+        font.italic: OriLook.questionUnderlined
         readOnly: true
         activeFocusOnPress: false
         wrapMode: TextEdit.Wrap
@@ -425,8 +439,10 @@ Item {
         // used to be a Text and the one thing on the card you could not copy.
         selectByMouse: false
         persistentSelection: true
-        selectionColor: Theme.sapphire
-        selectedTextColor: Theme.base
+        // On an accent bubble the theme's selection can be the bubble's own
+        // colour (glass: white on white), so it inverts the bubble instead.
+        selectionColor: OriLook.question === "accent" ? Theme.accentInk : OriLook.selection
+        selectedTextColor: OriLook.question === "accent" ? Theme.accent : OriLook.selectionInk
         textFormat: TextEdit.RichText
         font.family: Style.font.panelFamily
         font.pixelSize: Style.font.panelBody
@@ -519,7 +535,23 @@ Item {
     id: answer
     visible: !turnItem.user
     width: turnItem.width
-    height: col.implicitHeight + 6
+    height: col.implicitHeight + 6 + 2 * padV
+
+    // v2 bubble themes (glass, tonal, neon) set the answer in a well-coloured
+    // bubble instead of on the spine; these are its insets.
+    readonly property int padH: OriLook.answerBubble ? 12 : 0
+    readonly property int padV: OriLook.answerBubble ? 8 : 0
+
+    Rectangle {
+      anchors.fill: parent
+      visible: OriLook.answerBubble
+      radius: OriLook.bubbleRadius
+      color: OriLook.well
+      // The spine's breath moves to the bubble's edge while it is written.
+      border.width: turnItem.pending ? 1 : OriLook.wellBorderWidth
+      border.color: turnItem.pending ? Theme.alpha(turnItem.accent, 0.35 + 0.5 * turnItem.breath)
+                                     : OriLook.wellBorder
+    }
 
     // The spine. Solid once the turn is done, breathing while it is written --
     // the same breath as the header mark and the bar dot, so everything alive on
@@ -532,8 +564,11 @@ Item {
       width: 2
       height: parent.height - 4
       radius: Theme.r(1)
-      color: turnItem.pending ? turnItem.accent : Theme.surface1
-      opacity: turnItem.pending ? turnItem.breath : 1
+      // Paper settles it into its ink-red rule; void keeps it only while the
+      // answer is written; a bubble answer has none.
+      visible: !OriLook.answerBubble
+      color: turnItem.pending ? turnItem.accent : OriLook.spineSettled
+      opacity: turnItem.pending ? turnItem.breath : OriLook.spineAtRest ? 1 : 0
 
       Behavior on color {
         ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
@@ -542,8 +577,9 @@ Item {
 
     Column {
       id: col
-      x: 14
-      width: parent.width - 14
+      x: OriLook.answerBubble ? answer.padH : 14
+      y: answer.padV
+      width: parent.width - x - answer.padH
       spacing: 6
 
       Text {
@@ -690,11 +726,13 @@ Item {
             Rectangle {
               anchors.fill: parent
               visible: piece.code
-              radius: Theme.r(6)
+              radius: OriLook.v2 ? Theme.chipRadiusOr(6) : Theme.r(6)
               // Brutal: a bordered cream box, like the terminal's tool blocks.
-              color: Theme.brutal ? Theme.mantle : Theme.alpha(Theme.surface0, 0.55)
-              border.width: Theme.brutal ? Theme.borderWidth - 1 : 0
-              border.color: Theme.borderColor
+              // v2: the theme's well, in its soft hairline.
+              color: Theme.brutal ? Theme.mantle : OriLook.v2 ? OriLook.codeFill
+                : Theme.alpha(Theme.surface0, 0.55)
+              border.width: Theme.brutal ? Theme.borderWidth - 1 : OriLook.v2 ? OriLook.wellBorderWidth : 0
+              border.color: Theme.brutal ? Theme.borderColor : OriLook.wellBorder
             }
 
             // The same box behind a tool batch, brutal only. The batch pads
@@ -756,8 +794,8 @@ Item {
               // with no special case.
               selectByMouse: false
               persistentSelection: true
-              selectionColor: Theme.sapphire
-              selectedTextColor: Theme.base
+              selectionColor: OriLook.selection
+              selectedTextColor: OriLook.selectionInk
               font.family: piece.code ? Style.font.panelMono : Style.font.panelFamily
               font.pixelSize: piece.code ? Style.font.panelMeta
                 : piece.head ? Style.font.panelHead : Style.font.panelBody
@@ -802,8 +840,8 @@ Item {
               // below owns the mouse, Selection sets the range.
               selectByMouse: false
               persistentSelection: true
-              selectionColor: Theme.sapphire
-              selectedTextColor: Theme.base
+              selectionColor: OriLook.selection
+              selectedTextColor: OriLook.selectionInk
               font.family: Style.font.panelFamily
               font.pixelSize: Style.font.panelAside
               renderType: Text.QtRendering

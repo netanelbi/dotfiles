@@ -119,6 +119,9 @@ Item {
 
   // ----------------------------------------------------------------- card
   HardShadow { target: card }
+  // v2: the soft shadow (glass, tonal) or the active glow (neon).
+  // Popups glow with the active colour; control-center rows (showTime) do not.
+  SoftShadow { target: card; active: !root.showTime }
 
   Rectangle {
     id: card
@@ -130,14 +133,18 @@ Item {
     width: root.cardWidth
     implicitHeight: content.implicitHeight + actions.implicitHeight
 
-    radius: Theme.r(12)                               // .notification border-radius
-    color: Theme.base                        // .notification background
+    radius: Theme.radiusOr(12)                        // .notification border-radius
+    // .notification background. v2 control-center rows sit on the panel's
+    // own surface, so they take the inner fill to stay distinct (void/tonal
+    // have no outline to separate them).
+    color: Theme.v2 && root.showTime ? Theme.surfaceInner : Theme.surfaceOr(Theme.base)
     // Brutal: the outline is drawn by `frame` below, ON TOP of the hover tint.
-    border.width: Theme.brutal ? 0 : 2
-    border.color: root.notif
-      ? (root.notif.urgency === NotificationUrgency.Critical ? Theme.red
-        : root.notif.urgency === NotificationUrgency.Low ? Theme.green
-        : Theme.mauve)
+    // v2: the theme's ACTIVE hairline (the prototype's toast), none on tonal
+    // and void; a critical one still turns red.
+    border.width: Theme.brutal ? 0 : Theme.panelBorderOr(2)
+    border.color: root.notif && root.notif.urgency === NotificationUrgency.Critical ? Theme.err
+      : Theme.v2 ? Theme.outlineActive
+      : root.notif && root.notif.urgency === NotificationUrgency.Low ? Theme.green
       : Theme.mauve
 
     opacity: root.shown ? 1 : 0
@@ -174,7 +181,7 @@ Item {
       id: content
       width: parent.width
       implicitHeight: contentRow.implicitHeight + 2 * 16
-      color: defaultArea.containsMouse || root.selected ? Theme.hoverBackground : Theme.transparent
+      color: defaultArea.containsMouse || root.selected ? (Theme.v2 ? Theme.hover : Theme.hoverBackground) : Theme.transparent
       topLeftRadius: Math.max(0, card.radius - 2)
       topRightRadius: Math.max(0, card.radius - 2)
       bottomLeftRadius: actions.visible ? 0 : Math.max(0, card.radius - 2)
@@ -217,7 +224,7 @@ Item {
 
           ClippingRectangle {
             anchors.fill: parent
-            radius: Theme.r(8)                // .image border-radius
+            radius: Theme.chipRadiusOr(8)     // .image border-radius
             color: Theme.transparent
 
             Image {
@@ -326,7 +333,7 @@ Item {
         height: closeGlyph.implicitHeight + 4
         radius: Theme.r(6)                                      // .close-button radius
         opacity: defaultArea.containsMouse || closeArea.containsMouse || actionsHover.hovered ? 1 : 0
-        color: closeArea.containsMouse ? (Theme.brutal ? Theme.fillRed : Theme.red) : Theme.surface0
+        color: closeArea.containsMouse ? (Theme.brutal ? Theme.fillRed : Theme.err) : Theme.v2 ? Theme.surfaceInner : Theme.surface0
         border.width: Theme.chipBorder
         border.color: Theme.borderColor
 
@@ -376,7 +383,7 @@ Item {
         height: ignoreGlyph.implicitHeight + 4
         radius: Theme.r(6)
         opacity: defaultArea.containsMouse || closeArea.containsMouse || actionsHover.hovered ? 1 : 0
-        color: ignoreArea.containsMouse ? (Theme.brutal ? Theme.fillYellow : Theme.attention) : Theme.surface0
+        color: ignoreArea.containsMouse ? (Theme.brutal ? Theme.fillYellow : Theme.attention) : Theme.v2 ? Theme.surfaceInner : Theme.surface0
         border.width: Theme.chipBorder
         border.color: Theme.borderColor
 
@@ -480,7 +487,7 @@ Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 1
-                    color: Theme.surface0
+                    color: Theme.softBorderOr(Theme.surface0)
                   }
 
                   // The packaged GTK button inside the action row: it lands on
@@ -493,10 +500,13 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: actions.cellWidth - 2 * actions.cellPad
                     height: 34
-                    radius: Theme.r(12)
+                    radius: Theme.v2 ? (Theme.barRound ? height / 2 : Theme.chipRadiusOr(12)) : Theme.r(12)
                     // Brutal: an outlined chip that fills yellow under the pointer.
+                    // v2: the prototype's `.toast button`, a filled accent chip.
                     color: Theme.brutal ? (actionArea.containsMouse ? Theme.fillYellow : Theme.mantle)
-                                        : (actionArea.containsMouse ? Theme.surface1 : Theme.surface0)
+                         : Theme.v2 ? root.actionFill
+                         : (actionArea.containsMouse ? Theme.surface1 : Theme.surface0)
+                    opacity: Theme.v2 && actionArea.containsMouse && !actionArea.pressed ? 0.85 : 1
                     border.width: Theme.chipBorder
                     border.color: Theme.borderColor
 
@@ -509,11 +519,12 @@ Item {
                       width: parent.width - 24
                       text: actionCell.modelData.text
                       color: Theme.brutal ? (actionArea.containsMouse ? Theme.onFill : Theme.text)
+                        : Theme.v2 ? root.actionInk
                         : actionArea.pressed ? Theme.lavender
                         : actionArea.containsMouse ? Theme.mauve : Theme.text
                       horizontalAlignment: Text.AlignHCenter
                       elide: Text.ElideRight
-                      font.family: Style.font.family
+                      font.family: Theme.v2 ? Style.font.ui : Style.font.family
                       font.pixelSize: Style.font.size
                       font.weight: Style.font.boldWeight
                       renderType: Text.NativeRendering
@@ -541,6 +552,18 @@ Item {
   }
 
   // -------------------------------------------------------------- helpers
+  // The v2 action chip (the prototype's `.toast button`): tonal's container
+  // pair; the accent pair; or, where the accent is just the ink (paper, void),
+  // the theme's second voice.
+  readonly property bool accentIsInk: Qt.colorEqual(Theme.accent, Theme.text)
+  readonly property color actionFill: Theme.roles.container !== undefined ? Theme.container
+                                    : accentIsInk ? Theme.accent2 : Theme.accent
+  // Read straight from the roles: Theme.accentInk/onContainer evaluate to
+  // black in the live shell (2026-09-27; their fallbacks are properties).
+  readonly property color actionInk: Theme.roles.container !== undefined
+                                   ? Theme.css(Theme.roles.onContainer, Theme.text)
+                                   : Theme.css(Theme.roles.onAccent, Theme.base)
+
   // The buttons swaync paints: every action except "default" (that one is the
   // click-the-body action), plus the synthetic 2FA copy action the store
   // appends when it finds a code in the body. Index -1 marks the copy action.

@@ -37,12 +37,21 @@ BarWidget {
   horizontalPadding: 0
   // `margin: 0 2px` on each button: 4px between pills, 2px at each end.
   sideMargin: Style.module.workspaceSpacing / 2
+  // BarWidget clips for its collapse animation, which this widget never does;
+  // the neon active pill's glow has to reach past the pill.
+  clip: !Theme.hasGlow
 
   // A workspace button is taller than the default indicator slot -- it carries
   // 4px of padding plus a 2px outline, and in waybar it very nearly fills the
   // island.
   readonly property int pillHeight: Style.bar.pillHeight
   implicitHeight: pillHeight
+
+  // Theme.workspaceStyle: pills (catppuccin outlines the active one, v2 fills
+  // it), underline (paper), dots (void: numbers hidden).
+  readonly property bool filled: Theme.workspaceFilled
+  readonly property bool underline: Theme.workspaceStyle === "underline"
+  readonly property bool dots: Theme.workspaceStyle === "dots"
 
   // ------------------------------------------------------------ hyprland
   // The monitor this bar is on, so we show the same workspaces waybar does.
@@ -143,7 +152,8 @@ BarWidget {
 
     Row {
       id: pills
-      spacing: Style.module.workspaceSpacing
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: root.dots ? 6 : Style.module.workspaceSpacing
 
       // Hyprland DESTROYS a workspace the moment it empties, so this Row gains
       // and loses children constantly during ordinary switching -- not just on
@@ -165,7 +175,7 @@ BarWidget {
         onItemAdded: root.scheduleRelayout()
         onItemRemoved: root.scheduleRelayout()
 
-        delegate: Rectangle {
+        delegate: Item {
           id: pill
           required property int modelData
 
@@ -184,53 +194,97 @@ BarWidget {
           readonly property bool isHovered: hover.containsMouse
 
           // `padding: 4px 8px`, with a floor so single digits stay square-ish.
-          implicitWidth: Math.max(label.implicitWidth + 2 * Style.module.workspacePaddingH, root.pillHeight)
+          // dots (void): an 8px dot, the active one a 22px bar.
+          implicitWidth: root.dots ? (isActive ? 22 : 8)
+                                   : Math.max(label.implicitWidth + 2 * Style.module.workspacePaddingH, root.pillHeight)
           width: implicitWidth
           height: root.pillHeight
-          radius: Style.module.radius
-
-          // Brutal: the active workspace is a yellow chip with an ink outline,
-          // an urgent one a red chip (the mockup's `.ws .on`).
-          color: isUrgent ? (Theme.brutal ? Theme.fillRed : Theme.urgent)
-                          : (Theme.brutal && isActive ? Theme.fillYellow
-                             : (isHovered ? Theme.hoverBackground : Theme.transparent))
-
-          // Each pill owns its outline and simply CROSS-FADES it in and out,
-          // which is waybar's own model (`#workspaces button.active` has the
-          // border) with a fade where waybar snaps. The previous single
-          // Rectangle that slid between pills read as too busy: on a switch it
-          // travelled the whole row, and Hyprland destroying emptied
-          // workspaces meant the row moved underneath it at the same time.
-          border.width: Theme.brutal ? Theme.chipBorder : Style.module.borderWidth
-          border.color: Theme.brutal ? ((isActive || isUrgent) ? Theme.borderColor : Theme.transparent)
-                                     : ((isActive && !isUrgent) ? Theme.accent : Theme.transparent)
-
-          Behavior on border.color {
-            ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
-          }
 
           scale: hover.pressed ? 0.9 : 1
-
-          Behavior on color { ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth } }
           Behavior on scale { NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing } }
           // No Behavior on implicitWidth: a pill's width only changes when its
           // label does (1 -> 10), and animating it made the whole group breathe
           // sideways on every workspace switch. Width snaps; position glides.
 
+          // neon: the active pill glows in the accent.
+          SoftShadow {
+            target: face
+            shown: pill.isActive && root.filled && Theme.hasGlow
+            glowColor: Theme.alpha(Theme.accent, 0.8)
+            blur: 10
+          }
+
+          Rectangle {
+            id: face
+            anchors.centerIn: parent
+            width: parent.width
+            height: root.dots ? 8 : parent.height
+            radius: root.dots ? 4
+                  : Theme.barRound ? height / 2
+                  : (Theme.v2 && Theme.chipRadius >= 0 ? Theme.chipRadius : Style.module.radius)
+
+            // Brutal: the active workspace is a yellow chip with an ink outline,
+            // an urgent one a red chip (the mockup's `.ws .on`). v2 pills: the
+            // active one is filled with the accent. dots: grey, lighter on
+            // hover, the active one accent2 (void's coral).
+            color: root.dots
+                   ? (pill.isUrgent ? Theme.urgent
+                      : pill.isActive ? Theme.accent2
+                      : (pill.isHovered ? Theme.subtext0 : Theme.inactive))
+                 : pill.isUrgent ? (Theme.brutal ? Theme.fillRed : Theme.urgent)
+                 : (Theme.brutal && pill.isActive ? Theme.fillYellow
+                    : (root.filled && pill.isActive ? Theme.accent
+                       : (pill.isHovered ? (Theme.v2 ? Theme.hover : Theme.hoverBackground) : Theme.transparent)))
+
+            // Each pill owns its outline and simply CROSS-FADES it in and out,
+            // which is waybar's own model (`#workspaces button.active` has the
+            // border) with a fade where waybar snaps. The previous single
+            // Rectangle that slid between pills read as too busy: on a switch it
+            // travelled the whole row, and Hyprland destroying emptied
+            // workspaces meant the row moved underneath it at the same time.
+            // Only catppuccin (and brutal) outline; v2 fills or underlines.
+            border.width: Theme.brutal ? Theme.chipBorder : (Theme.v2 ? 0 : Style.module.borderWidth)
+            border.color: Theme.brutal ? ((pill.isActive || pill.isUrgent) ? Theme.borderColor : Theme.transparent)
+                                       : ((pill.isActive && !pill.isUrgent) ? Theme.accent : Theme.transparent)
+
+            Behavior on border.color {
+              ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
+            }
+            Behavior on color { ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth } }
+          }
+
           Text {
             id: label
             anchors.centerIn: parent
+            visible: !root.dots
             // waybar's `format: "{name}"`.
             text: pill.workspace !== null ? pill.workspace.name : String(pill.modelData)
             color: pill.isUrgent ? (Theme.brutal ? Theme.onFill : Theme.base)
-                                 : (pill.isActive ? (Theme.brutal ? Theme.onFill : Theme.accent)
-                                                  : (pill.isHovered ? Theme.accentAlt : Theme.inactive))
+                 : pill.isActive ? (Theme.brutal ? Theme.onFill
+                                    : root.filled ? Theme.accentInk
+                                    : root.underline ? Theme.text
+                                    : Theme.accent)
+                 : (pill.isHovered ? (Theme.v2 ? Theme.text : Theme.accentAlt)
+                                   : (Theme.v2 ? Theme.subtext0 : Theme.inactive))
             font.family: Style.font.family
             font.pixelSize: Style.font.size
             font.weight: pill.isActive ? Style.font.boldWeight : Style.font.normalWeight
             renderType: Text.NativeRendering
 
             Behavior on color { ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth } }
+          }
+
+          // underline (paper): the active number is plain ink with a 2px
+          // accent2 rule under it.
+          Rectangle {
+            visible: root.underline
+            anchors.horizontalCenter: label.horizontalCenter
+            y: label.y + label.height + 1
+            width: label.implicitWidth + 2
+            height: 2
+            color: Theme.accent2
+            opacity: pill.isActive ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: Style.anim.opacityDuration; easing.type: Style.anim.easingSmooth } }
           }
 
           MouseArea {

@@ -35,8 +35,13 @@ Item {
   property int rowSpacing: 4
   property color accent: Theme.accent
   // Text colour for a row: brutal draws the current row as a yellow chip, so
-  // its text turns ink (onFill); otherwise `normal` (unchanged in catppuccin).
-  function ink(current, normal) { return Theme.brutal && current ? Theme.onFill : normal }
+  // its text turns ink (onFill); a v2 theme fills it with its selection role
+  // (paper: ink block, void: light block), so it turns onSelection; otherwise
+  // `normal` (unchanged in catppuccin).
+  function ink(current, normal) {
+    if (!current) return normal
+    return Theme.brutal ? Theme.onFill : (Theme.v2 ? Theme.selectionInk : normal)
+  }
 
   readonly property int visibleRows: Math.min(count, rows)
   readonly property int naturalHeight: count === 0
@@ -85,10 +90,11 @@ Item {
 
     // element selected.normal { background: @surface1; border: 1px solid <accent> }
     // Brutal: a yellow chip with an ink outline (the mockup's `.side .sel`).
+    // v2: the theme's selection fill, no outline (the prototype's `.sel`).
     highlight: Rectangle {
-      color: Theme.brutal ? Theme.fillYellow : Theme.surface1
-      radius: Theme.r(6)
-      border.width: Theme.brutal ? Theme.chipBorder : 1
+      color: Theme.brutal ? Theme.fillYellow : Theme.selectionOr(Theme.surface1)
+      radius: Theme.chipRadiusOr(6)
+      border.width: Theme.brutal ? Theme.chipBorder : (Theme.v2 ? 0 : 1)
       border.color: Theme.frameColor(root.accent)
       opacity: view.count > 0 ? 1 : 0
 
@@ -121,7 +127,7 @@ Item {
     anchors.bottomMargin: root.inset
     width: 4
     radius: Theme.r(2)
-    color: Theme.surface0
+    color: Theme.v2 ? Theme.surfaceInner : Theme.surface0
     opacity: visible ? 1 : 0
 
     Behavior on opacity {

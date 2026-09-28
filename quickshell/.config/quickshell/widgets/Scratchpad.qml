@@ -46,7 +46,7 @@ ScriptWidget {
   hoverHighlight: true
 
   // Brutal: active = a yellow chip with ink text instead of the gold outline.
-  chipColor: active ? Theme.fillYellow : Theme.transparent
+  chipColor: active && Theme.brutal ? Theme.fillYellow : Theme.transparent
   readonly property color glyphColor: chipped ? chipInk : (active ? Theme.attention : Theme.inactive)
 
   // An empty scratchpad is `shown: false`, so BarWidget holds this widget at

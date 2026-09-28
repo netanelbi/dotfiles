@@ -79,17 +79,19 @@ Item {
     : mode === "done"      ? Theme.green
     : mode === "failed"    ? Theme.red
     : mode === "ready"     ? Theme.sky
-    : Theme.mauve
+    : OriLook.idle
 
   // The orb's hot centre and its small marks. White under catppuccin; on a
   // brutal desk white vanishes into cream, so it glows in the pastel fill of
-  // its state and its marks are drawn in ink.
-  readonly property color hot: !Theme.brutal ? "white"
+  // its state and its marks are drawn in ink. On a light v2 theme (paper,
+  // tonal) a white core is a hole in a light bar, so the core is the tint
+  // itself -- a solid ink bead -- with a pinhead in the page colour.
+  readonly property color hot: !Theme.brutal ? (Theme.dark ? "white" : tint)
     : mode === "listening" || mode === "thinking" || mode === "ready" ? Theme.fillBlue
     : mode === "done"      ? Theme.fillGreen
     : mode === "failed"    ? Theme.fillRed
     : Theme.fillViolet
-  readonly property color mark: Theme.brutal ? Theme.onFill : "white"
+  readonly property color mark: Theme.brutal ? Theme.onFill : Theme.dark ? "white" : Theme.base
 
   readonly property bool busy: alive && (mode !== "idle" || poked)
   readonly property real haloD: size * 3.4

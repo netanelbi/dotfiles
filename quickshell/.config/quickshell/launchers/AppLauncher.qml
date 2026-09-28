@@ -174,7 +174,7 @@ Scope {
     prompt: "Apps"
     accent: Theme.accent           // catppuccin.rasi: border-color @mauve
     panelWidth: 500
-    cornerRadius: Theme.r(12)
+    cornerRadius: Theme.radiusOr(12)
     placeholder: "Search..."
     list: list
 
@@ -234,7 +234,7 @@ Scope {
             // Themes miss icons; a tinted initial beats an empty hole.
             Rectangle {
               anchors.fill: parent
-              radius: Theme.r(10)
+              radius: Theme.chipRadiusOr(10)
               visible: appIcon.status !== Image.Ready
               color: Theme.alpha(list.accent, 0.18)
 

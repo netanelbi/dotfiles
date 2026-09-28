@@ -43,7 +43,7 @@ PanelWindow {
   // Brutal only: the pastel the prompt pill is filled with (ink text on it).
   property color accentFill: Theme.fillViolet
   property int panelWidth: 500
-  property int cornerRadius: Theme.r(12)
+  property int cornerRadius: Theme.radiusOr(12)
   // powermenu.rasi sets `entry { enabled: false }`.
   property bool searchEnabled: true
   property string placeholder: "Search..."
@@ -51,6 +51,9 @@ PanelWindow {
   property var list: null
 
   property bool opened: false
+  // The card's outline, which the header sits inside: the brutal ink or a v2
+  // hairline. 0 in catppuccin (its header covers the 2px accent rim).
+  readonly property int frameInset: Theme.brutal ? Theme.borderWidth : (Theme.v2 ? Theme.outlineWidth : 0)
   // Hover must not count until the pointer has deliberately moved since the
   // panel opened: the card is screen-centred, so the cursor often opens
   // sitting on a row, and entry alone made the selection jump on launch.
@@ -187,7 +190,7 @@ PanelWindow {
   // gives the entrance something to fade against.
   Rectangle {
     anchors.fill: parent
-    color: Theme.alpha(Theme.crust, 0.45)
+    color: Theme.scrim
     opacity: panel.revealed
 
     MouseArea {
@@ -215,15 +218,16 @@ PanelWindow {
       y: (parent.height - height) / 2 + 12 * (1 - panel.revealed)
 
       HardShadow { target: card }
+      SoftShadow { target: card }
 
       Rectangle {
         id: card
         width: parent.width
-        // header.y and the trailing term are the brutal outline (0 in catppuccin).
-        implicitHeight: header.y + header.height + body.implicitHeight + (Theme.brutal ? Theme.borderWidth : 0)
+        // header.y and the trailing term are the brutal/v2 outline (0 in catppuccin).
+        implicitHeight: header.y + header.height + body.implicitHeight + panel.frameInset
         height: implicitHeight
 
-        color: Theme.base
+        color: Theme.surfaceOr(Theme.base)
         radius: panel.cornerRadius
         border.width: Theme.frameWidth(2)
         border.color: Theme.frameColor(panel.accent)
@@ -240,21 +244,22 @@ PanelWindow {
           readonly property int headerPadding: 12
 
           // Brutal: the mockup's title strip -- mantle, ink rule below, drawn
-          // inside the card's outline.
-          color: Theme.brutal ? Theme.mantle : Theme.surface0
-          x: Theme.brutal ? Theme.borderWidth : 0
-          y: Theme.brutal ? Theme.borderWidth : 0
+          // inside the card's outline. v2: the theme's inner fill, inside its
+          // hairline, with the soft hairline below where the theme draws lines.
+          color: Theme.brutal ? Theme.mantle : (Theme.v2 ? Theme.surfaceInner : Theme.surface0)
+          x: panel.frameInset
+          y: panel.frameInset
           width: parent.width - 2 * x
-          topLeftRadius: Math.max(0, panel.cornerRadius - 2)
-          topRightRadius: Math.max(0, panel.cornerRadius - 2)
+          topLeftRadius: Math.max(0, panel.cornerRadius - (Theme.v2 ? card.border.width : 2))
+          topRightRadius: Math.max(0, panel.cornerRadius - (Theme.v2 ? card.border.width : 2))
 
           Rectangle {
-            visible: Theme.brutal
+            visible: Theme.brutal || (Theme.v2 && Theme.outlineWidth > 0)
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: Theme.borderWidth
-            color: Theme.borderColor
+            height: Theme.brutal ? Theme.borderWidth : Theme.outlineWidth
+            color: Theme.brutal ? Theme.borderColor : Theme.outlineSoft
           }
           bottomLeftRadius: 0
           bottomRightRadius: 0
@@ -274,7 +279,7 @@ PanelWindow {
               visible: panel.prompt !== "" && panel.promptPill
               width: promptLabel.implicitWidth + 24
               height: promptLabel.implicitHeight + 12
-              radius: Theme.r(6)
+              radius: Theme.chipRadiusOr(6)
               color: Theme.brutal ? panel.accentFill : panel.accent
               border.width: Theme.chipBorder
               border.color: Theme.borderColor
@@ -289,7 +294,7 @@ PanelWindow {
                 anchors.centerIn: parent
                 text: panel.prompt
                 color: Theme.brutal ? Theme.onFill : Theme.base
-                font.family: Style.font.family
+                font.family: Style.font.ui
                 font.pixelSize: Style.font.small
                 font.weight: Style.font.boldWeight
                 renderType: Text.NativeRendering
@@ -303,7 +308,7 @@ PanelWindow {
               text: panel.prompt
               color: panel.accent
               horizontalAlignment: Text.AlignHCenter
-              font.family: Style.font.family
+              font.family: Style.font.ui
               font.pixelSize: Style.font.size
               font.weight: Style.font.boldWeight
               renderType: Text.NativeRendering
@@ -328,7 +333,7 @@ PanelWindow {
                 selectionColor: panel.accent
                 selectedTextColor: Theme.base
                 selectByMouse: true
-                font.family: Style.font.family
+                font.family: Style.font.ui
                 font.pixelSize: Style.font.size + 2
                 renderType: Text.NativeRendering
                 clip: true

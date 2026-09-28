@@ -1,5 +1,7 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import "widgets"
 import "assistant"
@@ -33,16 +35,25 @@ PanelWindow {
     right: true
   }
 
-  margins {
-    top: Style.bar.marginTop
-    left: Style.bar.marginSide
-    right: Style.bar.marginSide
-  }
+  // The surface spans the whole top edge with NO layer margins: the theme's
+  // margin is drawn inside it (`body` below), so a soft shadow or glow has room
+  // on every side of a floating strip. The exclusive zone is set explicitly to
+  // what the old margins reserved: margin + bar (+ a brutal hard shadow), which
+  // is 32 in catppuccin, as ever.
+  exclusiveZone: bar.barBottom
+  // Everything below the bar hangs off this line (popups, Ori's veil, the board
+  // compute the same sum from Style.bar).
+  readonly property int barBottom: Style.bar.marginTop + Style.bar.height + Theme.shadowY
 
-  // Brutal islands cast a hard shadow below/right of themselves; the surface
-  // is sized ONCE to include it (0 in catppuccin, so 30 as ever).
-  implicitHeight: Style.bar.height + Theme.shadowY
+  // Sized ONCE per theme to include the transparent shadow room under the bar
+  // (0 in catppuccin), never animated -- see the layer-surface note in CLAUDE.md.
+  implicitHeight: bar.barBottom + Style.bar.shadowRoom
   color: "transparent"
+
+  // The shadow room is paint only: clicks there fall through to the window
+  // underneath.
+  mask: Region { item: inputZone }
+  Item { id: inputZone; width: bar.width; height: bar.barBottom }
 
   // ---------------------------------------------------------------- chrome
   Item {
@@ -79,9 +90,39 @@ PanelWindow {
       NumberAnimation { target: content; property: "y"; to: 0; duration: Style.anim.slow; easing.type: Style.anim.easing }
     }
 
+    // The bar proper, inset by the theme's margin. Strip/flat themes paint one
+    // background across it; islands themes paint each island; bare paints none.
+    Item {
+      id: body
+      x: Style.bar.marginSide
+      y: Style.bar.marginTop
+      width: content.width - 2 * Style.bar.marginSide
+      height: Style.bar.height
+
+    SoftShadow { target: strip; shown: Theme.barMode === "strip" }
+
+    Rectangle {
+      id: strip
+      visible: Theme.barMode === "strip" || Theme.barMode === "flat"
+      anchors.fill: parent
+      radius: Theme.barMode === "strip" ? Theme.barRadius : 0
+      color: Theme.barBackground
+      border.width: Theme.barMode === "strip" && Theme.barBorder.a > 0 ? 1 : 0
+      border.color: Theme.barBorder
+
+      // flat (paper): one ink hairline along the bottom edge.
+      Rectangle {
+        visible: Theme.barMode === "flat" && Theme.barHairline.a > 0
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        height: 1
+        color: Theme.barHairline
+      }
+    }
+
     Island {
       id: leftIsland
       anchors.left: parent.left
+      anchors.leftMargin: Theme.barEdgePadding
       anchors.top: parent.top
       anchors.topMargin: Style.bar.islandInset
 
@@ -138,10 +179,21 @@ PanelWindow {
       BarWidget {
         id: clockWidget
         property bool longFormat: false
-        // Brutal: the mockup's ink block with base-coloured text.
-        backgroundColor: Theme.brutal ? Theme.inkFill : Theme.transparent
-        hoverHighlight: !Theme.brutal
-        readonly property color ink: Theme.brutal ? Theme.onInk : Theme.foreground
+        // The clock follows the theme (Theme.clock*): catppuccin plain text,
+        // brutal an ink block, glass a frosted chip, tonal a green pill, paper
+        // italic serif, neon glowing cyan, void plain.
+        readonly property bool chip: Theme.clockBackground.a > 0
+        backgroundColor: Theme.clockBackground
+        radius: Theme.barRound ? height / 2
+              : (Theme.v2 ? (Theme.chipRadius >= 0 ? Theme.chipRadius : Style.module.radius) : Style.module.radius)
+        // A chip keeps clear of the island/bar edge by its own padding.
+        horizontalPadding: chip && Theme.v2 ? 10 : Style.module.paddingH
+        hoverHighlight: !Theme.brutal && !chip
+        readonly property color ink: Theme.clockForeground
+        readonly property string face: Theme.clockFont || Style.font.family
+        // The glow is drawn outside the text; clipping is only there for the
+        // collapse animation, which the clock never does.
+        clip: !Theme.clockHasGlow
         tooltip: Qt.formatDateTime(clock.date, "dddd, d MMMM yyyy") + "\nright-click for the long format"
         // waybar's format-alt lived on the left click. It moved to the right
         // button so the left one can open the calendar -- the toggle is still
@@ -149,7 +201,10 @@ PanelWindow {
         onClicked: calendarPopup.toggle()
         onRightClicked: longFormat = !longFormat
 
+        // The v2 clocks are text only (the prototype has no glyph; paper's
+        // serif has none either).
         Text {
+          visible: !Theme.v2
           text: ""
           color: clockWidget.ink
           font.family: Style.font.family
@@ -162,10 +217,23 @@ PanelWindow {
           id: clockLabel
           text: Qt.formatDateTime(clock.date, clockWidget.longFormat ? "dddd, d MMMM yyyy" : "ddd dd MMM  HH:mm")
           color: clockWidget.ink
-          font.family: Style.font.family
-          font.pixelSize: Style.font.size
-          font.weight: Style.font.boldWeight
+          font.family: clockWidget.face
+          font.pixelSize: Theme.clockSize > 0 ? Theme.clockSize : Style.font.size
+          font.weight: Theme.clockWeight > 0 ? Theme.clockWeight : Style.font.boldWeight
+          font.italic: Theme.clockItalic
+          font.letterSpacing: Theme.clockLetterSpacing
           renderType: Text.NativeRendering
+
+          // neon: the cyan glow around the digits.
+          layer.enabled: Theme.clockHasGlow
+          layer.effect: MultiEffect {
+            shadowEnabled: true
+            shadowColor: Theme.clockGlow
+            shadowBlur: 0.6
+            shadowHorizontalOffset: 0
+            shadowVerticalOffset: 0
+            blurMax: 12
+          }
 
           // Example of the motion this shell expects from widgets: waybar's
           // clock snaps from one minute to the next; this one lifts into place.
@@ -225,7 +293,7 @@ PanelWindow {
       id: rightIsland
       anchors.right: parent.right
       // Room for its shadow inside the surface (0 in catppuccin).
-      anchors.rightMargin: Theme.shadowX
+      anchors.rightMargin: Theme.shadowX + Theme.barEdgePadding
       anchors.top: parent.top
       anchors.topMargin: Style.bar.islandInset
 
@@ -237,10 +305,22 @@ PanelWindow {
       Audio { }
       Battery { }
     }
+    }
 
     // Ori's old cell (the bolt and its readout in the gap) is retired: the orb
     // on the centre pill is the assistant's presence now. OriCell/OriVeil
     // stay on disk, unreferenced.
+  }
+
+  // Render this bar to a PNG (its own pixels, no wallpaper and no compositor
+  // blur) -- for checking a theme while a fullscreen window hides the bar:
+  //   qs -p ~/.config/quickshell ipc call bar-eDP-1 snapshot /tmp/bar.png
+  IpcHandler {
+    target: "bar-" + (bar.screen ? bar.screen.name : "none")
+    function snapshot(path: string): string {
+      content.grabToImage(function (r) { r.saveToFile(path) })
+      return "saving " + path
+    }
   }
 
   SystemClock {
@@ -311,6 +391,17 @@ PanelWindow {
       antialiasing: false
     }
 
+    // islands mode (tonal): each pill floats on its own soft shadow. A child
+    // at z -1 draws under the island's fill; its geometry is the island's own.
+    SoftShadow {
+      z: -1
+      target: island
+      shown: island.painted
+      x: 0
+      y: 0
+      opacity: 1
+    }
+
     // The unread aura: a sky ring breathing just outside the pill while an
     // answer sits unread. Only the centre island sets it (OriClient.unread).
     // It runs one opacity animation while unread -- unread is temporary by
@@ -339,11 +430,15 @@ PanelWindow {
     // needs a member's position on the screen.
     readonly property real rowX: islandRow.x
 
+    // Only islands mode paints the island itself; strip/flat paint one bar
+    // behind all three, bare paints nothing.
+    readonly property bool painted: Theme.barMode === "islands"
+
     implicitWidth: islandRow.implicitWidth + 2 * Style.bar.islandPaddingH
     height: Style.bar.islandHeight
     radius: Style.bar.islandRadius
-    color: Theme.islandBackground
-    border.width: Theme.borderWidth
+    color: painted ? Theme.barBackground : Theme.transparent
+    border.width: painted && Theme.brutal ? Theme.borderWidth : 0
     border.color: Theme.borderColor
     // An empty section paints nothing at all, matching waybar's empty boxes.
     opacity: empty ? 0 : 1
@@ -400,8 +495,10 @@ PanelWindow {
 
     visible: bar.tooltipTarget !== null && bar.tooltipText !== "" && (bar.tooltipOpen || bubble.opacity > 0.01)
     color: "transparent"
-    implicitWidth: Math.ceil(bubble.implicitWidth) + Theme.shadowX
-    implicitHeight: Math.ceil(bubble.implicitHeight) + Theme.shadowY
+    // Transparent room on every side for a soft shadow/glow (0 in catppuccin).
+    readonly property int pad: Theme.shadowPad
+    implicitWidth: Math.ceil(bubble.implicitWidth) + Theme.shadowX + 2 * pad
+    implicitHeight: Math.ceil(bubble.implicitHeight) + Theme.shadowY + 2 * pad
 
     anchor {
       id: tooltipAnchor
@@ -416,11 +513,12 @@ PanelWindow {
         var target = bar.tooltipTarget
         if (!target) return
         tooltipAnchor.rect.x = Math.round(target.width / 2 - (tooltipWindow.implicitWidth - Theme.shadowX) / 2)
-        tooltipAnchor.rect.y = Math.round(target.height + 8)
+        tooltipAnchor.rect.y = Math.round(target.height + 8 - tooltipWindow.pad)
       }
     }
 
     HardShadow { target: bubble }
+    SoftShadow { target: bubble }
 
     Rectangle {
       id: bubble
@@ -430,11 +528,12 @@ PanelWindow {
       color: Theme.tooltipBackground
       border.width: Theme.tooltipBorderWidth
       border.color: Theme.tooltipBorder
-      radius: Style.module.radius
+      radius: Theme.chipRadius >= 0 ? Theme.chipRadius : Style.module.radius
+      x: tooltipWindow.pad
 
       // waybar's tooltip pops; this one fades up.
       opacity: bar.tooltipOpen ? 1 : 0
-      y: bar.tooltipOpen ? 0 : -4
+      y: tooltipWindow.pad + (bar.tooltipOpen ? 0 : -4)
       Behavior on opacity { NumberAnimation { duration: Style.anim.opacityDuration; easing.type: Style.anim.easingSmooth } }
       Behavior on y { NumberAnimation { duration: Style.anim.normal; easing.type: Style.anim.easing } }
 
@@ -444,7 +543,7 @@ PanelWindow {
         text: bar.tooltipText
         textFormat: bar.tooltipRich ? Text.RichText : Text.PlainText
         color: Theme.tooltipText
-        font.family: Style.font.family
+        font.family: Theme.v2 ? Style.font.ui : Style.font.family
         font.pixelSize: Style.font.tooltip
         horizontalAlignment: Text.AlignHCenter
         renderType: Text.NativeRendering

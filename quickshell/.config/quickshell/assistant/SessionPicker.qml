@@ -74,10 +74,12 @@ Rectangle {
   // Brutal: an opaque card with an ink edge.
   color: Theme.brutal ? Theme.base : Theme.alpha(Theme.mantle, 0.94)
   border.width: Theme.brutal ? Theme.borderWidth : 1
-  border.color: Theme.brutal ? Theme.borderColor : Theme.alpha(root.accent, 0.35)
+  // v2: the theme's hairline where it has one (paper ink, glass, neon).
+  border.color: Theme.brutal ? Theme.borderColor
+    : Theme.hasOutline ? Theme.outlineColor : Theme.alpha(root.accent, 0.35)
   opacity: 0
   visible: opacity > 0
-  radius: Theme.r(10)
+  radius: Theme.radiusOr(10)
 
   Behavior on opacity {
     NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
@@ -203,7 +205,7 @@ Rectangle {
       readonly property bool here: root.isActive(modelData)
       // Brutal: the selection is a yellow fill with an ink edge; its text
       // turns to onFill.
-      color: on ? (Theme.brutal ? Theme.fillYellow : Theme.surface1) : Theme.transparent
+      color: on ? OriLook.rowOnFill : Theme.transparent
       border.width: on && Theme.brutal ? 2 : 0
       border.color: Theme.borderColor
 
@@ -234,7 +236,7 @@ Rectangle {
         anchors { left: parent.left; top: parent.top; leftMargin: 12; topMargin: 5 }
         width: 10
         text: parent.here ? "▸" : ""
-        color: Theme.brutal && parent.on ? Theme.onFill : Theme.text
+        color: OriLook.rowInverts && parent.on ? OriLook.rowOnInk : Theme.text
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
@@ -278,7 +280,7 @@ Rectangle {
         // The current conversation reads at full strength even when the
         // selection has arrowed away from it, so "where was I" survives
         // browsing the list.
-        color: Theme.brutal && parent.on ? Theme.onFill : (parent.on || parent.here) ? Theme.text : Theme.subtext0
+        color: OriLook.rowInverts && parent.on ? OriLook.rowOnInk : (parent.on || parent.here) ? Theme.text : Theme.subtext0
         elide: Text.ElideRight
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
@@ -302,7 +304,7 @@ Rectangle {
         // The busy row's meta line is lifted out of the grey the other rows
         // sit in. "running now" in overlay0 next to "12 exchanges" in overlay0
         // is information you have to go looking for.
-        color: Theme.brutal && parent.on ? Theme.onFill
+        color: OriLook.rowInverts && parent.on ? OriLook.rowOnInk
           : modelData.busy ? root.accent : parent.here ? Theme.subtext0 : Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta - 2
@@ -323,7 +325,7 @@ Rectangle {
         anchors { left: meta.right; baseline: meta.baseline }
         visible: !!modelData.agent
         text: "  ·  " + (modelData.agent || "")
-        color: Theme.brutal && parent.on ? Theme.onFill : Theme.teal
+        color: OriLook.rowInverts && parent.on ? OriLook.rowOnInk : Theme.teal
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta - 2
         renderType: Text.QtRendering

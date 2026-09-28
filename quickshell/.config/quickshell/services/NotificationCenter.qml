@@ -49,6 +49,8 @@ PanelWindow {
 
   required property var store
 
+  // Theme.accentInk evaluates to black in the live shell; read the role directly.
+  readonly property color onAccentInk: Theme.css(Theme.roles.onAccent, Theme.base)
   readonly property bool opened: store.centerOpen
 
   WlrLayershell.namespace: "quickshell-notification-center"
@@ -112,6 +114,7 @@ PanelWindow {
     Keys.onPressed: function (event) { center.handleKey(event) }
 
     HardShadow { target: panel }
+    SoftShadow { target: panel }
 
     Rectangle {
       id: panel
@@ -124,8 +127,8 @@ PanelWindow {
       anchors.rightMargin: 20
       width: center.store.centerPanelWidth
 
-      color: Theme.base
-      radius: Theme.r(12)
+      color: Theme.surfaceOr(Theme.base)
+      radius: Theme.radiusOr(12)
       border.width: Theme.frameWidth(2)
       border.color: Theme.frameColor(Theme.surface0)
       clip: true
@@ -170,7 +173,7 @@ PanelWindow {
               width: clearLabel.implicitWidth + 24   // padding: 6px 12px
               height: clearLabel.implicitHeight + 12
               radius: Theme.r(8)
-              color: clearArea.containsMouse ? (Theme.brutal ? Theme.fillRed : Theme.red) : Theme.surface0
+              color: clearArea.containsMouse ? (Theme.brutal ? Theme.fillRed : Theme.err) : Theme.v2 ? Theme.surfaceInner : Theme.surface0
               border.width: Theme.chipBorder
               border.color: Theme.borderColor
 
@@ -235,8 +238,9 @@ PanelWindow {
               anchors.verticalCenter: parent.verticalCenter
               width: 48
               height: 27
-              radius: Theme.r(12)               // .widget-dnd > switch
-              color: center.store.dnd ? (Theme.brutal ? Theme.fillViolet : Theme.mauve) : Theme.surface0
+              radius: Theme.v2 ? height / 2 : Theme.r(12)   // .widget-dnd > switch
+              color: center.store.dnd ? (Theme.brutal ? Theme.fillViolet : Theme.v2 ? Theme.accent : Theme.mauve)
+                                      : Theme.v2 ? Theme.surfaceInner : Theme.surface0
               border.width: Theme.chipBorder
               border.color: Theme.borderColor
 
@@ -247,8 +251,9 @@ PanelWindow {
               Rectangle {
                 width: 21
                 height: 21
-                radius: Theme.r(10)             // switch slider
-                color: Theme.brutal ? Theme.borderColor : Theme.text
+                radius: Theme.v2 ? height / 2 : Theme.r(10)   // switch slider
+                // v2: onAccent on the lit accent track (paper: cream on ink).
+                color: Theme.brutal ? Theme.borderColor : (Theme.v2 && center.store.dnd ? center.onAccentInk : Theme.text)
                 anchors.verticalCenter: parent.verticalCenter
                 x: center.store.dnd ? parent.width - width - 3 : 3
 
@@ -394,7 +399,7 @@ PanelWindow {
           width: undoLabel.implicitWidth + 20
           height: undoLabel.implicitHeight + 10
           radius: Theme.r(8)
-          color: undoArea.containsMouse ? (Theme.brutal ? Theme.fillYellow : Theme.mauve) : Theme.surface1
+          color: undoArea.containsMouse ? (Theme.brutal ? Theme.fillYellow : Theme.v2 ? Theme.accent : Theme.mauve) : Theme.surface1
           border.width: Theme.chipBorder
           border.color: Theme.borderColor
 
@@ -406,7 +411,7 @@ PanelWindow {
             id: undoLabel
             anchors.centerIn: parent
             text: "Undo"
-            color: undoArea.containsMouse ? (Theme.brutal ? Theme.onFill : Theme.base) : Theme.text
+            color: undoArea.containsMouse ? (Theme.brutal ? Theme.onFill : Theme.v2 ? center.onAccentInk : Theme.base) : Theme.text
             font.family: Style.font.family
             font.pixelSize: Style.font.size
             font.weight: Style.font.boldWeight

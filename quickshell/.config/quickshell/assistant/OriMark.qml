@@ -19,7 +19,7 @@ import ".."
 Item {
   id: mark
 
-  property color accent: Theme.sapphire
+  property color accent: OriLook.busy
   // A turn is running: the bolt rocks and breathes.
   property bool alive: false
   // Seconds, from the panel's frame clock.

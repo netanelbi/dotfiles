@@ -70,7 +70,7 @@ Scope {
     searchEnabled: false
     accent: Theme.accent           // powermenu.rasi: border-color @mauve
     panelWidth: 200
-    cornerRadius: Theme.r(16)
+    cornerRadius: Theme.radiusOr(16)
     list: list
 
     onPresented: if (root.group) root.group.claim(panel)

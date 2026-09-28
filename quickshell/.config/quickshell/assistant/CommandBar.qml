@@ -147,8 +147,10 @@ Rectangle {
   // Brutal: an opaque card with an ink edge.
   color: Theme.brutal ? Theme.base : Theme.alpha(Theme.mantle, 0.94)
   border.width: Theme.brutal ? Theme.borderWidth : 1
-  border.color: Theme.brutal ? Theme.borderColor : Theme.alpha(root.accent, 0.35)
-  radius: Theme.r(10)
+  // v2: the theme's hairline where it has one (paper ink, glass, neon).
+  border.color: Theme.brutal ? Theme.borderColor
+    : Theme.hasOutline ? Theme.outlineColor : Theme.alpha(root.accent, 0.35)
+  radius: Theme.radiusOr(10)
   opacity: root.open ? 1 : 0
   visible: opacity > 0
 
@@ -248,7 +250,7 @@ Rectangle {
       readonly property bool on: index === root.current
       // Brutal: the selection is a yellow fill with an ink edge; its text
       // turns to onFill.
-      color: on ? (Theme.brutal ? Theme.fillYellow : Theme.surface1) : Theme.transparent
+      color: on ? OriLook.rowOnFill : Theme.transparent
       border.width: on && Theme.brutal ? 2 : 0
       border.color: Theme.borderColor
 
@@ -268,7 +270,7 @@ Rectangle {
         // typed with one and `ollama/glm-5.2` is not, and a row that shows the
         // wrong one teaches the wrong thing about what Enter will insert.
         text: (root.arging ? "" : "/") + String(modelData.name)
-        color: parent.on ? (Theme.brutal ? Theme.onFill : Theme.text) : Theme.subtext0
+        color: parent.on ? (OriLook.rowInverts ? OriLook.rowOnInk : Theme.text) : Theme.subtext0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
         renderType: Text.QtRendering
@@ -282,7 +284,7 @@ Rectangle {
         anchors { left: name.right; right: parent.right; leftMargin: 10
                   rightMargin: 8; verticalCenter: parent.verticalCenter }
         text: String(modelData.description || "").split("\n")[0]
-        color: Theme.brutal && parent.on ? Theme.onFill : Theme.overlay0
+        color: OriLook.rowInverts && parent.on ? OriLook.rowOnInk : Theme.overlay0
         elide: Text.ElideRight
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta - 2

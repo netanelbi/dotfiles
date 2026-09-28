@@ -594,29 +594,34 @@ ScriptWidget {
     visible: root.overflowOpen && winModel.count > 0
     color: "transparent"
 
-    implicitWidth: Math.ceil(root.popupWidth) + Theme.shadowX
-    implicitHeight: Math.ceil(card.implicitHeight) + Theme.shadowY
+    // Transparent room for a v2 soft shadow/glow (0 in catppuccin).
+    readonly property int pad: Theme.shadowPad
+    implicitWidth: Math.ceil(root.popupWidth) + Theme.shadowX + 2 * pad
+    implicitHeight: Math.ceil(card.implicitHeight) + Theme.shadowY + 2 * pad
 
     anchor {
       item: chip
       adjustment: PopupAdjustment.Flip
       edges: Edges.Top | Edges.Left
       gravity: Edges.Bottom | Edges.Left
-      rect.x: 0
-      rect.y: 2
+      rect.x: -overflowPopup.pad
+      rect.y: 2 - overflowPopup.pad
     }
 
     HardShadow { target: card }
+    SoftShadow { target: card }
 
     Rectangle {
       id: card
+      x: overflowPopup.pad
+      y: overflowPopup.pad
       width: root.popupWidth
       height: implicitHeight
       implicitHeight: rows.implicitHeight + 10
       color: Theme.tooltipBackground
       border.width: Theme.tooltipBorderWidth
       border.color: Theme.tooltipBorder
-      radius: Style.module.radius
+      radius: Theme.chipRadius >= 0 ? Theme.chipRadius : Style.module.radius
 
       Column {
         id: rows

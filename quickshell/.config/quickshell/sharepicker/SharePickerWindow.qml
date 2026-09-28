@@ -178,7 +178,7 @@ PanelWindow {
     // Held well short of opaque. At full strength the screen thumbnails would
     // be a picture of a black rectangle with a picker on it, which tells the
     // user nothing about the screen they are being asked to share.
-    color: Theme.alpha(Theme.crust, 0.45)
+    color: Theme.scrim
     opacity: win.shown ? 1 : 0
     Behavior on opacity {
       NumberAnimation { duration: Style.anim.normal; easing.type: Style.anim.easingSmooth }
@@ -236,6 +236,7 @@ PanelWindow {
   readonly property int cardHeight: contentHeight + chromeHeight
 
   HardShadow { target: card }
+  SoftShadow { target: card }
 
   Rectangle {
     id: card
@@ -247,9 +248,10 @@ PanelWindow {
     // surface, never this rectangle's width or height.
     y: (win.height - height) / 2 + (win.shown ? 0 : 14)
 
-    color: Theme.base
     // .notification / rofi window: 12px radius, 2px accent border on @base.
-    radius: Theme.r(12)
+    // v2: the theme's surface, radius and hairline.
+    color: Theme.surfaceOr(Theme.base)
+    radius: Theme.radiusOr(12)
     border.width: Theme.frameWidth(Style.module.borderWidth)
     border.color: Theme.frameColor(Theme.accent)
 
@@ -313,10 +315,10 @@ PanelWindow {
 
               width: pill.implicitWidth + 2 * Style.bar.islandPaddingH
               height: 28
-              radius: Style.module.radius
+              radius: Theme.chipRadiusOr(8)
               // Brutal: the current tab is a yellow chip, ink outlined.
               color: current ? (Theme.brutal ? Theme.fillYellow : Theme.accent)
-                             : (pillHover.hovered ? Theme.hoverBackground : Theme.surface0)
+                             : (pillHover.hovered ? Theme.hover : (Theme.v2 ? Theme.surfaceInner : Theme.surface0))
               border.width: Theme.chipBorder
               border.color: Theme.borderColor
 
@@ -326,7 +328,7 @@ PanelWindow {
                 id: pill
                 anchors.centerIn: parent
                 text: modelData.label + "  " + modelData.n
-                color: parent.current ? (Theme.brutal ? Theme.onFill : Theme.base) : Theme.foreground
+                color: parent.current ? (Theme.brutal ? Theme.onFill : (Theme.v2 ? Theme.accentInk : Theme.base)) : Theme.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.tiny
                 font.weight: parent.current ? Style.font.boldWeight : Style.font.normalWeight
@@ -395,8 +397,8 @@ PanelWindow {
           Rectangle {
             width: tokenRow.implicitWidth + 2 * Style.module.paddingH
             height: 26
-            radius: Style.module.radius
-            color: tokenHover.hovered ? Theme.hoverBackground : Theme.transparent
+            radius: Theme.chipRadiusOr(8)
+            color: tokenHover.hovered ? Theme.hover : Theme.transparent
 
             Row {
               id: tokenRow
@@ -436,8 +438,8 @@ PanelWindow {
           Rectangle {
             width: regionText.implicitWidth + 2 * Style.module.paddingH
             height: 26
-            radius: Style.module.radius
-            color: regionHover.hovered ? Theme.hoverBackground : Theme.transparent
+            radius: Theme.chipRadiusOr(8)
+            color: regionHover.hovered ? Theme.hover : Theme.transparent
 
             Text {
               id: regionText

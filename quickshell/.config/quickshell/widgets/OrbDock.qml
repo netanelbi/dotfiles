@@ -35,7 +35,7 @@ Item {
   Rectangle {
     anchors.centerIn: parent
     width: 4; height: 4; radius: 2
-    color: Theme.alpha(Theme.mauve, poke.containsMouse ? 0.9 : 0.45)
+    color: Theme.alpha(OriLook.idle, poke.containsMouse ? 0.9 : 0.45)
     opacity: root.outVoice ? 1 : 0
     Behavior on opacity { NumberAnimation { duration: Style.anim.quick } }
     Behavior on color { ColorAnimation { duration: Style.anim.quick } }
@@ -47,7 +47,7 @@ Item {
     width: 14; height: 14; radius: 7
     color: Theme.alpha(Theme.crust, 0.95)
     border.width: Theme.brutal ? 2 : 1
-    border.color: Theme.brutal ? Theme.borderColor : Theme.alpha(Theme.mauve, 0.25)
+    border.color: Theme.brutal ? Theme.borderColor : Theme.alpha(OriLook.idle, 0.25)
     opacity: root.inPanel ? 1 : 0
     scale: root.inPanel ? 1 : 0.4
     Behavior on opacity { NumberAnimation { duration: Style.anim.quick } }

@@ -86,7 +86,7 @@ Scope {
     accent: Theme.green            // calc.rasi: border-color @green
     accentFill: Theme.fillGreen
     panelWidth: 550
-    cornerRadius: Theme.r(16)
+    cornerRadius: Theme.radiusOr(16)
     placeholder: "Type expression..."
     // calc.rasi: `listview { enabled: false }` -- nothing to navigate.
     list: null

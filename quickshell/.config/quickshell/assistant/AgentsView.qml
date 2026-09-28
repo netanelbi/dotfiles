@@ -144,10 +144,12 @@ Rectangle {
   // Brutal: an opaque card with an ink edge.
   color: Theme.brutal ? Theme.base : Theme.alpha(Theme.mantle, 0.94)
   border.width: Theme.brutal ? Theme.borderWidth : 1
-  border.color: Theme.brutal ? Theme.borderColor : Theme.alpha(root.accent, 0.35)
+  // v2: the theme's hairline where it has one (paper ink, glass, neon).
+  border.color: Theme.brutal ? Theme.borderColor
+    : Theme.hasOutline ? Theme.outlineColor : Theme.alpha(root.accent, 0.35)
   opacity: 0
   visible: opacity > 0
-  radius: Theme.r(10)
+  radius: Theme.radiusOr(10)
 
   Behavior on opacity {
     NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easingSmooth }
@@ -443,7 +445,7 @@ Rectangle {
         radius: Theme.r(4)
         // Brutal: the selection is a yellow fill with an ink edge; its text
       // turns to onFill.
-        color: on ? (Theme.brutal ? Theme.fillYellow : Theme.surface1) : Theme.transparent
+        color: on ? OriLook.rowOnFill : Theme.transparent
         border.width: on && Theme.brutal ? 2 : 0
         border.color: Theme.borderColor
 
@@ -480,7 +482,7 @@ Rectangle {
             if (n.length > 52) n = n.slice(0, 52) + "…"
             return (parent.depth > 0 ? "↳ " : "") + n
           }
-          color: Theme.brutal && parent.on ? Theme.onFill : parent.r.alive ? Theme.text : Theme.subtext0
+          color: OriLook.rowInverts && parent.on ? OriLook.rowOnInk : parent.r.alive ? Theme.text : Theme.subtext0
           elide: Text.ElideRight
           font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelBody
@@ -508,7 +510,7 @@ Rectangle {
             if (parent.r.task) return line + "  ·  " + parent.r.task
             return line
           }
-          color: Theme.brutal && parent.on ? Theme.onFill : Theme.overlay0
+          color: OriLook.rowInverts && parent.on ? OriLook.rowOnInk : Theme.overlay0
           elide: Text.ElideRight
           font.family: Style.font.panelMono
           font.pixelSize: Style.font.panelMeta

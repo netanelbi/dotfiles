@@ -146,7 +146,7 @@ PanelWindow {
   readonly property bool failed: OriClient.error !== "" && !working
   readonly property bool holding: (OriClient.unread || failed) && !working
 
-  readonly property color tint: working ? Theme.sapphire
+  readonly property color tint: working ? OriLook.busy
     : failed ? Theme.urgent
     : OriClient.unread ? Theme.sky
     : Theme.overlay0
@@ -447,6 +447,8 @@ PanelWindow {
     y: 0
     height: card.y + card.height + Theme.shadowY
   }
+  // v2: the theme's soft shadow (tonal, glass) or glow (neon) under the island.
+  SoftShadow { target: card; shown: OriLook.v2 }
 
   Rectangle {
     id: card
@@ -470,9 +472,19 @@ PanelWindow {
     topRightRadius: 0
     bottomLeftRadius: Style.bar.islandRadius
     bottomRightRadius: Style.bar.islandRadius
+    // OPAQUE base in every theme, glass included: this lies over arbitrary
+    // windows with no blur of its own, and an opaque island in the theme's
+    // page colour is what keeps its ink legible there -- a light theme gets a
+    // light island with dark text, never a dark scrim with light text.
     color: Theme.base
     border.width: Theme.brutal ? Theme.borderWidth : 1
-    border.color: Theme.brutal ? Theme.borderColor : Theme.alpha(Theme.surface1, 0.9)
+    // v2: the theme's hairline (paper ink, glass white, neon pink), else its
+    // soft one, else a surface2 edge so a borderless light island (tonal)
+    // still separates from a white page under it.
+    border.color: Theme.brutal ? Theme.borderColor
+      : !OriLook.v2 ? Theme.alpha(Theme.surface1, 0.9)
+      : Theme.hasOutline ? Theme.outlineColor
+      : Theme.outlineSoft.a > 0 ? Theme.outlineSoft : Theme.alpha(Theme.surface2, 0.9)
 
     Behavior on height {
       NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing }
@@ -641,7 +653,7 @@ PanelWindow {
       visible: veil.elsewhereLine !== ""
       height: visible ? implicitHeight + 10 : 0
       text: veil.elsewhereLine
-      color: Theme.alpha(Theme.sapphire, 0.85)
+      color: Theme.alpha(OriLook.busy, 0.85)
       elide: Text.ElideRight
       font.family: Style.font.family
       font.pixelSize: Style.font.panelMeta

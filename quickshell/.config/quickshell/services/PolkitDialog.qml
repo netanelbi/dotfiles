@@ -38,7 +38,7 @@ PanelWindow {
   // must not turn the card red at a user who has not done anything yet.
   readonly property bool hasError: attempted && flow !== null
       && flow.supplementaryIsError && flow.supplementaryMessage !== ""
-  readonly property color accent: hasError ? Theme.red : Theme.accent
+  readonly property color accent: hasError ? Theme.err : Theme.accent
 
   WlrLayershell.namespace: "quickshell-polkit"
   WlrLayershell.layer: WlrLayer.Overlay
@@ -117,7 +117,8 @@ PanelWindow {
   // anything.
   Rectangle {
     anchors.fill: parent
-    color: Theme.alpha(Theme.crust, 0.5)
+    // A light theme's crust is light: darken with Theme.scrim there.
+    color: Theme.dark ? Theme.alpha(Theme.crust, 0.5) : Theme.scrim
     opacity: win.revealed
 
     MouseArea {
@@ -144,6 +145,7 @@ PanelWindow {
       y: (parent.height - height) / 2 + 12 * (1 - win.revealed)
 
       HardShadow { target: card }
+      SoftShadow { target: card; active: true }
 
       Rectangle {
         id: card
@@ -151,11 +153,13 @@ PanelWindow {
         implicitHeight: column.implicitHeight + 2 * 20
         height: implicitHeight
 
-        color: Theme.base
-        radius: Theme.r(12)
-        // Brutal: ink outline, red once an attempt has failed.
+        color: Theme.surfaceOr(Theme.base)
+        radius: Theme.radiusOr(12)
+        // Brutal: ink outline, red once an attempt has failed. v2: the theme's
+        // active hairline (none on tonal/void), red on failure.
         border.width: Theme.frameWidth(2)
-        border.color: Theme.brutal && !win.hasError ? Theme.borderColor : win.accent
+        border.color: Theme.brutal && !win.hasError ? Theme.borderColor
+                    : Theme.v2 && !win.hasError ? Theme.outlineActive : win.accent
 
         // The failure recolour reads as the card reacting, not as a repaint.
         Behavior on border.color {
@@ -250,11 +254,11 @@ PanelWindow {
           Rectangle {
             width: parent.width
             height: 44
-            radius: Theme.r(8)
-            color: Theme.surface0
+            radius: Theme.chipRadiusOr(8)
+            color: Theme.v2 ? Theme.surfaceInner : Theme.surface0
             border.width: Theme.brutal ? Theme.chipBorder : 1
             border.color: Theme.brutal && !win.hasError ? Theme.borderColor
-                        : (field.activeFocus ? win.accent : Theme.surface1)
+                        : (field.activeFocus ? win.accent : Theme.softBorderOr(Theme.surface1))
 
             Behavior on border.color {
               ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
@@ -278,7 +282,8 @@ PanelWindow {
               enabled: win.flow !== null && win.flow.isResponseRequired
               color: Theme.text
               selectionColor: win.accent
-              selectedTextColor: Theme.base
+              // Theme.accentInk reads black live; take the role directly.
+              selectedTextColor: win.hasError ? Theme.base : Theme.css(Theme.roles.onAccent, Theme.base)
               selectByMouse: true
               font.family: Style.font.family
               font.pixelSize: Style.font.size

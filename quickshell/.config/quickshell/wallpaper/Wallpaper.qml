@@ -20,10 +20,14 @@ import ".."
 Scope {
   id: root
 
-  // The photo + live weather is the catppuccin wallpaper. A brutal theme draws
-  // a flat desk colour with a grid instead, and then NOTHING below runs: no
-  // weather poll, no particles, no drift, no fog.
-  readonly property bool live: !Theme.brutal
+  // The photo + live weather is the catppuccin wallpaper (Theme.deskMode
+  // "photo"). Any other desk -- a theme's own picture ("image") or a flat
+  // colour, with or without a grid ("flat") -- runs NOTHING below: no weather
+  // poll, no particles, no drift, no fog.
+  readonly property bool live: Theme.deskMode === "photo"
+  // The name/data pair is briefly mismatched mid-switch; wait for both.
+  readonly property bool pictured: Theme.deskMode === "image" && Theme.deskImage !== ""
+                                   && Theme.data.name === Theme.name
   // Desk grid pitch, px.
   readonly property int gridStep: 24
 
@@ -142,6 +146,41 @@ Scope {
           }
         }
       }
+
+      // ------------------------------------------------------ theme image
+      // The theme dir's own wallpaper, cover-fit. Two slots cross-fade on a
+      // switch: the new picture loads into the hidden slot and fades in over the
+      // old one, which is then released. A missing file leaves the window's
+      // deskBackground showing.
+      property Item front: null
+      readonly property string wanted: root.pictured ? "file://" + Theme.deskImage : ""
+      function load() {
+        var next = win.front === slotA ? slotB : slotA
+        if (win.wanted === "") { win.front = null; return }
+        if (win.front && win.front.source.toString() === win.wanted) return
+        next.source = win.wanted          // becomes front once Ready
+      }
+      property bool built: false
+      onWantedChanged: if (built) load()
+      Component.onCompleted: { built = true; load() }
+
+      component DeskImage: Image {
+        anchors.fill: parent
+        fillMode: Image.PreserveAspectCrop
+        asynchronous: true
+        cache: false
+        smooth: true
+        sourceSize.width: win.width
+        sourceSize.height: win.height
+        opacity: win.front === this ? 1 : 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 450; easing.type: Easing.InOutQuad } }
+        onStatusChanged: if (status === Image.Ready && source.toString() === win.wanted) win.front = this
+        // Once faded out, let go of the old picture.
+        onVisibleChanged: if (!visible && win.front !== this) source = ""
+      }
+      DeskImage { id: slotA }
+      DeskImage { id: slotB }
 
       // ---------------------------------------------------------- photo
       Image {

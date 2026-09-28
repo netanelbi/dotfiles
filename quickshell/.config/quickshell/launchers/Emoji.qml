@@ -111,7 +111,7 @@ Scope {
     prompt: "Emoji"
     accent: Theme.accent           // catppuccin.rasi: border-color @mauve
     panelWidth: 500
-    cornerRadius: Theme.r(12)
+    cornerRadius: Theme.radiusOr(12)
     placeholder: "Search emoji..."
     list: list
 

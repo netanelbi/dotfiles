@@ -246,6 +246,7 @@ PanelWindow {
 
     // ------------------------------------------------------------- the card
     HardShadow { target: card }
+    SoftShadow { target: card }
 
     Rectangle {
       id: card
@@ -269,8 +270,9 @@ PanelWindow {
       }
 
       // Same chrome as the notification cards: radius 12, @base, 2px @mauve.
-      color: Theme.base
-      radius: Theme.r(12)
+      // v2: the theme's surface, radius and hairline (frameWidth/frameColor).
+      color: Theme.surfaceOr(Theme.base)
+      radius: Theme.radiusOr(12)
       border.width: Theme.frameWidth(2)
       border.color: Theme.frameColor(Theme.accent)
       clip: true
@@ -410,7 +412,7 @@ PanelWindow {
                 radius: Theme.r(13)
                 // Brutal: today is a yellow chip with an ink outline.
                 color: cell.isToday ? (Theme.brutal ? Theme.fillYellow : Theme.accent)
-                     : (cellMouse.containsMouse ? Theme.hoverBackground : "transparent")
+                     : (cellMouse.containsMouse ? Theme.hover : "transparent")
                 border.width: Theme.brutal ? (cell.isToday || cell.isSelected ? Theme.chipBorder : 0)
                                            : (cell.isSelected && !cell.isToday ? 1 : 0)
                 border.color: Theme.brutal ? Theme.borderColor : Theme.accent
@@ -433,7 +435,7 @@ PanelWindow {
                 Text {
                   anchors.centerIn: parent
                   text: cell.date.getDate()
-                  color: cell.isToday ? (Theme.brutal ? Theme.onFill : Theme.base)
+                  color: cell.isToday ? (Theme.brutal ? Theme.onFill : (Theme.v2 ? Theme.accentInk : Theme.base))
                                       : (cell.inMonth ? Theme.text : Theme.overlay0)
                   font.family: Style.font.family
                   font.pixelSize: Style.font.size - 2
@@ -489,7 +491,7 @@ PanelWindow {
 
         Item { width: 1; height: 8 }
 
-        Rectangle { width: parent.width; height: 1; color: Theme.surface0 }
+        Rectangle { width: parent.width; height: 1; color: Theme.v2 && Theme.outlineWidth > 0 ? Theme.outlineSoft : Theme.surface0 }
 
         // ----------------------------------------------------- error strip
         // Shown ABOVE the events rather than instead of them: a failed refresh
@@ -645,7 +647,7 @@ PanelWindow {
                 // joinMouse too: it sits above rowMouse and swallows the
                 // hover, which otherwise left the row looking inert exactly
                 // while the cursor was on its button.
-                color: rowMouse.containsMouse || joinMouse.containsMouse ? Theme.hoverBackground : "transparent"
+                color: rowMouse.containsMouse || joinMouse.containsMouse ? Theme.hover : "transparent"
                 Behavior on color { ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth } }
               }
 
@@ -748,9 +750,11 @@ PanelWindow {
                 anchors.verticalCenter: parent.verticalCenter
                 width: joinLabel.implicitWidth + 14
                 height: 20
-                radius: Theme.r(6)
-                // Brutal: the mockup's green "Join" chip.
+                radius: Theme.chipRadiusOr(6)
+                // Brutal: the mockup's green "Join" chip. v2: the prototype's
+                // `.toast button`, a solid accent chip with onAccent text.
                 color: Theme.brutal ? Theme.fillGreen
+                     : Theme.v2 ? (joinMouse.containsMouse ? Theme.alpha(Theme.accent, 0.85) : Theme.accent)
                      : (joinMouse.containsMouse ? Theme.accent : Theme.alpha(Theme.accent, 0.16))
                 border.width: Theme.chipBorder
                 border.color: Theme.borderColor
@@ -763,7 +767,8 @@ PanelWindow {
                   id: joinLabel
                   anchors.centerIn: parent
                   text: "Join"
-                  color: Theme.brutal ? Theme.onFill : (joinMouse.containsMouse ? Theme.base : Theme.accent)
+                  color: Theme.brutal ? Theme.onFill : Theme.v2 ? Theme.accentInk
+                       : (joinMouse.containsMouse ? Theme.base : Theme.accent)
                   font.family: Style.font.family
                   font.pixelSize: Style.font.size - 4
                   font.weight: Style.font.boldWeight
@@ -838,7 +843,7 @@ PanelWindow {
     Rectangle {
       anchors.fill: parent
       radius: Theme.r(6)
-      color: navMouse.containsMouse ? Theme.hoverBackground : "transparent"
+      color: navMouse.containsMouse ? Theme.hover : "transparent"
       scale: navMouse.pressed ? 0.9 : 1
       Behavior on color { ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth } }
       Behavior on scale { NumberAnimation { duration: Style.anim.quick; easing.type: Style.anim.easing } }

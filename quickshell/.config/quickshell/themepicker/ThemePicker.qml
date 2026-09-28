@@ -95,11 +95,16 @@ Scope {
   // half-applied, and a second apply is never dropped. theme-switch pokes
   // `ipc call theme reload` itself. Without it, the fallback writes the state
   // file and calls back `fallbackApplied`, which logs the warning and reloads.
+  // theme-switch validates a theme (Kvantum/qt6ct/KDE scheme present) before it
+  // touches anything and refuses on stderr; the picker is already gone by then,
+  // so a refusal is raised as a notification instead of vanishing.
   function apply(name) {
     if (!/^[a-z0-9-]+$/.test(name)) return false
     Quickshell.execDetached(["sh", "-c",
       "ts=$(command -v theme-switch || echo \"$HOME/.local/bin/theme-switch\"); " +
-      "if [ -x \"$ts\" ]; then exec \"$ts\" \"$1\"; fi; " +
+      "if [ -x \"$ts\" ]; then " +
+      "err=$(\"$ts\" \"$1\" 2>&1 >/dev/null) || " +
+      "notify-send -a Theme -i preferences-desktop-theme \"Theme not applied: $1\" \"$err\"; exit; fi; " +
       "mkdir -p \"$HOME/.local/state/theme\" && printf '%s\\n' \"$1\" > \"$HOME/.local/state/theme/current\" && " +
       "exec qs -p \"$HOME/.config/quickshell\" ipc call theme fallbackApplied \"$1\"", "sh", name])
     dismiss()
@@ -172,7 +177,7 @@ Scope {
 
     Rectangle {
       anchors.fill: parent
-      color: Theme.alpha(Theme.crust, 0.45)
+      color: Theme.scrim
       opacity: win.revealed
 
       MouseArea {

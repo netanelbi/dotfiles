@@ -57,9 +57,11 @@ Item {
 
   readonly property bool critical: !!head && !!head.notif && head.notif.urgency === NotificationUrgency.Critical
   readonly property color urgencyColor: {
-    if (!head || !head.notif) return Theme.mauve
+    if (!head || !head.notif) return Theme.v2 ? Theme.outlineActive : Theme.mauve
     var u = head.notif.urgency
-    return u === NotificationUrgency.Critical ? Theme.red
+    // v2: the card's own active hairline; red still marks a critical head.
+    return u === NotificationUrgency.Critical ? Theme.err
+      : Theme.v2 ? Theme.outlineActive
       : u === NotificationUrgency.Low ? Theme.green : Theme.mauve
   }
 
@@ -125,7 +127,7 @@ Item {
             anchors.centerIn: parent
             visible: root.headIcon === ""
             text: "󰂚"
-            color: Theme.mauve
+            color: Theme.v2 ? Theme.accent : Theme.mauve
             font.family: Style.font.family
             font.pixelSize: Style.font.size + 2
             renderType: Text.NativeRendering
@@ -160,7 +162,7 @@ Item {
         width: groupCloseLabel.implicitWidth + 16   // padding: 4px 8px
         height: groupCloseLabel.implicitHeight + 8
         radius: Theme.r(6)
-        color: groupCloseArea.containsMouse ? (Theme.brutal ? Theme.fillRed : Theme.red) : Theme.surface0
+        color: groupCloseArea.containsMouse ? (Theme.brutal ? Theme.fillRed : Theme.err) : Theme.v2 ? Theme.surfaceInner : Theme.surface0
         border.width: Theme.chipBorder
         border.color: Theme.borderColor
 
@@ -224,6 +226,7 @@ Item {
             z: -1 - index
 
             HardShadow { target: stub }
+            SoftShadow { target: stub }
 
             Rectangle {
               id: stub
@@ -233,8 +236,8 @@ Item {
               y: 6 + root.peekStep * (index + 1)
               width: root.cardWidth - 12 * (index + 1)
               height: card.cardHeight
-              radius: Theme.r(12)
-              color: Theme.base
+              radius: Theme.radiusOr(12)
+              color: Theme.surfaceOr(Theme.base)
               border.width: Theme.frameWidth(2)
               // Brutal: ink, except a critical head keeps its red outline.
               border.color: Theme.brutal && !root.critical ? Theme.borderColor : root.urgencyColor

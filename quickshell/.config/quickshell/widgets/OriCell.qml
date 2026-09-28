@@ -130,14 +130,17 @@ Item {
   // Mauve, the shell's own "touched the machine" colour, and the same one the
   // panel gives a tool row -- so a job still running reads as machine activity
   // wherever you meet it.
-  readonly property color tint: thinking ? Theme.sapphire
+  //
+  // v2: working is the theme's second voice (OriLook.busy, the panel's spine
+  // colour too) and cold is its accent, so the mark wears the theme at rest.
+  readonly property color tint: thinking ? OriLook.busy
     : failed ? Theme.urgent
     : unread ? Theme.sky
     : background ? Theme.accent
     // The working colour, at the cold state's own alphas: it is the same kind
     // of activity as `thinking`, happening somewhere you are not looking.
-    : parked ? Theme.sapphire
-    : Theme.subtext0
+    : parked ? OriLook.busy
+    : OriLook.v2 ? Theme.accent : Theme.subtext0
 
   // Cold is dim, not absent. subtext0 at 0.42/0.70 rather than `Theme.inactive`
   // (overlay0): unhoused, this sits on the wallpaper instead of on an island's
@@ -375,9 +378,9 @@ Item {
       x: -width + (keel.width + width) * root.scanPhase
       gradient: Gradient {
         orientation: Gradient.Horizontal
-        GradientStop { position: 0.0; color: Theme.alpha(Theme.sapphire, 0) }
-        GradientStop { position: 0.5; color: Theme.sapphire }
-        GradientStop { position: 1.0; color: Theme.alpha(Theme.sapphire, 0) }
+        GradientStop { position: 0.0; color: Theme.alpha(OriLook.busy, 0) }
+        GradientStop { position: 0.5; color: OriLook.busy }
+        GradientStop { position: 1.0; color: Theme.alpha(OriLook.busy, 0) }
       }
     }
 

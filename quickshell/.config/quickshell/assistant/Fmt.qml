@@ -213,12 +213,21 @@ QtObject {
   // invisible to the binding, which is the point.
   // `calls: null` is the empty state -- splitCached() never has a null list, so
   // no live cache can look empty.
-  readonly property var cache: ({ calls: null, at: 0, text: "", pieces: null })
+  readonly property var cache: ({ calls: null, at: 0, text: "", pieces: null, ink: "" })
+
+  // The colours rich() bakes into the HTML. The settled prefix in the cache
+  // was painted in the old ones, so a theme switch has to drop it; a caller
+  // that wants to repaint on a switch reads `ink` in its binding.
+  // **bold** takes the theme's emphasis colour where it has one (paper's ink
+  // red, void's coral); catppuccin keeps the text colour.
+  readonly property string emphasisCss: OriLook.hasEmphasis ? ";color:" + cssColor(OriLook.emphasis) : ""
+  readonly property string ink: cssColor(Theme.yellow) + emphasisCss
 
   function splitCached(body, streaming, calls) {
     var src = String(body || "")
     var list = calls || []
     var c = fmt.cache
+    if (c.ink !== fmt.ink) { c.calls = null; c.ink = fmt.ink }
 
     // A call whose offset is PAST the end of the body is clamped to the length
     // by tools(), so its cut moves forward as the answer grows -- the one way a
@@ -505,8 +514,9 @@ QtObject {
     // model opens every paragraph with `**Something:**`, so a whole answer came
     // back looking like a list of headings. 600 still reads as emphasis and
     // stops shouting.
-    t = t.replace(/\*\*([^*\n]+)\*\*/g, "<span style=\"font-weight:600\">$1</span>")
-         .replace(/__([^_\n]+)__/g, "<span style=\"font-weight:600\">$1</span>")
+    var strong = "<span style=\"font-weight:600" + fmt.emphasisCss + "\">$1</span>"
+    t = t.replace(/\*\*([^*\n]+)\*\*/g, strong)
+         .replace(/__([^_\n]+)__/g, strong)
          .replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<i>$2</i>")
          .replace(/(^|[\s(])_([^_\n]+)_(?=[\s.,;:)]|$)/g, "$1<i>$2</i>")
     // A markdown `--` is an em dash and every model writes them. Qt's markdown

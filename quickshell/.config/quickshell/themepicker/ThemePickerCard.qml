@@ -11,6 +11,9 @@ import ".."
 //               1px-accent selection sliding between rows (LauncherList).
 //   brutal:     cream card, ink border, hard ink offset shadow, square corners,
 //               yellow-filled selected row with an ink outline.
+//   v2 themes:  the theme's surface (translucent on glass/neon), hairline
+//               outline, radii and soft shadow/glow; the selection is the
+//               theme's selection role with onSelection text.
 //
 // The Item is sized to include the shadow, so a host can centre it as-is.
 Item {
@@ -30,18 +33,29 @@ Item {
   signal pointerMoved(point p)
 
   readonly property bool brutal: Theme.brutal
-  readonly property int edge: brutal ? Theme.borderWidth : 2
-  readonly property color edgeColor: brutal ? Theme.borderColor : Theme.accent
-  readonly property int radius: brutal ? 0 : 12
+  readonly property bool v2: Theme.v2
+  readonly property int edge: Theme.panelBorderOr(2)
+  readonly property color edgeColor: Theme.panelBorderColorOr(Theme.accent)
+  readonly property int radius: brutal ? 0 : Theme.radiusOr(12)
+  readonly property int chipRadius: brutal ? 0 : Theme.chipRadiusOr(6)
   readonly property int rowHeight: 64
   readonly property int rowSpacing: 6
   readonly property int inset: 10
-  readonly property color selText: brutal ? Theme.onFill : Theme.text
+  // Theme.accentInk / onSelection read #000000 at runtime (measured: every
+  // `on<Upper>` role property of the Theme singleton comes back black, while
+  // Theme.role() returns the right value), so resolve the roles here.
+  readonly property color onAccentInk: Theme.role("onAccent", Theme.base)
+  readonly property color onSelectionInk: Theme.role("onSelection", Theme.text)
+  readonly property color selText: brutal ? Theme.onFill : (v2 ? onSelectionInk : Theme.text)
 
   implicitWidth: 540 + (brutal ? Theme.shadowX : 0)
   implicitHeight: card.height + (brutal ? Theme.shadowY : 0)
   width: implicitWidth
   height: implicitHeight
+
+  // Soft shadow / glow (glass, tonal, neon); nothing elsewhere. The host
+  // surface is full-screen, so there is room for it.
+  SoftShadow { target: card }
 
   // Hard offset shadow.
   Rectangle {
@@ -57,7 +71,9 @@ Item {
     id: card
     width: 540
     height: header.height + list.height + root.edge
-    color: Theme.base
+    // Glass is 62% base: fine for a panel over the wallpaper, too thin for a
+    // list read over a busy window, so the picker floors it at 85%.
+    color: root.v2 ? Theme.alpha(Theme.base, Math.max(Theme.surfaceOpacity, 0.85)) : Theme.base
     radius: root.radius
     border.width: root.edge
     border.color: root.edgeColor
@@ -70,17 +86,18 @@ Item {
       y: root.edge
       width: parent.width - 2 * root.edge
       height: 48
-      color: root.brutal ? Theme.mantle : Theme.surface0
+      color: root.brutal ? Theme.mantle : (root.v2 ? Theme.surfaceInner : Theme.surface0)
       topLeftRadius: Math.max(0, root.radius - root.edge)
       topRightRadius: Math.max(0, root.radius - root.edge)
 
-      // Brutal: an ink rule under the header, like the mockup's title bars.
+      // An outline rule under the header, like the mockup's title bars
+      // (brutal ink, paper's hairline, glass/neon's soft edge).
       Rectangle {
-        visible: root.brutal
+        visible: root.brutal || (root.v2 && root.edge > 0)
         anchors.bottom: parent.bottom
         width: parent.width
-        height: Theme.borderWidth
-        color: Theme.borderColor
+        height: root.brutal ? Theme.borderWidth : root.edge
+        color: root.brutal ? Theme.borderColor : Theme.softBorderOr(Theme.surface0)
       }
 
       Rectangle {
@@ -90,7 +107,7 @@ Item {
         anchors.verticalCenterOffset: root.brutal ? -1 : 0
         width: promptLabel.implicitWidth + 24
         height: promptLabel.implicitHeight + (root.brutal ? 8 : 12)
-        radius: root.brutal ? 0 : 6
+        radius: root.chipRadius
         color: root.brutal ? Theme.fillYellow : Theme.accent
         border.width: root.brutal ? 2 : 0
         border.color: Theme.borderColor
@@ -99,7 +116,7 @@ Item {
           id: promptLabel
           anchors.centerIn: parent
           text: root.brutal ? "THEME" : "󰏘 Theme"
-          color: root.brutal ? Theme.onFill : Theme.base
+          color: root.brutal ? Theme.onFill : root.onAccentInk
           font.family: Style.font.family
           font.pixelSize: root.brutal ? Style.font.tiny : Style.font.small
           font.weight: Style.font.boldWeight
@@ -125,7 +142,7 @@ Item {
         anchors.verticalCenter: prompt.verticalCenter
         text: "↑↓  ⏎ apply  esc"
         color: root.brutal ? Theme.subtext0 : Theme.overlay0
-        font.family: Style.font.family
+        font.family: Theme.monoFont
         font.pixelSize: Style.font.tiny
         renderType: Text.NativeRendering
       }
@@ -158,9 +175,10 @@ Item {
         width: parent.width - 2 * root.inset
         height: root.rowHeight
         y: root.inset + Math.max(0, Math.min(root.currentIndex, list.n - 1)) * (root.rowHeight + root.rowSpacing)
-        color: root.brutal ? Theme.fillYellow : Theme.surface1
-        radius: root.brutal ? 0 : 6
-        border.width: root.brutal ? 2 : 1
+        color: root.brutal ? Theme.fillYellow : Theme.selectionOr(Theme.surface1)
+        radius: root.chipRadius
+        // v2: the selection role is the whole mark, no outline.
+        border.width: root.brutal ? 2 : (root.v2 ? 0 : 1)
         border.color: root.brutal ? Theme.borderColor : Theme.accent
 
         Behavior on y {
@@ -179,7 +197,11 @@ Item {
           readonly property bool selected: index === root.currentIndex
           readonly property bool isCurrent: modelData.name === root.currentName
           readonly property color fg: selected ? root.selText : Theme.text
-          readonly property color fgDim: selected && root.brutal ? Theme.onFill : Theme.subtext0
+          readonly property color fgDim: selected && root.brutal ? Theme.onFill
+                                       : (selected && root.v2 ? Theme.alpha(root.onSelectionInk, 0.7) : Theme.subtext0)
+          // Tags on a v2 selected row sit on the selection fill (paper's is ink),
+          // so they take its ink instead of their own colours.
+          readonly property bool onSel: selected && root.v2
 
           x: root.inset
           y: root.inset + index * (root.rowHeight + root.rowSpacing)
@@ -219,7 +241,7 @@ Item {
               elide: Text.ElideRight
               text: row.modelData.name
               color: row.fgDim
-              font.family: Style.font.family
+              font.family: Theme.monoFont
               font.pixelSize: Style.font.tiny
               renderType: Text.NativeRendering
             }
@@ -241,15 +263,17 @@ Item {
                 visible: row.isCurrent
                 width: curLabel.implicitWidth + 12
                 height: curLabel.implicitHeight + 4
-                radius: root.brutal ? 0 : height / 2
-                color: root.brutal ? Theme.fillGreen : Theme.alpha(Theme.green, 0.18)
-                border.width: root.brutal ? 2 : 0
-                border.color: Theme.borderColor
+                radius: root.brutal ? 0 : (Theme.chipRadius >= 0 ? Math.min(height / 2, Theme.chipRadius) : height / 2)
+                color: root.brutal ? Theme.fillGreen
+                     : (row.onSel ? Theme.alpha(root.onSelectionInk, 0.16)
+                        : (root.v2 ? Theme.okBackground : Theme.alpha(Theme.green, 0.18)))
+                border.width: root.brutal ? 2 : (root.v2 && Theme.okBackground.a === 0 ? 1 : 0)
+                border.color: root.brutal ? Theme.borderColor : (row.onSel ? root.onSelectionInk : Theme.ok)
                 Text {
                   id: curLabel
                   anchors.centerIn: parent
                   text: root.brutal ? "ACTIVE" : "󰄬 active"
-                  color: root.brutal ? Theme.onFill : Theme.green
+                  color: root.brutal ? Theme.onFill : (row.onSel ? root.onSelectionInk : (root.v2 ? Theme.ok : Theme.green))
                   font.family: Style.font.family
                   font.pixelSize: Style.font.tiny - 1
                   font.weight: Style.font.boldWeight
@@ -261,8 +285,9 @@ Item {
               Rectangle {
                 width: modeLabel.implicitWidth + 12
                 height: modeLabel.implicitHeight + 4
-                radius: root.brutal ? 0 : height / 2
-                color: root.brutal ? Theme.base : Theme.surface0
+                radius: root.brutal ? 0 : (Theme.chipRadius >= 0 ? Math.min(height / 2, Theme.chipRadius) : height / 2)
+                color: root.brutal ? Theme.base
+                     : (row.onSel ? Theme.alpha(root.onSelectionInk, 0.16) : (root.v2 ? Theme.surfaceInner : Theme.surface0))
                 border.width: root.brutal ? 2 : 0
                 border.color: Theme.borderColor
                 Text {
@@ -270,7 +295,7 @@ Item {
                   anchors.centerIn: parent
                   text: row.modelData.dark === false ? (root.brutal ? "LIGHT" : "󰖨 light")
                                                      : (root.brutal ? "DARK" : "󰖔 dark")
-                  color: root.brutal ? Theme.text : Theme.subtext0
+                  color: root.brutal ? Theme.text : (row.onSel ? root.onSelectionInk : Theme.subtext0)
                   font.family: Style.font.family
                   font.pixelSize: Style.font.tiny - 1
                   font.weight: Style.font.boldWeight
@@ -289,10 +314,11 @@ Item {
                   required property var modelData
                   width: 14
                   height: 14
-                  radius: root.brutal ? 0 : 3
+                  radius: root.brutal ? 0 : Math.min(3, Theme.chipRadiusOr(3))
                   color: modelData
                   border.width: root.brutal ? 2 : 1
-                  border.color: root.brutal ? Theme.borderColor : Theme.alpha(Theme.text, 0.15)
+                  border.color: root.brutal ? Theme.borderColor
+                              : (row.onSel ? Theme.alpha(root.onSelectionInk, 0.35) : Theme.alpha(Theme.text, 0.15))
                 }
               }
             }

@@ -28,7 +28,8 @@ PanelWindow {
   // lower, so the surface's RESTING position (y = 0) lands on swayosd's exact
   // bottom edge and the slide-in still has somewhere to come from.
   // (minus the brutal shadow strip added below the surface; 0 in catppuccin)
-  margins.bottom: Math.round((win.screen ? win.screen.height : 0) * 0.15) - travel - Theme.shadowY
+  // (and minus the v2 soft-shadow/glow room around it; 0 in catppuccin)
+  margins.bottom: Math.round((win.screen ? win.screen.height : 0) * 0.15) - travel - Theme.shadowY - pad
 
   readonly property int surfaceWidth: 343
   readonly property int surfaceHeight: 80
@@ -37,10 +38,12 @@ PanelWindow {
   // surface every frame, so the travel happens inside a fixed window instead,
   // and the extra strip above is transparent and masked out.
   readonly property int travel: 10
+  // Transparent room on every side for a v2 soft shadow or glow.
+  readonly property int pad: Theme.shadowPad
 
   // Sized once to include the brutal hard shadow (0 in catppuccin).
-  implicitWidth: surfaceWidth + Theme.shadowX
-  implicitHeight: surfaceHeight + travel + Theme.shadowY
+  implicitWidth: surfaceWidth + Theme.shadowX + 2 * pad
+  implicitHeight: surfaceHeight + travel + Theme.shadowY + 2 * pad
 
   color: "transparent"
 
@@ -55,6 +58,7 @@ PanelWindow {
   visible: showing || surface.opacity > 0
 
   HardShadow { target: surface }
+  SoftShadow { target: surface }
 
   Rectangle {
     id: surface
@@ -63,13 +67,14 @@ PanelWindow {
     height: win.surfaceHeight
     // Rest at the top of the window (swayosd's position); start `travel` px
     // lower and rise into it.
-    y: win.showing ? 0 : win.travel
+    x: win.pad
+    y: win.pad + (win.showing ? 0 : win.travel)
     opacity: win.showing ? 1 : 0
 
     // style.css `window { background: @base; border-radius: 10px;
     //                     border: 2px solid @mauve }`
-    color: Theme.base
-    radius: Theme.r(10)
+    color: Theme.surfaceOr(Theme.base)
+    radius: Theme.radiusOr(10)
     border.width: Theme.frameWidth(2)
     border.color: Theme.frameColor(Theme.mauve)
 
@@ -104,7 +109,7 @@ PanelWindow {
       verticalAlignment: Text.AlignVCenter
 
       text: win.controller ? win.controller.glyph : ""
-      color: Theme.mauve
+      color: Theme.v2 ? Theme.accent : Theme.mauve
       font.family: Style.font.family
       font.pixelSize: 44
       renderType: Text.NativeRendering
@@ -152,15 +157,15 @@ PanelWindow {
         width: parent.width
         // Brutal: the mockup's outlined meter (.prog), taller, ink fill.
         height: Theme.brutal ? 12 : 6
-        radius: Theme.r(3)
-        color: Theme.brutal ? Theme.mantle : Theme.surface0
+        radius: Theme.v2 ? Theme.chipRadiusOr(3) > 0 ? height / 2 : 0 : Theme.r(3)
+        color: Theme.brutal ? Theme.mantle : Theme.v2 ? Theme.surfaceInner : Theme.surface0
         border.width: Theme.chipBorder
         border.color: Theme.borderColor
 
         Rectangle {
           height: parent.height
           radius: parent.radius
-          color: Theme.text
+          color: Theme.v2 ? Theme.accent : Theme.text
           width: trough.width * Math.max(0, Math.min(100, win.controller ? win.controller.level : 0)) / 100
 
           // The one place the OSD is genuinely better than swayosd rather than

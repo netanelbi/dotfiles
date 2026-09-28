@@ -173,8 +173,8 @@ PanelWindow {
   // they were sized once and animated internally.
   // The one exception is the wide mode, which resizes ONCE per transition.
   implicitWidth: wide
-      ? (panel.screen ? panel.screen.width : panelWidth + 24)
-      : panelWidth + 24
+      ? (panel.screen ? panel.screen.width : panelWidth + 16 + OriLook.cardRoom)
+      : panelWidth + 16 + OriLook.cardRoom
   color: Theme.transparent
 
   visible: opened || revealed > 0.001
@@ -233,9 +233,9 @@ PanelWindow {
   readonly property color accent:
       OriClient.error !== "" ? Theme.red
     : liveToolSafe !== "" ? Theme.accent
-    : OriClient.busy ? Theme.sapphire
+    : OriClient.busy ? OriLook.busy
     : OriClient.bgCount > 0 ? Theme.accent
-    : OriClient.warm ? Theme.sapphire
+    : OriClient.warm ? OriLook.busy
     : Theme.inactive
   // The same state as a pastel fill, for the brutal chips (ink text on it).
   readonly property color accentFill:
@@ -438,8 +438,9 @@ PanelWindow {
       color: Theme.transparent
       border.width: grow
       border.color: Theme.alpha(panel.accent, [0.14, 0.07, 0.035][index])
-      // Brutal has no soft light: its card casts a hard shadow instead.
-      visible: !Theme.brutal
+      // Brutal has no soft light: its card casts a hard shadow instead. v2
+      // themes cast their own soft shadow or glow (SoftShadow below).
+      visible: !Theme.brutal && !OriLook.v2
       opacity: card.opacity
       Behavior on border.color { ColorAnimation { duration: Style.anim.colorDuration } }
     }
@@ -449,6 +450,8 @@ PanelWindow {
   // Fits the fixed surface: card.x 16 + panelWidth + 5 < panelWidth + 24, and
   // the card's 8px bottom inset takes the 5 below.
   HardShadow { target: card }
+  // v2: the theme's soft shadow (tonal) or glow (neon; cyan while busy).
+  SoftShadow { target: card; shown: OriLook.cardShadow; active: OriClient.busy }
 
   Rectangle {
     id: card
@@ -459,7 +462,7 @@ PanelWindow {
     width: wide ? cardWide : panelWidth
     // Full height: with the surface reserving its width it is a tile beside
     // the windows, and a tile runs the height of the workspace.
-    height: parent.height - 16
+    height: parent.height - 2 * OriLook.cardRoom
     anchors.verticalCenter: parent.verticalCenter
     // Instant, no glide: surface and card switch in the same frame.
     x: wide ? (parent.width - width) / 2 : 16
@@ -471,17 +474,16 @@ PanelWindow {
     // Brutal: an opaque card with an ink edge -- no glass (the layer rule's
     // blur then has nothing to show through, ignore_alpha keeps it off the
     // transparent strip).
-    color: Theme.brutal ? Theme.base : Theme.alpha(Theme.base, 0.6)
-    radius: Theme.r(12)
-    border.width: Theme.brutal ? Theme.borderWidth : 1
+    color: OriLook.cardFill
+    radius: OriLook.cardRadius
+    border.width: OriLook.cardBorderWidth
     // The edge of the card is the furthest-away readout there is: dim when
     // nothing is happening, lit in the accent of whatever is. Kept neutral for
     // effort on purpose -- Netanel tried the effort heat scale here and asked
     // for it on the composer edge alone; the full-card flash at every cycle
     // was louder than the signal.
-    border.color: Theme.brutal ? Theme.borderColor
-      : OriClient.busy || OriClient.error !== ""
-      ? Theme.alpha(panel.accent, 0.9) : Theme.alpha(panel.accent, 0.5)
+    border.color: OriLook.cardBorder(panel.accent, OriClient.busy || OriClient.error !== "",
+                                     OriClient.error !== "")
     clip: true
 
     // ---------------------------------------------------------------- header
@@ -587,8 +589,8 @@ PanelWindow {
 
       Rectangle {
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: Theme.brutal ? Theme.borderWidth : 1
-        color: Theme.brutal ? Theme.borderColor : Theme.alpha(panel.accent, 0.15)
+        height: Theme.brutal ? Theme.borderWidth : OriLook.v2 ? OriLook.ruleWidth : 1
+        color: Theme.brutal ? Theme.borderColor : OriLook.v2 ? OriLook.rule : Theme.alpha(panel.accent, 0.15)
       }
     }
 
@@ -1790,10 +1792,13 @@ PanelWindow {
       // Grows with the draft up to a ceiling, then the field scrolls. The card
       // is a fixed size, so this only moves the boundary between the two panes.
       height: Math.max(64, Math.min(entry.implicitHeight, 120) + 20)
-      radius: Theme.r(12)
-      color: Theme.brutal ? Theme.base : Theme.alpha(Theme.mantle, 0.72)
+      radius: OriLook.inputRadius(height)
+      // v2: the prototype's input well, its soft hairline lit in the theme's
+      // focus colour while you are typing in it.
+      color: Theme.brutal ? Theme.base : OriLook.v2 ? OriLook.well : Theme.alpha(Theme.mantle, 0.72)
       border.width: Theme.brutal ? Theme.borderWidth - 1 : 1
       border.color: Theme.brutal ? Theme.borderColor
+        : OriLook.v2 ? (entry.activeFocus ? Theme.alpha(Theme.focus, 0.55) : OriLook.wellBorder)
         : Theme.alpha(panel.accent, entry.activeFocus ? 0.55 : 0.30)
       Behavior on border.color { ColorAnimation { duration: Style.anim.quick } }
 
@@ -1826,8 +1831,9 @@ PanelWindow {
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
         width: 120
         radius: parent.radius
-        // Brutal is flat: no light pooled under the orb.
-        visible: !Theme.brutal
+        // Brutal is flat: no light pooled under the orb. Nor on a light page
+        // (paper, tonal): the same wash reads as a stain there.
+        visible: !Theme.brutal && Theme.dark
         gradient: Gradient {
           orientation: Gradient.Horizontal
           GradientStop { position: 0.0; color: Theme.alpha(caret.tint, 0.32) }
@@ -1897,8 +1903,8 @@ PanelWindow {
           width: parent.width
 
           color: Theme.text
-        selectionColor: Theme.sapphire
-        selectedTextColor: Theme.base
+        selectionColor: OriLook.selection
+        selectedTextColor: OriLook.selectionInk
         selectByMouse: true
         wrapMode: TextEdit.Wrap
         font.family: Style.font.panelFamily
@@ -2078,7 +2084,9 @@ PanelWindow {
       anchors { left: parent.left; right: parent.right; bottom: parent.bottom
                 margins: card.border.width }
       height: 24
-      color: Theme.brutal ? Theme.mantle : Theme.alpha(Theme.mantle, 0.6)
+      // v2: no strip of its own, just the rule the gauge rides (the
+      // prototype's status line).
+      color: Theme.brutal ? Theme.mantle : OriLook.v2 ? Theme.transparent : Theme.alpha(Theme.mantle, 0.6)
       bottomLeftRadius: card.radius - card.border.width
       bottomRightRadius: card.radius - card.border.width
 
@@ -2086,8 +2094,10 @@ PanelWindow {
         id: gaugeTrack
         anchors { left: parent.left; right: parent.right; top: parent.top }
         // Brutal: the gauge rides the footer's ink rule, in pastel fill.
-        height: Theme.brutal ? Theme.borderWidth : 2
-        color: Theme.brutal ? Theme.borderColor : Theme.surface0
+        // v2: the status line's 1px rule (tonal has none, so its surface0).
+        height: Theme.brutal ? Theme.borderWidth : OriLook.v2 ? 1 : 2
+        color: Theme.brutal ? Theme.borderColor
+          : OriLook.v2 && OriLook.ruleWidth > 0 ? OriLook.rule : Theme.surface0
 
         Rectangle {
           anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
@@ -2095,8 +2105,8 @@ PanelWindow {
           color: Theme.brutal
             ? (OriClient.contextFraction < 0.7 ? Theme.fillBlue
               : OriClient.contextFraction < 0.9 ? Theme.fillYellow : Theme.fillRed)
-            : OriClient.contextFraction < 0.7 ? Theme.sapphire
-            : OriClient.contextFraction < 0.9 ? Theme.yellow : Theme.red
+            : OriClient.contextFraction < 0.7 ? (OriLook.v2 ? Theme.accent : Theme.sapphire)
+            : OriClient.contextFraction < 0.9 ? Theme.warn : Theme.err
 
           Behavior on width {
             NumberAnimation { duration: Style.anim.normal; easing.type: Style.anim.easing }

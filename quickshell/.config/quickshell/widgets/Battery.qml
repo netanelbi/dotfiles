@@ -115,9 +115,14 @@ BarWidget {
       1)
 
   // Brutal: the state as a filled chip (green / yellow / red) with ink text;
-  // the critical blink then fades the ink into the chip.
-  chipColor: charging ? Theme.fillGreen
-      : (critical ? Theme.fillRed : (warning ? Theme.fillYellow : Theme.fillGreen))
+  // the critical blink then fades the ink into the chip. v2: the prototype's
+  // `.batt` tonal chip (okBg + ok; warn/err likewise). A theme whose okBg is
+  // transparent (paper, void) gets plain coloured text, like catppuccin.
+  chipColor: Theme.brutal
+      ? (charging ? Theme.fillGreen : (critical ? Theme.fillRed : (warning ? Theme.fillYellow : Theme.fillGreen)))
+      : (critical && !charging ? Theme.alpha(Theme.err, Theme.okBackground.a)
+         : (warning && !charging ? Theme.warnBackground : Theme.okBackground))
+  chipTextColor: critical && !charging ? Theme.err : (warning && !charging ? Theme.warn : Theme.ok)
   readonly property color textColor: chipped
       ? Qt.rgba(chipInk.r + (chipColor.r - chipInk.r) * blink,
                 chipInk.g + (chipColor.g - chipInk.g) * blink,

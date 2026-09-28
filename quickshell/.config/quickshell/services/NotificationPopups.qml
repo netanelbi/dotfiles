@@ -58,7 +58,7 @@ PanelWindow {
     x: 24                       // 12px margin + 12px padding
     y: 0
     width: popups.store.popupWidth - 48
-    height: Math.ceil(column.height + 6)
+    height: Math.ceil(column.height + column.anchors.topMargin)
   }
 
   // swaync opens the popup window on the focused output. Retargeting a live
@@ -94,7 +94,9 @@ PanelWindow {
     Column {
       id: column
       anchors.top: parent.top
-      anchors.topMargin: 6
+      // v2 soft shadow / glow: room above the first card so the surface's top
+      // edge does not cut it off (6 as ever when the theme has none).
+      anchors.topMargin: 6 + Math.max(0, Theme.shadowBlurUsed - (Theme.hasGlow ? 0 : Theme.softShadowY) - 6)
       anchors.right: parent.right
       anchors.rightMargin: 12
       width: popups.store.popupWidth - 24

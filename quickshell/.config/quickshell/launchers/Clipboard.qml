@@ -133,7 +133,7 @@ Scope {
     prompt: "Clipboard"
     accent: Theme.accent           // catppuccin.rasi: border-color @mauve
     panelWidth: 900
-    cornerRadius: Theme.r(12)
+    cornerRadius: Theme.radiusOr(12)
     placeholder: "Search clipboard..."
     list: list
 
@@ -183,8 +183,8 @@ Scope {
             Rectangle {
               anchors.fill: parent
               visible: clipRow.isImage
-              radius: Theme.r(6)
-              color: Theme.surface0
+              radius: Theme.chipRadiusOr(6)
+              color: Theme.v2 ? Theme.surfaceInner : Theme.surface0
               clip: true
 
               Image {
@@ -286,13 +286,13 @@ Scope {
       Rectangle {
         anchors.fill: parent
         anchors.margins: 1
-        color: Theme.mantle
-        radius: Theme.r(8)
+        color: Theme.v2 ? Theme.surfaceInner : Theme.mantle
+        radius: Theme.chipRadiusOr(8)
 
         // Vertical hairline separating the two panes.
         Rectangle {
           width: 1; height: parent.height
-          color: Theme.surface0
+          color: Theme.v2 ? Theme.outlineSoft : Theme.surface0
         }
 
         // --- image entry ---
