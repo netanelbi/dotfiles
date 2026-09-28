@@ -1,0 +1,85 @@
+#!/bin/bash
+# screens off|on|toggle — the ONE way this repo turns the displays off and on.
+#
+#   hypridle 330s    screens off / on-resume: screens on
+#   SUPER + O        screens toggle   (lock + blank now, or wake if dark)
+#   hypr-lid-switch  screens off (undocked close) / screens on (open)
+#   sunshine-prep    screens off      sunshine-unprep: screens on
+#
+# WHY THE ORDER (vivo, Radeon 890M / DCN 3.5, PMFW 93.11 — memory amdgpu_dpms_reboot):
+# a single dpms off that darkens every display at once, with the Dell attached,
+# hard-resets the box (data fabric sync flood). AMD's IPS2 workaround does not
+# cover display-off on this firmware. Turning the EXTERNALS off first, while
+# eDP-1 still keeps the display engine awake, and eDP-1 only after, ran clean
+# every time (2026-09-28: gaps 10s, 2s, 1s, 0.5s — zero kernel lines). GAP is
+# that margin. Never replace this with a global `hl.dsp.dpms({ action = "off" })`.
+#
+# Waking is always the global dpms on; turning displays ON is not the hazard.
+#
+# Every call is per-monitor and scoped: an unresolved monitor name makes
+# hl.dsp.dpms fall back to EVERY monitor, so names come from `hyprctl monitors`.
+set -u
+
+INTERNAL="eDP-1"
+GAP=0.5
+EDP_SPEC="1920x1080@60,0x0,1.3333"
+[ -f ~/.config/hypr/lid-switch.env ] && . ~/.config/hypr/lid-switch.env
+
+dpms() { hyprctl dispatch "hl.dsp.dpms({ action = \"$1\", monitor = \"$2\" })" >/dev/null; }
+lid_closed() { grep -qs closed /proc/acpi/button/lid/*/state; }
+# Physical (non-HEADLESS) ENABLED outputs; `hyprctl monitors` lists only enabled ones.
+physical() { hyprctl monitors -j | jq -r --arg lit "$1" '.[]
+    | select(.name | startswith("HEADLESS") | not)
+    | select($lit == "any" or .dpmsStatus == ($lit == "lit")) | .name'; }
+dark() { [ -n "$(physical dark)" ]; }
+
+screens_off() {
+    local externals internal_on m
+    externals=$(physical lit | grep -vx "$INTERNAL")
+    internal_on=$(physical any | grep -x "$INTERNAL")
+
+    # Docked with the lid shut: eDP-1 is disabled, so the Dell would be the last
+    # display and go dark in one step — the crash case. Bring eDP-1 up first so
+    # the order holds; screens_on disables it again while the lid is still shut.
+    if [ -n "$externals" ] && [ -z "$internal_on" ]; then
+        IFS=, read -r mode pos scale <<< "$EDP_SPEC"
+        hyprctl eval "hl.monitor({ output = \"$INTERNAL\", mode = \"$mode\", position = \"$pos\", scale = $scale, disabled = false })" >/dev/null
+        for _ in $(seq 20); do physical any | grep -qx "$INTERNAL" && break; sleep 0.1; done
+        internal_on=$INTERNAL
+    fi
+
+    for m in $externals; do dpms off "$m"; done
+    [ -n "$externals" ] && sleep "$GAP"
+    [ -n "$internal_on" ] && dpms off "$INTERNAL"
+}
+
+screens_on() {
+    hyprctl dispatch 'hl.dsp.dpms({ action = "on" })' >/dev/null
+    # Undo screens_off's lid-shut detour, if that is where we are.
+    if lid_closed && [ -n "$(physical any | grep -vx "$INTERNAL")" ] &&
+       physical any | grep -qx "$INTERNAL"; then
+        hyprctl eval "hl.monitor({ output = \"$INTERNAL\", disabled = true })" >/dev/null
+    fi
+}
+
+case "${1:-}" in
+    off) screens_off ;;
+    on)  screens_on ;;
+    toggle)
+        # Dark: wake (hypridle's on-resume fires for this key press too, and both
+        # are idempotent). Lit: lock, then go idle NOW, so hypridle blanks and
+        # wakes us on input via on-resume. Locking FIRST matters: force_idle fires
+        # every listener up to 330s at once, and the 150s screensaver (with its
+        # dim) refuses to start only while hyprlock is already up. The pause lets
+        # the key release land, or it would count as activity and wake straight back.
+        if dark; then
+            screens_on
+        else
+            loginctl lock-session
+            for _ in $(seq 30); do pidof hyprlock >/dev/null && break; sleep 0.1; done
+            sleep 0.5
+            hyprctl dispatch 'hl.dsp.force_idle(330)' >/dev/null
+        fi
+        ;;
+    *) echo "usage: screens off|on|toggle" >&2; exit 2 ;;
+esac

@@ -30,18 +30,12 @@ end)
 
 hl.bind(mainMod .. " + M", hl.dsp.focus({ workspace = "name:stream" }))
 
--- Desk off ("server mode"): lock, then darken the desk while the machine keeps
--- running. Any real keypress or touchpad movement brings it back, as does
--- pressing this again. `locked` so it fires while locked -- that, plus the fact
--- that `off` re-enables whatever was disabled, makes this the rescue key too.
---
--- The old bind ran hypr-display-toggle, which ran `dpms off`. "All displays off"
--- is the state that arms IPS2 on this DCN 3.5 part and hard-resets the machine
--- (three times on 2026-09-23 alone; memory: amdgpu_dpms_reboot), and no kernel
--- flag both guards it and keeps deep sleep. desk-blank gets the same result by
--- disabling the EXTERNALS and dropping the remaining panel's backlight to 0, so
--- one real output is always enabled. See CLAUDE.md, "Never turn every display off".
-hl.bind(mainMod .. " + O", hl.dsp.exec_cmd("~/.local/bin/desk-blank toggle"), { locked = true })
+-- Desk off: lock and turn the screens off now; any key brings them back.
+-- It asks hypridle to go idle (`screens toggle` -> force_idle), so it takes the
+-- same lock + `screens off` + on-resume path as walking away. Pressed while
+-- dark it wakes directly -- the rescue if hypridle died with the screens off.
+-- `locked` so it fires from the lock screen.
+hl.bind(mainMod .. " + O", hl.dsp.exec_cmd("~/.local/bin/screens toggle"), { locked = true })
 
 -- Push-to-talk: hold right Alt, speak, release. Voice capsule (Ori), not
 -- dictation — the message lands in Ori's session marked [voice]; whether Ori

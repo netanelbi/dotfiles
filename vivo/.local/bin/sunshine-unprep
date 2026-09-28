@@ -34,10 +34,9 @@ fi
 timeout 3 systemctl --user stop sunshine-inhibit 2>/dev/null || true
 systemctl --user reset-failed sunshine-inhibit 2>/dev/null || true
 
-# Undo the desk blanking first, so the panels are lit again even if a later
-# hyprctl step times out. desk-blank off also stops desk-blank-watch, so it
-# can't race us and "wake" a desk that is already awake.
-timeout 5 "$HOME/.local/bin/desk-blank" off 2>/dev/null || true
+# Light the desk first, so the panels are on again even if a later hyprctl
+# step times out.
+timeout 5 "$HOME/.local/bin/screens" on 2>/dev/null || true
 # Legacy: drop any cookie file left behind by the old (broken) inhibit form.
 rm -f "$COOKIE_FILE"
 

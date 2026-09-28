@@ -139,27 +139,21 @@ fi
 # 6. Darken the desk for the stream's duration. Done LAST so an earlier failure
 #    can't leave the screens dark. Undone by sunshine-unprep.
 #
-#    THIS USED TO DISABLE BOTH PANELS AND THAT IS WHAT CRASHED THE MACHINE.
-#    With eDP-1 and DP-2 both gone, HEADLESS-1 was the only output left — and it
-#    is a virtual wlroots output with no display engine behind it, so the GPU saw
-#    "all displays off". That is the single state that arms IPS2 on this DCN 3.5
-#    part and hard-resets the box (memory: amdgpu_dpms_reboot). It did exactly
-#    that at stream start on 2026-09-20 11:19.
+#    `screens off` dpms-offs the physical panels, externals before eDP-1 (the
+#    order that keeps this APU from hard-resetting, memory amdgpu_dpms_reboot).
+#    HEADLESS-1 is never touched, so the stream keeps its output. Nothing here
+#    DISABLES a panel: with both panels disabled, HEADLESS-1 -- a virtual output
+#    with no display engine -- was all that was left, and that crashed the box at
+#    stream start on 2026-09-20 11:19.
 #
-#    desk-blank keeps ONE physical output enabled and merely makes it emit no
-#    light — see that script for how the keeper is chosen. Nothing here touches
-#    dpms; `monitor disabled = true` takes a named output and is safe as long as
-#    something real stays enabled, which is the invariant desk-blank holds.
+#    Sunshine's injected input can't wake the desk: Hyprland's key/mouse dpms
+#    wake is off, and hypridle is inhibited (step 4) so its on-resume never fires.
+#    To light the desk mid-stream, press SUPER + O on the laptop.
 #
-#    KNOWN RISK, WATCH THE FIRST FEW STREAMS: the old comment here claimed that
-#    leaving the panels enumerable let Sunshine's output_name matcher fall back to
-#    the laptop panel ~80% of the time. output_name is pinned to HEADLESS-1 and
-#    this script now waits for HEADLESS-1 to exist before Sunshine enumerates, so
-#    that may well have been the race rather than the matcher. If a remote client
-#    ever sees the desktop instead of the game, that is this — say so, don't
-#    "fix" it by disabling the keeper.
-#    desk-blank also starts desk-blank-watch, which wakes the desk when a person
-#    physically touches the laptop. Sunshine's injected input is indistinguishable
-#    from real input at the Wayland level, so that watcher reads the real evdev
-#    nodes instead — Sunshine's devices all live under /devices/virtual/input/.
-"$HOME/.local/bin/desk-blank" on || true
+#    KNOWN RISK, WATCH THE FIRST FEW STREAMS: the panels stay enumerable, and an
+#    old note claimed Sunshine's output_name matcher then fell back to the laptop
+#    panel ~80% of the time. output_name is pinned to HEADLESS-1 and this script
+#    waits for HEADLESS-1 before Sunshine enumerates, so that was probably the
+#    race. If a remote client ever sees the desktop instead of the game, that is
+#    this -- say so, don't "fix" it by disabling the panels.
+"$HOME/.local/bin/screens" off || true

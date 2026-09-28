@@ -66,8 +66,12 @@ hl.config({
     },
 
     misc = {
-        mouse_move_enables_dpms = true,
-        key_press_enables_dpms  = true,
+        -- Off: hypridle's on-resume (`screens on`) is the one wake path. The
+        -- compositor's own wake raced it, and the MX Master's drift woke a fresh
+        -- dpms off within seconds. It also let Sunshine's injected input light
+        -- the desk mid-stream.
+        mouse_move_enables_dpms = false,
+        key_press_enables_dpms  = false,
     },
 
     -- Look and feel - Catppuccin Mocha (gaps_out is machine-specific; see machine.lua)

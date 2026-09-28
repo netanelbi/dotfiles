@@ -79,7 +79,7 @@ stow -D package_name
 | `SUPER + SHIFT + F` | Fullscreen |
 | `SUPER + V` | Clipboard history (quickshell) |
 | `SUPER + L` | Lock screen |
-| `SUPER + O` | Desk off: lock + blank the panels; press again or any key to wake |
+| `SUPER + O` | Desk off: lock + screens off now; any key wakes |
 | `SUPER + E` | File manager (Dolphin) |
 | `SUPER + ~` | Toggle scratchpad |
 | `SUPER + S` | Move window to scratchpad |
@@ -182,6 +182,12 @@ Located in `scripts/.local/bin/`:
 - `hypr-network-watch` - Event-based network indicator for waybar
 - `hypr-zen-popup-watch` - Watch for Zen browser popup windows
 
+**Displays** (shared)
+- `screens` - `off|on|toggle`. The ONE way displays go dark: externals first, then
+  eDP-1 0.5s later (see "Turning displays off" below). Used by hypridle (330s),
+  `SUPER + O` (`toggle`), `hypr-lid-switch` and sunshine-prep/unprep
+- `screensaver-dim` - `on|off`. The screensaver's backlight dim to 40%, restored exactly
+
 **Power / thermal** (shared)
 - `power-profile-cycle` - Cycle power profiles (mapped to `SUPER + B`); calls the
   optional `power-profile-tdp-hook` for per-profile TDP + freq-cap fix (vivo only)
@@ -196,13 +202,6 @@ Located in `scripts/.local/bin/`:
 
 **Streaming / misc** (vivo-only, in the `vivo/` stow package)
 - `sunshine-prep` / `sunshine-unprep` - Switch monitor to 1920x1080@60 for Moonlight, restore native on disconnect
-- `desk-blank` - `on|off|toggle`. Darken the desk while keeping ONE physical output
-  enabled (see "Never turn every display off" below). `toggle` locks first and is what
-  `SUPER + O` runs; `off` is also the rescue path
-- `desk-blank-watch` - Wake the desk on a deliberate KEY PRESS from a real
-  (non-Sunshine) input device; started by `desk-blank on` as a transient unit.
-  EV_KEY only — the MX Master emits motion on its own, so waking on pointer
-  movement un-blanked the desk within seconds (measured)
 - `imv-dir` - Open imv with directory navigation
 
 ## Themes
@@ -390,49 +389,46 @@ exists. The speak tool's own done-message rides pi's follow-up queue and lands a
 the next tool boundary, so `speakJob` lingers for the length of any blocking call
 after a sentence -- do not drive "speaking" or the speak strip from it.
 
-## Never turn every display off
+## Turning displays off
 
-`dpms off` with no argument, and disabling the last physical output, both put this
-APU (Radeon 890M, DCN 3.5) into "all displays off" — the one state where the driver
-allows the deep IPS2 idle state. On this machine IPS2 hard-resets the box: the
-firmware reports `[0x08000800] ... data fabric sync flood`, there is no oops, and
-unsaved work is gone. It fired three times on 2026-09-23 alone. Memory:
-`amdgpu_dpms_reboot`.
+On this APU (Radeon 890M, DCN 3.5, PMFW 93.11) a `dpms off` that darkens every
+display **in one step** with the Dell attached hard-resets the box: the firmware
+reports `[0x08000800] ... data fabric sync flood`, no oops, unsaved work gone. It
+fired three times on 2026-09-23. AMD's IPS2 workaround for old PMFW does not cover
+display-off. Memory: `amdgpu_dpms_reboot`.
 
-There is no kernel flag that both guards it and keeps deep sleep.
-`amdgpu.dcdebugmask=0x800` guards it and costs 0% hardware sleep;
-`0x1000` keeps 99% hardware sleep and does NOT guard it (measured, then crashed).
-**So the flag is gone and the triggers were removed instead.** Nothing in this repo
-may reintroduce one.
+**The rule: externals off first, eDP-1 after.** Measured 2026-09-28 with no kernel
+flag: Dell off, then eDP-1 after 10s, 2s, 1s and 0.5s gaps -- every display dark,
+zero kernel lines, no crash. `screens off` does exactly that with a 0.5s gap, and it
+is the only thing in this repo that turns a display off. Waking is the global
+`dpms on`; turning displays on is not the hazard.
 
 | Want | Use | Not |
 |---|---|---|
-| Lid shut, undocked | `dpms off` (eDP-1 alone never crashed; backlight 0 still shows text) | backlight 0 |
-| Blank the laptop panel, lid open | `brightnessctl --save set 0` / `--restore` | `dpms off` while the Dell is attached |
-| Turn one external off | `hl.monitor({ output = "DP-2", disabled = true })` | `dpms off` |
-| Darken the desk (stream or `SUPER + O`) | `desk-blank on` / `off` / `toggle`: externals disabled, then `dpms off` on eDP-1 only | disabling every panel |
+| Any display off (idle, `SUPER + O`, lid, stream) | `screens off` / `screens on` | a global `hl.dsp.dpms({ action = "off" })` |
+| Lid shut, docked | `hl.monitor({ output = "eDP-1", disabled = true })` (hypr-lid-switch) | |
+| A stream | HEADLESS-1 added, then `screens off` | disabling both panels (HEADLESS-1 alone = no display engine = crashed at stream start 2026-09-20) |
 
-The invariant is simply: **at least one real output stays enabled at all times.**
-HEADLESS-1 does not count — it is a virtual wlroots output with no display engine,
-which is exactly why the old `sunshine-prep` (which disabled eDP-1 and DP-2, leaving
-only HEADLESS-1) crashed the machine at stream start.
+How the pieces fit:
+- **hypridle** 150s screensaver, 300s lock, 330s `screens off` / on-resume
+  `screens on`. That on-resume is the one wake path: Hyprland's
+  `key_press_enables_dpms` and `mouse_move_enables_dpms` are both **off** (they
+  raced it, the MX Master's drift woke the screens, and Sunshine's injected input
+  lit the desk mid-stream).
+- **`SUPER + O`** runs `screens toggle`: lit -> lock, then `force_idle(330)`, so hypridle
+  locks and blanks and on-resume wakes. Dark -> `screens on` directly, which is
+  also the rescue if hypridle died with the screens off.
+- **Lid shut + docked** leaves eDP-1 disabled, so `screens off` briefly enables it
+  to keep the order, and `screens on` disables it again.
+- **Blanking never touches the backlight.** The only other writer is the
+  screensaver's dim (`screensaver-dim on|off`): down to 40% only if brighter,
+  restored exactly on close unless you changed it meanwhile, with its own state
+  file -- not brightnessctl's shared `--save` slot, which is what used to restore 0.
+  `backlight-blank`, `desk-blank`, `desk-blank-watch` and the quickshell
+  `gameblank` overlay were removed on 2026-09-28.
 
-Removed for this reason: `hypr-display-toggle`, hypridle's 330s `dpms off` listener, and the two `monitor disabled` lines in
-`sunshine-prep`. `SUPER + O` was rebuilt on `desk-blank toggle`: lock, disable the
-externals, drop the keeper's backlight, and wake on real input — same intent as the old
-bind, none of the dpms.
-
-**Exception, 2026-09-25 (user's call):** `hypr-lid-switch`'s undocked close is
-`dpms off` again, and so is `desk-blank`'s (SUPER + O, sunshine-prep) blank of
-eDP-1. Every recorded crash had the Dell attached; eDP-1 alone never crashed, and
-backlight 0 left the text readable. Always the scoped form,
-`hl.dsp.dpms({ action = "off", monitor = "eDP-1" })` — per-monitor is real
-(read from v0.56.2 `Actions::dpms`, not probed), but an unresolved name falls
-back to EVERY monitor, so call it only while eDP-1 is enabled.
-
-**Do not test whether `hl.dsp.dpms` takes a per-monitor argument by running it.** If
-the argument is ignored the probe *is* the crash. That mistake ate a whole session on
-2026-09-23. Read the Hyprland source instead.
+**Do not probe dpms to learn how it behaves.** An agent did on 2026-09-23 and the
+crash ate the turn. Read the Hyprland source, or have the user run the test.
 
 ## Troubleshooting
 
