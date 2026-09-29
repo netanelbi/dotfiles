@@ -702,7 +702,7 @@ export class Host {
   #broadcastBg(): void {
     // RECONCILE. A tray row is born from a tool result and is supposed to die
     // from the delegate's own report-back -- but that report is a queued
-    // followUp in the conversation's pi child, and a child that dies first
+    // steer in the conversation's pi child, and a child that dies first
     // (killed, evicted, crashed) takes it with it. research-compare-three sat
     // in the tray for half an hour after it was long dead for exactly this
     // reason. The registry is the source of truth -- the catalog already
