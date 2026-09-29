@@ -261,6 +261,10 @@ PanelWindow {
       // custom/tdp -- the 11px peach wattage, only when a custom TDP is set.
       Tdp { }
 
+      // Vitals -- per-thread CPU bars + CPU temp; hover for GPU and memory.
+      // Fixed width, so it never shoves this island around.
+      Vitals { }
+
       // custom/stay-awake -- the yellow cup while the lid inhibitor is held.
       StayAwake { }
 
