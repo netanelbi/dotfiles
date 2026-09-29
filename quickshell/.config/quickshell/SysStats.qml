@@ -12,7 +12,8 @@ import Quickshell.Io
 // ----------------------------------------------------------------- the cost
 // Two clocks:
 //   1000ms - per-core ticks + CPU temp  (always: the chip shows them)
-//   2000ms - GPU busy/clock/watts, RAM, VRAM, GTT  (only while `detail` > 0)
+//   2000ms - GPU busy + RAM             (always: the chip shows RAM, GPU when busy)
+//   2000ms - clock, watts, VRAM, GTT    (only while `detail` > 0)
 // Reads go through FileView.reload(), which re-reads the file IN PROCESS. A
 // shelling-out collector costs ~8ms per spawn -- more than the whole rest of
 // this. Do not replace these with a Process.
@@ -46,6 +47,14 @@ Singleton {
   property int    gpuClock: 0
   property real   gpuWatts: 0
 
+  // Whether the chip should show the GPU / temp segment. Hysteresis, so a
+  // load hovering at the threshold does not make the chip twitch: GPU shows at
+  // 25% and hides only after 8s under 10%; CPU temp shows at 70° and hides under 67°.
+  property bool   gpuActive: false
+  property bool   tempActive: false
+  property real   gpuCalmSince: 0
+  readonly property real ramFrac: ramTotal > 0 ? ramUsed / ramTotal : 0
+
   property var    prevTot: []
   property var    prevIdle: []
 
@@ -70,6 +79,7 @@ Singleton {
         }
         root.ready = true
         root.sampleCpu()
+        root.sampleLight()
         if (root.detail > 0) root.sampleDetail()
       }
     }
@@ -119,12 +129,12 @@ Singleton {
       root.cpuPeak = peak
     }
     root.cpuTemp = Math.round((Number(fTemp.text()) || 0) / 1000)
+    if (root.cpuTemp >= 70) root.tempActive = true
+    else if (root.cpuTemp < 67) root.tempActive = false
   }
 
-  function sampleDetail() {
-    fMem.reload(); fBusy.reload(); fSclk.reload(); fVU.reload(); fVT.reload()
-    fGU.reload(); fGT.reload(); fPow.reload()
-
+  function sampleLight() {
+    fMem.reload(); fBusy.reload()
     const g = ({})
     const ml = fMem.text().split("\n")
     for (let i = 0; i < ml.length; i++) {
@@ -135,12 +145,24 @@ Singleton {
       root.ramTotal = g["MemTotal"] / 1048576
       root.ramUsed = (g["MemTotal"] - g["MemAvailable"]) / 1048576
     }
+    root.gpuBusy = Number(fBusy.text()) || 0
+
+
+    const now = Date.now()
+    if (root.gpuBusy >= 25) { root.gpuActive = true; root.gpuCalmSince = 0 }
+    else if (root.gpuBusy < 10) {
+      if (root.gpuCalmSince === 0) root.gpuCalmSince = now
+      else if (now - root.gpuCalmSince >= 8000) root.gpuActive = false
+    }
+  }
+
+  function sampleDetail() {
+    fSclk.reload(); fVU.reload(); fVT.reload(); fGU.reload(); fGT.reload(); fPow.reload()
     root.vramUsed = (Number(fVU.text()) || 0) / 1048576
     root.vramTotal = (Number(fVT.text()) || 0) / 1048576
     root.gttUsed = (Number(fGU.text()) || 0) / 1073741824
     root.gttTotal = (Number(fGT.text()) || 0) / 1073741824
     root.gpuWatts = (Number(fPow.text()) || 0) / 1e6
-    root.gpuBusy = Number(fBusy.text()) || 0
     const cl = fSclk.text().split("\n")
     for (let i = 0; i < cl.length; i++) {
       if (cl[i].indexOf("*") !== -1) {
@@ -151,8 +173,9 @@ Singleton {
   }
 
   // A popup opening should not show zeros for two seconds.
-  onDetailChanged: if (detail > 0 && ready) sampleDetail()
+  onDetailChanged: if (detail > 0 && ready) { sampleLight(); sampleDetail() }
 
   Timer { interval: 1000; running: root.ready; repeat: true; onTriggered: root.sampleCpu() }
+  Timer { interval: 2000; running: root.ready; repeat: true; onTriggered: root.sampleLight() }
   Timer { interval: 2000; running: root.ready && root.detail > 0; repeat: true; onTriggered: root.sampleDetail() }
 }

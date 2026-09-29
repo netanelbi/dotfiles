@@ -10,9 +10,12 @@ import "root:/"
 // hides the thing you actually want to know: whether ONE core is pinned (a bad
 // build step) or all of them are (llama-server).
 //
-// FIXED WIDTH on purpose. It sits in the collapse-when-idle island, and a chip
-// that changed width every second would shove its neighbours around; the temp
-// slot is sized to "00°" once.
+// RAM is always shown, in GB. GPU and temp earn a slot only when they are busy
+// (SysStats.gpuActive / tempActive, both with hysteresis).
+//
+// Width changes ONLY when a segment comes or goes -- every number sits in a
+// slot sized once from TextMetrics, so a chip ticking every second never
+// shoves its neighbours around.
 //
 // Bars are STEPPED. A Behavior on 24 rectangles repainting the bar every frame
 // is not worth the smoothness at a 1s sample.
@@ -34,7 +37,7 @@ BarWidget {
   // ------------------------------------------------------------ the chip
   Item {
     id: spec
-    readonly property real pitch: 3
+    readonly property real pitch: 2
     width: pitch * Math.max(1, SysStats.coreCount) - 1
     height: 14
 
@@ -45,27 +48,98 @@ BarWidget {
         required property int index
         readonly property real load: SysStats.coreLoad[index] || 0
         x: index * spec.pitch
-        width: 2
+        width: 1
         height: Math.max(1, Math.round(spec.height * load / 100))
         anchors.bottom: parent.bottom
-        radius: 1
         color: root.heat(load)
         opacity: load < 5 ? 0.45 : 1
       }
     }
   }
 
-  Text {
-    id: temp
-    width: tempMetrics.width
-    horizontalAlignment: Text.AlignRight
-    text: SysStats.cpuTemp > 0 ? SysStats.cpuTemp + "°" : "--°"
-    color: root.tempColor(SysStats.cpuTemp)
-    font.family: Style.font.family
-    font.pixelSize: Style.font.tiny
-    renderType: Text.NativeRendering
+  TextMetrics { id: pctMetrics; font: temp.font; text: "100%" }
 
-    TextMetrics { id: tempMetrics; font: temp.font; text: "00°" }
+  // A GPU / RAM segment: icon + a number, sliding open when it becomes active.
+  component Segment: Item {
+    id: seg
+    property bool active: false
+    property string icon: ""
+    property real value: 0          // 0..100
+    property string label: Math.round(value) + "%"
+    property color tint: Theme.accent
+
+    height: 16
+    width: active ? segRow.implicitWidth : 0
+    opacity: active ? 1 : 0
+    visible: width > 0.5
+    clip: true
+    Behavior on width { NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing } }
+    Behavior on opacity { NumberAnimation { duration: Style.anim.opacityDuration; easing.type: Style.anim.easingSmooth } }
+
+    Row {
+      id: segRow
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: 3
+      leftPadding: 4
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: seg.icon
+        color: seg.tint
+        font.family: Style.font.family
+        font.pixelSize: Style.font.tiny + 1
+        renderType: Text.NativeRendering
+      }
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        width: pctMetrics.width
+        horizontalAlignment: Text.AlignRight
+        text: seg.label
+        color: seg.tint
+        font.family: Style.font.family
+        font.pixelSize: Style.font.tiny
+        renderType: Text.NativeRendering
+      }
+    }
+  }
+
+  Segment {
+    active: SysStats.gpuActive
+    icon: "󰢮"
+    value: SysStats.gpuBusy
+    tint: root.heat(SysStats.gpuBusy)
+  }
+
+  Segment {
+    // Always on -- RAM is the one figure worth a glance at any time.
+    active: SysStats.ramTotal > 0
+    icon: "󰍛"
+    label: SysStats.ramUsed.toFixed(0) + "G"
+    tint: SysStats.ramFrac >= 0.93 ? Theme.red : SysStats.ramFrac >= 0.85 ? Theme.peach : Theme.accent
+  }
+
+  // Last, after RAM. Temp only when it is worth reading: in at 70°, out under 67° (SysStats).
+  Item {
+    readonly property bool active: SysStats.tempActive
+    height: 16
+    width: active ? tempMetrics.width : 0
+    opacity: active ? 1 : 0
+    visible: width > 0.5
+    clip: true
+    Behavior on width { NumberAnimation { duration: Style.anim.reveal; easing.type: Style.anim.easing } }
+    Behavior on opacity { NumberAnimation { duration: Style.anim.opacityDuration; easing.type: Style.anim.easingSmooth } }
+
+    Text {
+      id: temp
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      text: SysStats.cpuTemp + "°"
+      color: root.tempColor(SysStats.cpuTemp)
+      font.family: Style.font.family
+      font.pixelSize: Style.font.tiny
+      renderType: Text.NativeRendering
+
+      TextMetrics { id: tempMetrics; font: temp.font; text: "00°" }
+    }
   }
 
   // ------------------------------------------------------------ open/close
