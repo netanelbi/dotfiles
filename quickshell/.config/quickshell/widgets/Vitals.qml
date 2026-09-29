@@ -59,7 +59,7 @@ BarWidget {
 
   TextMetrics { id: pctMetrics; font: temp.font; text: "100%" }
 
-  // A GPU / RAM segment: icon + a number, sliding open when it becomes active.
+  // A GPU / NPU / RAM segment: icon + an optional number, sliding open when it becomes active.
   component Segment: Item {
     id: seg
     property bool active: false
@@ -90,6 +90,7 @@ BarWidget {
         renderType: Text.NativeRendering
       }
       Text {
+        visible: seg.label !== ""
         anchors.verticalCenter: parent.verticalCenter
         width: pctMetrics.width
         horizontalAlignment: Text.AlignRight
@@ -109,6 +110,14 @@ BarWidget {
     tint: root.heat(SysStats.gpuBusy)
   }
 
+  // NPU: on/off only -- the driver exposes no busy %, just whether it is awake.
+  Segment {
+    active: SysStats.npuActive
+    icon: "󰧑"
+    label: ""
+    tint: Theme.accent
+  }
+
   Segment {
     // Always on -- RAM is the one figure worth a glance at any time.
     active: SysStats.ramTotal > 0
@@ -121,7 +130,8 @@ BarWidget {
   Item {
     readonly property bool active: SysStats.tempActive
     height: 16
-    width: active ? tempMetrics.width : 0
+    // +4: the same lead-in gap the segments carry as leftPadding.
+    width: active ? tempMetrics.width + 4 : 0
     opacity: active ? 1 : 0
     visible: width > 0.5
     clip: true

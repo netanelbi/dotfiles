@@ -12,7 +12,7 @@ import Quickshell.Io
 // ----------------------------------------------------------------- the cost
 // Two clocks:
 //   1000ms - per-core ticks + CPU temp  (always: the chip shows them)
-//   2000ms - GPU busy + RAM             (always: the chip shows RAM, GPU when busy)
+//   2000ms - GPU busy, RAM, NPU state   (always: RAM shown, GPU/NPU when busy)
 //   2000ms - clock, watts, VRAM, GTT    (only while `detail` > 0)
 // Reads go through FileView.reload(), which re-reads the file IN PROCESS. A
 // shelling-out collector costs ~8ms per spawn -- more than the whole rest of
@@ -52,6 +52,11 @@ Singleton {
   // 25% and hides only after 8s under 10%; CPU temp shows at 70° and hides under 67°.
   property bool   gpuActive: false
   property bool   tempActive: false
+  // NPU has no busy-% file, only its runtime-PM state: "active" while a job
+  // holds it, "suspended" 5s (the driver's autosuspend delay) after the last
+  // one ends. That delay is the hysteresis, so none is added here.
+  property bool   npuActive: false
+  property string npuDev: ""
   property real   gpuCalmSince: 0
   readonly property real ramFrac: ramTotal > 0 ? ramUsed / ramTotal : 0
 
@@ -66,6 +71,7 @@ Singleton {
     command: ["sh", "-c",
       'd=$(dirname "$(ls /sys/class/drm/card*/device/gpu_busy_percent 2>/dev/null | head -1)"); ' +
       'echo "gpu:$d"; ' +
+      'for a in /sys/class/accel/accel*; do [ -e "$a/device" ] && echo "npu:$a/device" && break; done; ' +
       'for h in /sys/class/hwmon/hwmon*; do n=$(cat "$h/name" 2>/dev/null); ' +
       'case "$n" in amdgpu) echo "amdgpu:$h" ;; k10temp) echo "k10temp:$h" ;; esac; done']
     stdout: StdioCollector {
@@ -76,6 +82,7 @@ Singleton {
           if (p[0] === "gpu" && p[1]) root.gpuDev = p[1]
           else if (p[0] === "amdgpu" && p[1]) root.amdgpuHm = p[1]
           else if (p[0] === "k10temp" && p[1]) root.k10tempHm = p[1]
+          else if (p[0] === "npu" && p[1]) root.npuDev = p[1]
         }
         root.ready = true
         root.sampleCpu()
@@ -87,6 +94,7 @@ Singleton {
 
   FileView { id: fStat; path: "/proc/stat";  blockLoading: true; printErrors: false }
   FileView { id: fTemp; path: root.k10tempHm ? root.k10tempHm + "/temp1_input" : ""; blockLoading: true; printErrors: false }
+  FileView { id: fNpu;  path: root.npuDev ? root.npuDev + "/power/runtime_status" : ""; blockLoading: true; printErrors: false }
   FileView { id: fMem;  path: "/proc/meminfo"; blockLoading: true; printErrors: false }
   FileView { id: fBusy; path: root.gpuDev ? root.gpuDev + "/gpu_busy_percent" : ""; blockLoading: true; printErrors: false }
   FileView { id: fSclk; path: root.gpuDev ? root.gpuDev + "/pp_dpm_sclk" : ""; blockLoading: true; printErrors: false }
@@ -134,7 +142,8 @@ Singleton {
   }
 
   function sampleLight() {
-    fMem.reload(); fBusy.reload()
+    fMem.reload(); fBusy.reload(); fNpu.reload()
+    root.npuActive = fNpu.text().trim() === "active"
     const g = ({})
     const ml = fMem.text().split("\n")
     for (let i = 0; i < ml.length; i++) {
