@@ -469,7 +469,7 @@ Singleton {
     //
     // The socket is the discriminator, and it is exact: every host-sent `state`
     // is ingested on a live connection, while the watchdog branch runs only
-    // after `retry` has already returned early on `sock.connected` -- so it
+    // after `retry` has already returned early on `linkUp` -- so it
     // writes `busy` with the socket demonstrably down.
     //
     // The SECOND death, which the socket test cannot see because the host is
@@ -479,7 +479,7 @@ Singleton {
     // celebration -- rule overshoot, glyph fill, scale, `unread` latched -- and
     // a heartbeat later the frame turned red. The turn itself now carries the
     // verdict, so ask it.
-    if (sock.connected && !root.lastTurnFailed()) {
+    if (root.linkUp && !root.lastTurnFailed()) {
       // An answer nobody is looking at is UNREAD. OriCell used to latch this;
       // it is retired, and the orb's "ready" ping and the centre pill's aura
       // both read the flag -- so the latch lives here, at the source: settled
@@ -678,6 +678,18 @@ Singleton {
   // anything -- above all, none of them decides prompt-vs-steer, which is the
   // host's call from its own `busy`.
 
+  // Low-level write of one frame down a GIVEN socket. The handshake cannot go
+  // through `root.sock`: on a unix socket the connect completes DURING the
+  // Component's init, so the Loader has not published `item` yet and
+  // `root.sock` is still null -- the hello was silently dropped, the host saw a
+  // connection that never spoke and closed it (PeerClosedError), and the
+  // watchdog rebuilt the socket every 8s forever. Measured 2026-09-29.
+  function writeTo(s, cmd) {
+    if (s === null) return false
+    s.write(JSON.stringify(cmd) + "\n")
+    return true
+  }
+
   // THE ONE PLACE a ClientCmd reaches the socket, so every caller reports a
   // dead one the same way. ask() and command() set `agentDownError` before
   // their own early returns; abort(), resume(), activate(), newChat() and
@@ -692,12 +704,12 @@ Singleton {
   // strip instantly and defeat `retry`'s deliberate five-second grace, which
   // exists precisely so a restart is not reported as a failure.
   function send(cmd, quiet) {
-    if (!sock.connected) {
+    var s = root.sock
+    if (s === null || !s.connected) {
       if (quiet !== true) root.error = root.agentDownError
       return false
     }
-    sock.write(JSON.stringify(cmd) + "\n")
-    return true
+    return root.writeTo(s, cmd)
   }
 
   // Returns whether the draft was taken, so the composer knows whether to clear
@@ -706,7 +718,7 @@ Singleton {
   function ask(text, images) {
     var line = String(text || "").trim()
     if (line === "") return false
-    if (!sock.connected) { root.error = root.agentDownError; return false }
+    if (!root.linkUp) { root.error = root.agentDownError; return false }
     // A notice describes the LAST thing that happened, and the panel sets some
     // of them itself -- so nothing on the host's side would ever clear those.
     // Asking again is the moment they stop being true.
@@ -728,7 +740,7 @@ Singleton {
   }
 
   function command(line) {
-    if (!sock.connected) { root.error = root.agentDownError; return false }
+    if (!root.linkUp) { root.error = root.agentDownError; return false }
     root.notice = ""
     // Same reason as ask(): a new command supersedes the last failure, and a
     // rejected /model was one of the ways `error` used to latch permanently.
@@ -1174,48 +1186,89 @@ Singleton {
   }
 
   // ----------------------------------------------------------------- socket
-  // Quickshell's Socket has NO reconnect of its own: `connected` is a WRITABLE
-  // property rather than a method, and on a drop you get exactly one
-  // connectionStateChanged and nothing else. So reconnection is a Timer that
-  // re-asserts `connected = true` until it takes.
-  Socket {
-    id: sock
-    // $XDG_RUNTIME_DIR, never /tmp -- a lock file this desktop put there once
-    // locked root out of it under fs.protected_regular.
-    path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/ori-agent.sock"
-    connected: true
+  // Quickshell's Socket has NO reconnect of its own, and worse, it cannot be
+  // REVIVED once a connect attempt has failed: `setConnected(true)` only calls
+  // its internal connectPathSocket() while its QLocalSocket pointer is null,
+  // and a failed connect leaves that pointer non-null and dead -- so every
+  // later `connected = true` is a silent no-op. The panel then sits there
+  // disconnected forever with the host UP and listening.
+  //
+  // Measured 2026-09-29, host running and `ss` showing the listener, a raw
+  // python client attaching on the first try: `retry` ticked to 20+ with
+  // `connected=false` and not one further socket error in the log. A config
+  // reload always cured it -- because that is a NEW Socket object. So the
+  // reconnect path RE-CREATES the object (`reloadSocket`) instead of
+  // re-asserting the property, and that is the only thing that reconnects.
+  //
+  // `sock` is the live item, null for the moment the Loader is cycling, so
+  // every read of the connection state goes through `linkUp` (or a local).
+  readonly property var sock: sockLoader.item
+  readonly property bool linkUp: root.sock !== null && root.sock.connected
 
-    // NDJSON. Split on "\n" only: node's readline additionally splits on
-    // U+2028/U+2029, both valid inside a JSON string, so it is not
-    // protocol-compliant here. SplitParser is.
-    parser: SplitParser { onRead: function (line) { root.ingest(line) } }
+  Loader {
+    id: sockLoader
+    sourceComponent: sockComponent
+  }
 
-    onConnectionStateChanged: {
-      if (sock.connected) {
-        retry.stop()
-        root.retries = 0
-        root.awaitingHello = true
-        // The channel is what makes a shell reload REATTACH rather than start
-        // over: the host adopts the conversation already registered under it,
-        // with its warm child and its mid-turn buffer.
-        root.send({ t: "hello", channel: "panel", version: root.protocolVersion })
-        root.send({ t: "panel", open: root.panelOpen })
-        helloWatchdog.restart()
-        return
+  Component {
+    id: sockComponent
+    Socket {
+      id: sockItem
+      // $XDG_RUNTIME_DIR, never /tmp -- a lock file this desktop put there once
+      // locked root out of it under fs.protected_regular.
+      path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/ori-agent.sock"
+      connected: true
+
+      // NDJSON. Split on "\n" only: node's readline additionally splits on
+      // U+2028/U+2029, both valid inside a JSON string, so it is not
+      // protocol-compliant here. SplitParser is.
+      parser: SplitParser { onRead: function (line) { root.ingest(line) } }
+
+      onConnectionStateChanged: {
+        if (sockItem.connected) {
+          retry.stop()
+          root.retries = 0
+          root.awaitingHello = true
+          // The channel is what makes a shell reload REATTACH rather than start
+          // over: the host adopts the conversation already registered under it,
+          // with its warm child and its mid-turn buffer.
+          root.writeTo(sockItem, { t: "hello", channel: "panel", version: root.protocolVersion })
+          root.writeTo(sockItem, { t: "panel", open: root.panelOpen })
+          helloWatchdog.restart()
+          return
+        }
+        // ori-host is a systemd unit with Restart=on-failure, so a drop is a
+        // restart in progress far more often than a machine without one.
+        root.warm = false
+        root.awaitingHello = false
+        helloWatchdog.stop()
+        // A DROP MID-TURN USED TO BE INVISIBLE: nothing touched `busy`, so the
+        // rail went on saying "thinking" and the spine went on breathing for as
+        // long as the host was down. That is the worst failure this panel has --
+        // it looks exactly like working. Say it while there is still reason to
+        // hope, and let `retry` promote it to an error when there is not.
+        if (root.busy) root.notice = root.agentLostNotice
+        retry.start()
       }
-      // ori-host is a systemd unit with Restart=on-failure, so a drop is a
-      // restart in progress far more often than a machine without one.
-      root.warm = false
-      root.awaitingHello = false
-      helloWatchdog.stop()
-      // A DROP MID-TURN USED TO BE INVISIBLE: nothing touched `busy`, so the
-      // rail went on saying "thinking" and the spine went on breathing for as
-      // long as the host was down. That is the worst failure this panel has --
-      // it looks exactly like working. Say it while there is still reason to
-      // hope, and let `retry` promote it to an error when there is not.
-      if (root.busy) root.notice = root.agentLostNotice
-      retry.start()
     }
+  }
+
+  // Destroy the socket and build a new one on the next event loop turn -- the
+  // turn matters, because the Loader must actually have dropped the item
+  // before it is asked for another, or `active` would be left at false.
+  function reloadSocket() {
+    if (sockLoader.active) {
+      sockLoader.active = false
+      sockReopen.restart()
+    } else {
+      sockLoader.active = true
+    }
+  }
+
+  Timer {
+    id: sockReopen
+    interval: 0
+    onTriggered: sockLoader.active = true
   }
 
   readonly property int protocolVersion: 1
@@ -1239,9 +1292,9 @@ Singleton {
     interval: 1000
     repeat: true
     onTriggered: {
-      // Connected and still mute is helloWatchdog's case; it drops the socket
-      // itself, so there is nothing to do here but wait for it.
-      if (sock.connected) return
+      // Connected and still mute is helloWatchdog's case; it rebuilds the
+      // socket itself, so there is nothing to do here but wait for it.
+      if (root.linkUp) return
       root.retries += 1
       if (root.retries >= root.retriesBeforeError) {
         if (root.error === "") root.error = root.agentDownError
@@ -1252,7 +1305,7 @@ Singleton {
           root.busy = false
         }
       }
-      sock.connected = true
+      root.reloadSocket()
     }
   }
 
@@ -1274,15 +1327,15 @@ Singleton {
       root.awaitingHello = false
       console.log("ori: no hello in " + interval + "ms -- the socket is up with nothing behind it")
       root.error = root.agentDownError
-      // Connected but mute IS down, whatever the kernel says. Dropping the
+      // Connected but mute IS down, whatever the kernel says. Rebuilding the
       // socket puts it back under `retry`, which was stopped on connect -- and
       // a reconnect is a clean re-handshake, where re-sending hello down the
       // same socket would risk a second adoption of the same channel if the
-      // host were merely slow rather than wedged. Started here as well as in
-      // the disconnect branch, so this does not depend on writing `connected`
-      // raising the signal that would otherwise start it.
+      // host were merely slow rather than wedged. `retry.start()` as well as
+      // the rebuild, so this does not depend on the rebuild raising the signal
+      // that would otherwise start it.
       retry.start()
-      sock.connected = false
+      root.reloadSocket()
     }
   }
 }

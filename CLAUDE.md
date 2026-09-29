@@ -563,6 +563,31 @@ them a file already deleted. Anything in there is worth reading. Use `qmllint`
 for syntax and `qs log` for runtime — they catch different things, and neither
 substitutes for the other.
 
+### A quickshell `Socket` cannot be revived, and `Loader.item` is null during its connect
+Two traps in one, both measured 2026-09-29 on `assistant/OriClient.qml`, the
+panel's link to `ori-agent`:
+
+* **`connected = true` will not reconnect a `Socket` whose connect attempt
+  failed.** `Socket::setConnected` only calls its internal `connectPathSocket()`
+  while its `QLocalSocket*` is null, and a failed connect leaves that pointer
+  non-null and dead — so every later write is a silent no-op. Symptom: the panel
+  disconnected forever with the host **up and listening**, `retry` ticking to 20+
+  and `connected=false`, and *not one further socket error in the log* (`ss`
+  showed the listener, a raw python client attached on the first try). A config
+  reload always cured it, because that is a NEW `Socket`. Fix: re-create the
+  object — it lives in a `Loader` and `reloadSocket()` cycles `active`.
+* **If the socket goes there, the handshake must NOT be sent via the object you
+  reach through the Loader.** On a unix socket the connect completes
+  *synchronously, during the component's init*, so `Loader.item` has not been
+  published yet, `root.sock` is still `null`, and `send()` silently returns
+  false. The host sees a connection that never speaks and closes it
+  (`PeerClosedError`), and the hello watchdog rebuilds the socket every 8s
+  forever. Write the handshake down the item you already have (`writeTo(sockItem,…)`).
+
+So `reloadSocket()` re-creates, and the handshake writes to `sockItem`. Any
+change here needs the real test, not a reload: `systemctl --user stop ori-agent`,
+wait past the 5s error grace, start it, and watch `ipc call ori state` come back.
+
 ### Layer-shell windows must not resize while animating
 A layer surface that changes size has to wait for a compositor configure/ack
 round trip before it may commit, so a `PanelWindow` whose `implicitHeight` is
