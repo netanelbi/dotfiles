@@ -181,7 +181,7 @@ BarWidget {
     color: "transparent"
 
     readonly property int pad: Theme.shadowPad
-    readonly property int cardW: 300
+    readonly property int cardW: 340
     implicitWidth: cardW + Theme.shadowX + 2 * pad
     implicitHeight: Math.ceil(card.height) + Theme.shadowY + 2 * pad
 
@@ -237,7 +237,7 @@ BarWidget {
           }
           Text {
             text: Math.round(SysStats.cpuAvg) + "%  ·  peak " + Math.round(SysStats.cpuPeak)
-                + "%  ·  " + SysStats.cpuTemp + "°C"
+                + "%  ·  " + SysStats.cpuTemp + "°C  ·  " + SysStats.cpuGhz.toFixed(1) + " GHz"
             color: Theme.foreground
             font.family: Style.font.family; font.pixelSize: Style.font.tiny
           }
@@ -266,6 +266,24 @@ BarWidget {
               radius: 1.5
               color: root.heat(load)
             }
+          }
+        }
+
+        // What the clock is ALLOWED to do right now. "capped" only when the
+        // policy max is below the silicon's boost ceiling -- on battery the
+        // firmware pins it at 2.0 GHz, which was invisible before this line.
+        Row {
+          leftPadding: 44
+          Text {
+            text: SysStats.cpuMin.toFixed(1) + " – " + SysStats.cpuMax.toFixed(1) + " GHz"
+            color: Theme.subtext0
+            font.family: Style.font.family; font.pixelSize: Style.font.tiny
+          }
+          Text {
+            visible: SysStats.cpuCapped
+            text: "  ·  capped (max " + SysStats.cpuHwMax.toFixed(1) + ")"
+            color: Theme.peach
+            font.family: Style.font.family; font.pixelSize: Style.font.tiny
           }
         }
 

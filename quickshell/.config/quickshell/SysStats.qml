@@ -43,6 +43,17 @@ Singleton {
   property real   gttUsed: 0
   property real   gttTotal: 0
 
+  // CPU clocks, GHz. cpuGhz is the mean over all threads (/proc/cpuinfo: one
+  // file instead of 24 scaling_cur_freq). cpuMin/cpuMax are what the policy
+  // allows right now; cpuHwMax is the silicon's own ceiling, so
+  // cpuMax < cpuHwMax means something -- firmware on battery, a power
+  // profile -- is capping it.
+  property real   cpuGhz: 0
+  property real   cpuMin: 0
+  property real   cpuMax: 0
+  property real   cpuHwMax: 0
+  readonly property bool cpuCapped: cpuHwMax > 0 && cpuMax > 0 && cpuMax < cpuHwMax - 0.05
+
   property int    gpuBusy: 0
   property int    gpuClock: 0
   property real   gpuWatts: 0
@@ -102,6 +113,13 @@ Singleton {
   FileView { id: fVT;   path: root.gpuDev ? root.gpuDev + "/mem_info_vram_total" : ""; blockLoading: true; printErrors: false }
   FileView { id: fGU;   path: root.gpuDev ? root.gpuDev + "/mem_info_gtt_used" : ""; blockLoading: true; printErrors: false }
   FileView { id: fGT;   path: root.gpuDev ? root.gpuDev + "/mem_info_gtt_total" : ""; blockLoading: true; printErrors: false }
+  readonly property string cpuFreq: "/sys/devices/system/cpu/cpu0/cpufreq/"
+  FileView { id: fInfo;  path: "/proc/cpuinfo"; blockLoading: true; printErrors: false }
+  FileView { id: fFMin;  path: root.cpuFreq + "scaling_min_freq"; blockLoading: true; printErrors: false }
+  FileView { id: fFMax;  path: root.cpuFreq + "scaling_max_freq"; blockLoading: true; printErrors: false }
+  // amd_pstate_max_freq is the boost ceiling; cpuinfo_max_freq drops to the
+  // cap along with scaling_max on battery, so it cannot be the reference.
+  FileView { id: fFHw;   path: root.cpuFreq + "amd_pstate_max_freq"; blockLoading: true; printErrors: false }
   FileView { id: fPow;  path: root.amdgpuHm ? root.amdgpuHm + "/power1_average" : ""; blockLoading: true; printErrors: false }
 
   // ------------------------------------------------------------- sampling
@@ -167,6 +185,15 @@ Singleton {
 
   function sampleDetail() {
     fSclk.reload(); fVU.reload(); fVT.reload(); fGU.reload(); fGT.reload(); fPow.reload()
+    fInfo.reload(); fFMin.reload(); fFMax.reload(); fFHw.reload()
+
+    const mhz = fInfo.text().match(/^cpu MHz\s*:\s*[\d.]+/gm) || []
+    let sum = 0
+    for (let i = 0; i < mhz.length; i++) sum += Number(mhz[i].split(":")[1])
+    root.cpuGhz = mhz.length ? sum / mhz.length / 1000 : 0
+    root.cpuMin = (Number(fFMin.text()) || 0) / 1e6
+    root.cpuMax = (Number(fFMax.text()) || 0) / 1e6
+    root.cpuHwMax = (Number(fFHw.text()) || 0) / 1e6
     root.vramUsed = (Number(fVU.text()) || 0) / 1048576
     root.vramTotal = (Number(fVT.text()) || 0) / 1048576
     root.gttUsed = (Number(fGU.text()) || 0) / 1073741824
