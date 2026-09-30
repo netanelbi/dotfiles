@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import ".."
 
-// Ctrl+S: the pi processes running on this machine right now.
+// Ctrl+S: Ori's agents -- its conversations and the delegates they spawned.
 //
 // -------------------------------------------------- what is in this list
 // AN AGENT IS A LIVE PI PROCESS. It joins the list when it registers and leaves
@@ -18,18 +18,17 @@ import ".."
 // list even if its child has just been idle-killed -- a row vanishing out from
 // under the panel it belongs to reads as a bug, not as a fact.
 //
-// -------------------------------------------------- two sections
-// ORI first, then OTHERS. Ori's conversations are all the same assistant in the
-// same repo, so they are grouped rather than listed as peers of a stranger's
-// terminal pi; under one heading, four rows read as one Ori with four sessions
-// instead of four Oris. Delegates nest under whoever spawned them.
+// -------------------------------------------------- only Ori's
+// Every pi on the machine registers, but only Ori's own conversations and
+// their delegates (at any depth) are shown. A terminal pi is not Ori's, and
+// listing it here made the view read as Ori doing things it was not.
+// Delegates nest under whoever spawned them.
 //
 // -------------------------------------------------- what it can do
 // Enter switches, but ONLY to one of Ori's own conversations: that is the same
-// move as Ctrl+R and stays inside this repo. Switching to somebody else's pi
-// would take Ori out of ~/.dotfiles, which it must never do, so those rows say
-// no. Ctrl+X stops an agent (never its transcript). Ctrl+R renames one. Ctrl+N
-// starts another Ori.
+// move as Ctrl+R and stays inside this repo. A delegate has no conversation
+// of Ori's to switch to, so those rows say no. Ctrl+X stops an agent (never
+// its transcript). Ctrl+R renames one. Ctrl+N starts another Ori.
 //
 // `alive` comes from the HOST, which tests the pid. It is never read off
 // `status`: a row says "running" until its own process writes the exit, so a
@@ -42,7 +41,31 @@ Rectangle {
   // Handed back when this closes, so the caret returns to where you were.
   property var returnFocus: null
 
-  readonly property var peers: OriClient.peers
+  // ORI'S OWN, and nothing else: its conversations and whatever they spawned,
+  // at any depth. The host sends every pi on the machine, and listing the
+  // user's terminal pi next to Ori's delegates made this read as "everything
+  // Ori is doing" when half of it was not Ori's at all.
+  //
+  // Ancestry is walked over ALL rows, dead ones included, so a delegate still
+  // running after its Ori was idle-killed is still recognised as Ori's.
+  readonly property var peers: {
+    var all = OriClient.peers
+    var byName = ({})
+    for (var i = 0; i < all.length; i++) byName[all[i].name] = all[i]
+    function isOris(p) {
+      var seen = ({})
+      while (p && !seen[p.name]) {
+        if (p.ori === true) return true
+        seen[p.name] = true
+        p = p.parent ? byName[p.parent] : null
+      }
+      return false
+    }
+    var out = []
+    for (var j = 0; j < all.length; j++)
+      if (isOris(all[j])) out.push(all[j])
+    return out
+  }
   property int current: 0
   // Bumped on open so the relative times are recomputed -- `Date.now()` has no
   // change notifier, so a row that said "just now" would go on saying it.
@@ -88,39 +111,31 @@ Rectangle {
       var q = live[i]
       // A delegate whose parent is not itself a LIVE row is an orphan -- its
       // Ori was stopped or idle-killed while it kept working. It is promoted to
-      // the top of OTHERS rather than dropped: a running agent that appears
+      // the top level rather than dropped: a running agent that appears
       // nowhere is the worst outcome this view can produce.
       var key = (q.parent && names[q.parent]) ? q.parent : ""
       if (!byParent[key]) byParent[key] = []
       byParent[key].push(q)
     }
 
-    var tops = byParent[""] || []
-    var oris = [], others = []
-    for (i = 0; i < tops.length; i++)
-      (tops[i].ori ? oris : others).push(tops[i])
-
-    // OLDEST FIRST, in both sections. The host hands rows over newest-first,
-    // which is right for a log and wrong here: instance numbers are assigned by
-    // start time, so newest-first printed #3, #2, #1 down the screen and the
-    // numbering read as random. Creation order makes the column count up.
-    function byAge(a, b) { return (a.startedAt || 0) - (b.startedAt || 0) }
-    oris.sort(byAge)
-    others.sort(byAge)
-
-    function emit(group, heading) {
-      if (group.length === 0) return
-      list.push({ header: heading })
-      for (var a = 0; a < group.length; a++) {
-        var top = group[a]
-        var kids = byParent[top.name] || []
-        list.push({ row: top, depth: 0, done: 0 })
-        for (var b = 0; b < kids.length; b++)
-          list.push({ row: kids[b], depth: 1, done: 0 })
-      }
+    // OLDEST FIRST. The host hands rows over newest-first, which is right for
+    // a log and wrong here: instance numbers are assigned by start time, so
+    // newest-first printed #3, #2, #1 down the screen and the numbering read as
+    // random. Creation order makes the column count up. Conversations above
+    // orphaned delegates.
+    function byAge(a, b) {
+      if (!!a.ori !== !!b.ori) return a.ori ? -1 : 1
+      return (a.startedAt || 0) - (b.startedAt || 0)
     }
-    emit(oris, "ORI")
-    emit(others, "OTHERS")
+
+    // Nested to any depth -- a delegate's own delegates are Ori's work too.
+    function emit(row, depth) {
+      list.push({ row: row, depth: depth, done: 0 })
+      var kids = (byParent[row.name] || []).slice().sort(byAge)
+      for (var a = 0; a < kids.length; a++) emit(kids[a], depth + 1)
+    }
+    var tops = (byParent[""] || []).slice().sort(byAge)
+    for (i = 0; i < tops.length; i++) emit(tops[i], 0)
     return list
   }
 
@@ -307,7 +322,7 @@ Rectangle {
         root.close()
         OriClient.resume(r.sessionId)
       } else if (r && !r.ori) {
-        OriClient.notice = "Ori only opens its own conversations"
+        OriClient.notice = "a delegate has no conversation to open"
       } else {
         root.close()
       }
