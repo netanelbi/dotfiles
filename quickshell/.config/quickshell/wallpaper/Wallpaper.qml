@@ -38,20 +38,83 @@ Scope {
   property real   precip: 0
   property real   wind: 0
   property real   cloud: 0
+  property int    code: 0
+  property real   prob: -1             // % chance of rain this 15 min; -1 = unknown
   property bool   isDay: true
   property bool   dataOk: false
 
   // "" = follow the real weather. Anything else overrides it, for previewing.
   property string forced: ""
 
-  readonly property bool wetReal: dataOk && (precip > 0 || ["Rain", "Drizzle", "Showers", "Thunderstorm"].indexOf(desc) !== -1)
-  readonly property bool snowReal: dataOk && (desc === "Snow" || desc === "Snow showers")
+  // ---- how hard it is coming down, 0..1
+  //
+  // Three signals, because each one alone lies:
+  //  * the WMO code says what KIND and roughly how strong (slight/moderate/
+  //    heavy), but open-meteo's "current" is a model estimate for the grid
+  //    square and will say "slight showers" over a dry street;
+  //  * precip is mm in the last 15 minutes -- 2 mm in 15 is a downpour;
+  //  * prob is the chance of rain in this slot. It scales the result, so a 20%
+  //    "showers" is a few drops and a 90% one is the real thing.
+  // Anything wet still shows at least a sprinkle (0.12), so it never says
+  // rain while the desktop looks dry.
+  readonly property var rainByCode: ({
+    51: 0.15, 53: 0.25, 55: 0.35, 56: 0.2, 57: 0.35,      // drizzle
+    61: 0.3,  63: 0.55, 65: 0.85, 66: 0.35, 67: 0.7,      // rain
+    80: 0.3,  81: 0.6,  82: 0.95,                          // showers
+    95: 0.7,  96: 0.85, 99: 0.95                           // thunderstorm
+  })
+  readonly property var snowByCode: ({ 71: 0.3, 73: 0.6, 75: 0.9, 77: 0.3, 85: 0.5, 86: 0.9 })
+  readonly property real confidence: prob < 0 ? 1 : 0.45 + 0.55 * prob / 100
+  readonly property real rainReal: {
+    if (!dataOk) return 0
+    var base = Math.max(rainByCode[code] || 0, Math.min(1, precip / 2))
+    return base > 0 ? Math.max(0.12, base * confidence) : 0
+  }
+  readonly property real snowReal: dataOk ? (snowByCode[code] || 0) : 0
+  readonly property bool drizzleReal: code >= 51 && code <= 57
 
-  readonly property bool showRain:  live && (forced === "rain"  || forced === "storm" || (forced === "" && wetReal && !snowReal))
-  readonly property bool showSnow:  live && (forced === "snow"  || (forced === "" && snowReal))
-  readonly property bool showFog:   live && (forced === "fog"   || (forced === "" && dataOk && desc === "Fog"))
-  readonly property bool showStorm: live && (forced === "storm" || (forced === "" && dataOk && desc === "Thunderstorm"))
+  // A forced preview: name -> [rain, drizzle, snow, fog, storm].
+  readonly property var presets: ({
+    "drizzle":    [0.3,  1, 0,   0,    0],
+    "rain-light": [0.18, 0, 0,   0,    0],
+    "rain":       [0.5,  0, 0,   0,    0],
+    "rain-heavy": [0.95, 0, 0,   0,    0],
+    "storm":      [0.85, 0, 0,   0,    1],
+    "snow":       [0,    0, 0.5, 0,    0],
+    "snow-heavy": [0,    0, 1,   0,    0],
+    "fog":        [0,    0, 0,   0.85, 0],
+    "clear": [0, 0, 0, 0, 0], "cloudy": [0, 0, 0, 0, 0], "night": [0, 0, 0, 0, 0]
+  })
+  readonly property var preset: presets[forced] || null
+
+  readonly property real rainAmount: !live ? 0 : preset ? preset[0] : (snowReal > 0 ? 0 : rainReal)
+  readonly property bool drizzle:    preset ? preset[1] === 1 : drizzleReal
+  readonly property real snowAmount: !live ? 0 : preset ? preset[2] : snowReal
+  readonly property real fogAmount:  !live ? 0 : preset ? preset[3]
+                                   : (dataOk ? (code === 48 ? 1 : code === 45 ? 0.8 : 0) : 0)
+
+  readonly property bool showRain:  rainAmount > 0
+  readonly property bool showSnow:  snowAmount > 0
+  readonly property bool showFog:   fogAmount > 0
+  readonly property bool showStorm: live && (preset ? preset[4] === 1 : (dataOk && code >= 95))
   readonly property bool showNight: live && (forced === "night" || (forced === "" && dataOk && !isDay))
+
+  // What the corner readout says: the strength we actually draw, not the raw
+  // code, so the words and the picture agree.
+  readonly property string label: {
+    var a = showSnow ? snowAmount : rainAmount
+    var k = a < 0.3 ? "light" : a < 0.65 ? "" : "heavy"
+    var noun = showStorm ? "Thunderstorm"
+             : showSnow ? "snow"
+             : showFog && !showRain ? "Fog"
+             : !showRain ? (preset ? forced.charAt(0).toUpperCase() + forced.slice(1) : desc)
+             : drizzle ? "drizzle"
+             : (code >= 80 && code <= 82 && !preset) ? "showers" : "rain"
+    if (showStorm || (!showRain && !showSnow)) return noun
+    var s = (k === "" ? noun : k + " " + noun)
+    return s.charAt(0).toUpperCase() + s.slice(1)
+  }
+
   // Clear skies leave the photo alone; overcast cools and flattens it.
   readonly property real cloudWash: !live ? 0
                                   : forced === "clear"  ? 0
@@ -61,7 +124,7 @@ Scope {
   IpcHandler {
     target: "wallpaper"
     function force(state: string): string {
-      var ok = ["rain", "snow", "fog", "storm", "clear", "cloudy", "night", "off", ""]
+      var ok = Object.keys(root.presets).concat(["off", ""])
       if (ok.indexOf(state) === -1) return "unknown state. use: " + ok.join(" ")
       root.forced = (state === "off") ? "" : state
       return root.forced === "" ? "following real weather" : "forced: " + root.forced
@@ -71,7 +134,9 @@ Scope {
       if (!root.dataOk) return "no data"
       return root.city + " " + root.temp + "C " + root.desc
            + " precip=" + root.precip + " wind=" + root.wind + " cloud=" + root.cloud
-           + " day=" + (root.isDay ? 1 : 0)
+           + " day=" + (root.isDay ? 1 : 0) + " code=" + root.code + " prob=" + root.prob
+           + " -> rain=" + root.rainAmount.toFixed(2) + " snow=" + root.snowAmount.toFixed(2)
+           + " fog=" + root.fogAmount.toFixed(2) + (root.showStorm ? " storm" : "")
            + (root.forced === "" ? "" : " [FORCED " + root.forced + "]")
     }
   }
@@ -88,6 +153,8 @@ Scope {
           root.temp = d.temp; root.city = d.city; root.desc = d.desc
           root.precip = d.precip; root.wind = d.wind || 0; root.cloud = d.cloud || 0
           root.isDay = d.isDay === 1
+          root.code = d.code || 0
+          root.prob = (d.prob === undefined || d.prob === null) ? -1 : d.prob
           root.dataOk = true
         } catch (e) { root.dataOk = false }
       }
@@ -113,7 +180,20 @@ Scope {
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
       mask: Region {}                       // never take input; clicks belong to the desktop
 
-      readonly property int fps: UPower.onBattery ? 20 : 40
+      readonly property int fps: UPower.onBattery ? 20 : 24
+      // The one clock for everything that moves continuously (rain, snow, the
+      // photo drift). Ticks at `fps`, so the scene -- and Hyprland, which has
+      // to recomposite the whole screen for a background that changes --
+      // renders 20-24 times a second instead of at vsync. The cost is almost
+      // all per frame (a full-screen redraw at an idle GPU clock), not the
+      // effects, so this number is the lever.
+      property real clock: 0
+      Timer {
+        interval: 1000 / win.fps
+        running: (root.showRain || root.showSnow || root.showStorm || root.showFog) && win.visible
+        repeat: true
+        onTriggered: win.clock += interval / 1000
+      }
       // Wind tilts the falling particles. 0 km/h is straight down; the cap
       // stops a gale from making it fall sideways off-screen.
       readonly property real slant: Math.min(0.55, root.wind / 45)
@@ -195,31 +275,21 @@ Scope {
         sourceSize.width: win.width * 1.12
         smooth: true
 
+        // Ken Burns, ONLY while something is already animating, and driven by
+        // the throttled weather clock below rather than its own animation.
+        //
+        // It ran unconditionally once and cost 8.4% CPU forever, for a drift
+        // tuned below the point where you notice it. Then, as a NumberAnimation
+        // gated on the weather, it still forced the whole scene to render at
+        // full vsync while it rained -- whatever the rain itself was throttled
+        // to. A sine of the clock moves only when the clock ticks.
         transform: [
           Scale { origin.x: photo.width / 2; origin.y: photo.height / 2; xScale: 1.06; yScale: 1.06 },
-          Translate { id: drift }
+          Translate {
+            x: 22 * Math.sin(win.clock * 2 * Math.PI / 180)
+            y: 14 * Math.sin(win.clock * 2 * Math.PI / 240)
+          }
         ]
-
-        // Ken Burns, ONLY while something is already animating.
-        //
-        // This ran unconditionally and cost 8.4% CPU forever -- to produce a
-        // drift deliberately tuned below the threshold where you notice it.
-        // Paying that on battery for an invisible effect is the worst trade in
-        // the file. A QML scene with no running animation repaints zero times
-        // and costs 0.0% CPU (measured), so calm weather now means a genuinely
-        // static wallpaper, exactly like awww.
-        SequentialAnimation {
-          running: root.showRain || root.showSnow || root.showStorm
-          loops: Animation.Infinite
-          ParallelAnimation {
-            NumberAnimation { target: drift; property: "x"; from: -22; to: 22; duration: 90000; easing.type: Easing.InOutSine }
-            NumberAnimation { target: drift; property: "y"; from: 14; to: -14; duration: 120000; easing.type: Easing.InOutSine }
-          }
-          ParallelAnimation {
-            NumberAnimation { target: drift; property: "x"; from: 22; to: -22; duration: 90000; easing.type: Easing.InOutSine }
-            NumberAnimation { target: drift; property: "y"; from: -14; to: 14; duration: 120000; easing.type: Easing.InOutSine }
-          }
-        }
       }
 
       // ------------------------------------------------------ cloud wash
@@ -242,132 +312,41 @@ Scope {
       }
 
       // -------------------------------------------------- falling things
-      // One canvas for rain AND snow: same particle loop, different physics and
-      // paint. Two canvases would double the timers for an either/or effect.
-      Canvas {
-        id: fall
+      // All the weather is one fragment shader (shaders/weather.frag): rain
+      // from drizzle to downpour, snow, fog, and the storm flash lighting the
+      // rain. The rain used to be a QML Canvas drawn on the CPU and the fog two
+      // sliding gradient bands animated at vsync.
+      ShaderEffect {
         anchors.fill: parent
-        visible: root.showRain || root.showSnow
-        opacity: visible ? 1 : 0
-        renderStrategy: Canvas.Cooperative
+        readonly property bool wanted: root.showRain || root.showSnow || root.showFog
+        visible: opacity > 0
+        opacity: wanted ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 1500 } }
+        fragmentShader: Qt.resolvedUrl("shaders/weather-v4.frag.qsb")
 
-        readonly property bool snowing: root.showSnow
-        property var drops: []
-        readonly property int count: snowing
-          ? Math.round((width * height) / 26000)     // snow is sparser and slower
-          : Math.round((width * height) / 12000)
-
-        function seed() {
-          var a = []
-          for (var i = 0; i < count; i++) {
-            a.push({
-              x: Math.random() * width,
-              y: Math.random() * height,
-              len: snowing ? (1.6 + Math.random() * 2.4) : (8 + Math.random() * 14),
-              spd: snowing ? (0.7 + Math.random() * 1.3) : (7 + Math.random() * 11),
-              op:  snowing ? (0.25 + Math.random() * 0.5) : (0.15 + Math.random() * 0.35),
-              ph:  Math.random() * 6.28                // snow sway phase
-            })
-          }
-          drops = a
-        }
-        onWidthChanged: seed()
-        onHeightChanged: seed()
-        onSnowingChanged: seed()
-        Component.onCompleted: seed()
-
-        property real t: 0
-
-        onPaint: {
-          var ctx = getContext("2d")
-          if (!ctx) return
-          ctx.reset()
-          t += 0.02
-
-          if (snowing) {
-            ctx.fillStyle = String(Theme.weatherSnow)
-            for (var i = 0; i < drops.length; i++) {
-              var f = drops[i]
-              ctx.globalAlpha = f.op
-              ctx.beginPath()
-              // Snow drifts sideways on a sine rather than falling straight.
-              var sx = f.x + Math.sin(t + f.ph) * 14
-              ctx.arc(sx, f.y, f.len, 0, 6.2832)
-              ctx.fill()
-              f.y += f.spd
-              if (f.y - f.len > height) { f.y = -f.len; f.x = Math.random() * width }
-            }
-          } else {
-            ctx.strokeStyle = String(Theme.weatherRain)   // cool and desaturated, not neon
-            ctx.lineWidth = 1
-            for (var j = 0; j < drops.length; j++) {
-              var d = drops[j]
-              ctx.globalAlpha = d.op
-              ctx.beginPath()
-              ctx.moveTo(d.x, d.y)
-              ctx.lineTo(d.x - d.len * win.slant, d.y + d.len)
-              ctx.stroke()
-              d.y += d.spd
-              d.x -= d.spd * win.slant
-              if (d.y > height) { d.y = -d.len; d.x = Math.random() * width }
-              else if (d.x < -20) { d.x = width + 10 }
-            }
-          }
-          ctx.globalAlpha = 1
-        }
-
-        Timer {
-          interval: 1000 / win.fps
-          running: fall.visible && win.visible
-          repeat: true
-          onTriggered: fall.requestPaint()
-        }
-      }
-
-      // ------------------------------------------------------------- fog
-      // Two translucent bands drifting at different speeds -- parallax reads as
-      // depth far more cheaply than a particle field would.
-      Item {
-        anchors.fill: parent
-        visible: root.showFog
-        opacity: visible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 2500 } }
-
-        Repeater {
-          model: 2
-          Rectangle {
-            required property int index
-            width: parent.width * 1.6
-            height: parent.height * (index === 0 ? 0.42 : 0.30)
-            y: parent.height * (index === 0 ? 0.34 : 0.58)
-            opacity: index === 0 ? 0.20 : 0.14
-            gradient: Gradient {
-              orientation: Gradient.Vertical
-              GradientStop { position: 0.0; color: Theme.alpha(Theme.weatherFog, 0) }
-              GradientStop { position: 0.5; color: Theme.weatherFog }
-              GradientStop { position: 1.0; color: Theme.alpha(Theme.weatherFog, 0) }
-            }
-            // MUST be gated on visibility. `visible: false` on the parent stops
-            // PAINTING, not animating -- these two bands kept running forever
-            // and were still costing 6.8% CPU on a clear night, after the Ken
-            // Burns drift had already been made conditional. A QML animation
-            // runs wherever it is declared unless something stops it.
-            NumberAnimation on x {
-              running: root.showFog && win.visible
-              loops: Animation.Infinite
-              from: -parent.width * 0.6; to: 0
-              duration: index === 0 ? 42000 : 67000
-            }
-          }
-        }
+        // Uniform-block members are matched by property name. The amounts are
+        // eased so a change of strength fades instead of jumping.
+        property real time: win.clock
+        property vector2d resolution: Qt.vector2d(width, height)
+        property real rain: root.rainAmount
+        property real drizzle: root.drizzle ? 1 : 0
+        property real snow: root.snowAmount
+        property real fog: root.fogAmount
+        property real slant: win.slant
+        property real flash: lightning.opacity
+        property color rainColor: Theme.weatherRain
+        property color snowColor: Theme.weatherSnow
+        property color fogColor: Theme.weatherFog
+        Behavior on rain { NumberAnimation { duration: 4000 } }
+        Behavior on snow { NumberAnimation { duration: 4000 } }
+        Behavior on fog  { NumberAnimation { duration: 4000 } }
       }
 
       // ----------------------------------------------------------- storm
       // A flash is a full-screen white veil at low opacity, fired at irregular
       // intervals. Regular lightning would read as a broken monitor.
       Rectangle {
-        id: flash
+        id: lightning
         anchors.fill: parent
         color: Theme.weatherFlash
         opacity: 0
@@ -375,10 +354,10 @@ Scope {
 
         SequentialAnimation {
           id: strike
-          NumberAnimation { target: flash; property: "opacity"; to: 0.55; duration: 60 }
-          NumberAnimation { target: flash; property: "opacity"; to: 0.10; duration: 90 }
-          NumberAnimation { target: flash; property: "opacity"; to: 0.38; duration: 70 }
-          NumberAnimation { target: flash; property: "opacity"; to: 0;    duration: 700; easing.type: Easing.OutCubic }
+          NumberAnimation { target: lightning; property: "opacity"; to: 0.55; duration: 60 }
+          NumberAnimation { target: lightning; property: "opacity"; to: 0.10; duration: 90 }
+          NumberAnimation { target: lightning; property: "opacity"; to: 0.38; duration: 70 }
+          NumberAnimation { target: lightning; property: "opacity"; to: 0;    duration: 700; easing.type: Easing.OutCubic }
         }
 
         Timer {
@@ -411,7 +390,9 @@ Scope {
         }
         Text {
           anchors.right: parent.right
-          text: root.forced === "" ? root.desc : root.desc + "  ·  [" + root.forced + "]"
+          text: root.label
+                + (root.forced === "" && (root.showRain || root.showSnow) && root.prob >= 0 ? "  ·  " + root.prob + "%" : "")
+                + (root.forced === "" ? "" : "  ·  [" + root.forced + "]")
           font.family: "JetBrainsMono Nerd Font"; font.pixelSize: 17
           color: Theme.text; opacity: 0.65
         }

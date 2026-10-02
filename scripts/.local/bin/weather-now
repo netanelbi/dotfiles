@@ -1,6 +1,8 @@
 #!/bin/bash
 # One line of JSON describing the weather here, for the animated wallpaper.
-#   {"temp":25.2,"code":0,"isDay":1,"precip":0.0,"city":"Tel Aviv","desc":"Clear"}
+#   {"temp":25.2,"code":0,"isDay":1,"precip":0.0,"city":"Tel Aviv","desc":"Clear","prob":20}
+# precip is mm over the last 15 minutes; prob is the % chance of rain in this
+# 15-minute slot, -1 when open-meteo did not say.
 #
 # open-meteo, not wttr.in: wttr.in was returning HTTP 500 when this was written,
 # and open-meteo needs no API key and no account.
@@ -40,14 +42,28 @@ print(d['lat'], d['lon'], d.get('city','').replace(' ','_'))
 
 # ---- current conditions ----
 url="https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon"
-url+="&current=temperature_2m,weather_code,is_day,precipitation,wind_speed_10m,cloud_cover&timezone=auto"
+url+="&current=temperature_2m,weather_code,is_day,precipitation,wind_speed_10m,cloud_cover"
+# The chance of rain right now, for how sure to be about it: the 15-minute slot
+# the current reading belongs to.
+url+="&minutely_15=precipitation_probability&forecast_minutely_15=2&timezone=auto"
 resp=$(timeout 10 curl -fsS "$url" 2>/dev/null) || fail
 [[ -n $resp ]] || fail
 
 printf '%s' "$resp" | python3 -c "
 import json,sys
-try: c = json.load(sys.stdin)['current']
+try:
+    d = json.load(sys.stdin)
+    c = d['current']
 except Exception: print('{\"ok\":false}'); sys.exit(0)
+
+# -1 = unknown; the wallpaper then trusts the weather code alone.
+prob = -1
+try:
+    m = d['minutely_15']
+    i = m['time'].index(c['time']) if c['time'] in m['time'] else 0
+    if m['precipitation_probability'][i] is not None:
+        prob = m['precipitation_probability'][i]
+except Exception: pass
 
 code = c.get('weather_code', 0)
 # WMO 4677. Only the buckets the wallpaper actually reacts to.
@@ -72,5 +88,6 @@ print(json.dumps({
     'desc': desc,
     'wind': c.get('wind_speed_10m', 0),
     'cloud': c.get('cloud_cover', 0),
+    'prob': prob,
 }))
 "
