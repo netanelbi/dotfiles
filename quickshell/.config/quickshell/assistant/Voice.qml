@@ -72,10 +72,21 @@ Scope {
         (state === "speaking" || (state === "hidden" && OriClient.oriTalking)) ? playLevel
       : liveLevel
 
+    // The hands-free call engine (ears daemon, right Alt = `ori-call toggle`).
+    // While a call is open IT drives the orb; otherwise this file's PTT
+    // exchange does (kept intact, now unbound, for rollback). One source at a
+    // time, so the two never fight over voiceState. EarsLink speaks the same
+    // vocabulary (state/level/interim/cancel) plus one more state: "thinking".
+    EarsLink {
+        id: ears
+        speakLevel: voice.playLevel
+    }
+    readonly property var src: ears.owns ? ears : voice
+
     // Published for the other two perches (bar dock, panel input row).
-    Binding { target: OriClient; property: "voiceState"; value: voice.state }
-    Binding { target: OriClient; property: "voiceLevel"; value: voice.level }
-    Binding { target: OriClient; property: "voiceInterim"; value: voice.interim }
+    Binding { target: OriClient; property: "voiceState"; value: voice.src.state }
+    Binding { target: OriClient; property: "voiceLevel"; value: voice.src.level }
+    Binding { target: OriClient; property: "voiceInterim"; value: voice.src.interim }
 
     // The orb leaves the pill on whichever monitor has focus -- the same rule
     // the panel and the launchers use. Only re-targeted while hidden.
@@ -268,7 +279,16 @@ Scope {
         }
 
         // Build marker, to tell a stale engine from a fresh one.
-        function version(): string { return "orb-2" }
+        function version(): string { return "orb-3-ears" }
+
+        // The ears link: qs ipc call voice link
+        function link(): string {
+            return ears.describe() + " owns=" + ears.owns
+                + " published=" + OriClient.voiceState + " interim=\"" + OriClient.voiceInterim + "\""
+        }
+
+        // Open/close the hands-free call (same as right Alt).
+        function call(): string { ears.toggle(); return "toggling" }
 
         // Let it out, or call it home: on | off | toggle.
         //   qs ipc call voice free toggle
@@ -486,6 +506,6 @@ Scope {
     // ------------------------------------------------------------- surface
     OrbOverlay {
         id: overlay
-        voice: voice
+        voice: voice.src
     }
 }

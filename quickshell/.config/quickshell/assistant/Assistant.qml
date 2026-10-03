@@ -65,6 +65,15 @@ Scope {
       return "closed"
     }
 
+    // Which tab the panel shows: call | work | memory | debug | settings | chat
+    //   qs ipc call assistant tab work
+    function tab(name: string): string {
+      var ks = ["call", "work", "memory", "debug", "settings", "chat"]
+      if (ks.indexOf(name) < 0) return "unknown tab; one of " + ks.join(" ")
+      EarsModel.panelTab = name
+      return name
+    }
+
     // Ask without opening the panel, so a script can drive it:
     //   qs ipc call assistant ask "why is the fan loud"
     // The answer lands in the transcript either way, so opening the panel later

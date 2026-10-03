@@ -113,6 +113,7 @@ Singleton {
   // input row read them, because the orb is one creature drawn by three
   // windows and they have to agree on what it is doing.
   //   hidden | listening | transcribing | working | speaking | done
+  //   (+ thinking, from EarsLink while a hands-free call is open)
   property string voiceState: "hidden"
   property real voiceLevel: 0
   // FREE: the orb lives out on the screen, docked in nothing -- a creature on

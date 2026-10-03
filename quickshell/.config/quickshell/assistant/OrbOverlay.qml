@@ -23,6 +23,8 @@ import ".."
 PanelWindow {
   id: overlay
 
+  // Voice.qml's PTT exchange, or EarsLink while a hands-free call is open:
+  // both offer state / level / interim / cancel().
   required property var voice
 
   WlrLayershell.namespace: "quickshell-ori-orb"
@@ -392,6 +394,7 @@ PanelWindow {
     : (OriClient.speaking && overlay.voice.state === "hidden") ? "speaking"
     : overlay.voice.state === "done" ? "done"
     : overlay.voice.state === "transcribing" ? "thinking"
+    : overlay.voice.state === "thinking" ? "thinking"
     : overlay.sessionWorking ? "working"
     : OriClient.busy ? "thinking"
     : OriClient.error !== "" ? "failed"
@@ -404,6 +407,7 @@ PanelWindow {
     : (OriClient.speaking && overlay.voice.state === "hidden") ? "speaking"
     : overlay.voice.state === "done" ? "done"
     : overlay.voice.state === "transcribing" ? "hearing"
+    : overlay.voice.state === "thinking" ? "thinking"
     : overlay.sessionWorking ? OriClient.workTool.split(" ")[0]
     : OriClient.busy ? "thinking"
     : OriClient.error !== "" ? "failed"
@@ -607,7 +611,8 @@ PanelWindow {
       id: cap
       readonly property bool toRight: overlay.ox < overlay.sw / 2
       readonly property bool on: overlay.voice.interim !== ""
-        && (overlay.voice.state === "working" || overlay.voice.state === "transcribing")
+        && (overlay.voice.state === "working" || overlay.voice.state === "transcribing"
+            || overlay.voice.state === "thinking")
       width: Math.min(420, capText.implicitWidth + 40)
       height: capText.implicitHeight + 20
       x: toRight ? overlay.lx + 66 : overlay.lx - 66 - width

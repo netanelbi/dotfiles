@@ -46,8 +46,24 @@ hl.bind(mainMod .. " + O", hl.dsp.exec_cmd("~/.local/bin/screens toggle"), { loc
 -- (verified 2026-09-20 — and it stayed latent for a while because a stale real
 -- ~/.config/hypr/machine.lua shadowed this symlink, so the broken name was never
 -- loaded). Both binds are dead with the wrong spelling, silently.
-hl.bind("Alt_R", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice start"), { ignore_mods = true, non_consuming = true })
-hl.bind("Alt_R", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice stop"),  { release = true, ignore_mods = true, non_consuming = true })
+--
+-- 2026-10-02: right Alt now TOGGLES a hands-free call with the ears daemon
+-- (~/Development/Personal/ori-voice/ears, autostarted below). Press once to
+-- open the call ("Yes?"), press again to close it ("Bye."). No release action.
+-- The orb follows the call through quickshell assistant/EarsLink.qml.
+-- Rollback to push-to-talk: comment the toggle out, uncomment the two PTT binds.
+hl.bind("Alt_R", hl.dsp.exec_cmd("~/Development/Personal/ori-voice/ears/ori-call toggle"), { ignore_mods = true, non_consuming = true })
+-- hl.bind("Alt_R", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice start"), { ignore_mods = true, non_consuming = true })
+-- hl.bind("Alt_R", hl.dsp.exec_cmd("qs -p ~/.config/quickshell ipc call voice stop"),  { release = true, ignore_mods = true, non_consuming = true })
+
+-- The ears daemon: resident, call closed at start (mic and echo-cancel only run
+-- while a call is open). exec-once, not a systemd unit: it inherits Hyprland's
+-- fish-login environment, which is where OLLAMA_API_KEY comes from
+-- (conf.d/secrets.fish), so the key never lands in a unit file. `ori-ears`
+-- refuses to start a second copy and logs to $XDG_RUNTIME_DIR/ori-ears.log.
+hl.on("hyprland.start", function()
+    hl.exec_cmd("~/.local/bin/ori-ears")
+end)
 
 -- dictation (typed into the focused app) retired 2026-09-06 — right Alt now
 -- belongs to the voice capsule. ptt script kept in vivo/.local/bin for revival.

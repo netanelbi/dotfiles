@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# ori-ears -- start the ears voice daemon (Ori's hands-free call engine) once.
+#
+# Autostarted from vivo's machine.lua (hyprland.start), so it inherits
+# Hyprland's fish-login environment: PATH (uv) and OLLAMA_API_KEY from
+# ~/.config/fish/conf.d/secrets.fish. Nothing secret is written here.
+#
+# The daemon starts with the call CLOSED; right Alt (`ori-call toggle`) opens
+# and closes it. Safe to run by hand: a second copy is refused.
+#
+# "Running" means the default instance answers on its port (`ori-call
+# status`), not a pgrep: test copies run as `--instance ori-voice-test` on
+# other ports and must not stop the real one from starting. The daemon also
+# refuses a second copy of the same instance itself.
+set -u
+dir="$HOME/Development/Personal/ori-voice/ears"
+if "$dir/ori-call" status >/dev/null 2>&1; then
+    echo "ori-ears: already running" >&2
+    exit 0
+fi
+log="${XDG_RUNTIME_DIR:-/tmp}/ori-ears.log"
+exec >>"$log" 2>&1
+echo "ori-ears: starting $(date -Is)"
+[ -n "${OLLAMA_API_KEY:-}" ] || echo "ori-ears: OLLAMA_API_KEY is not set; the brain will not answer"
+cd "$dir" || exit 1
+exec uv run python ears.py --daemon

@@ -71,7 +71,7 @@ stow -D package_name
 | `CTRL + ALT + W` | Terminal in ~/Work |
 | `SUPER + D` | Launcher (quickshell) |
 | `SUPER + T` | Theme picker (quickshell) |
-| `SUPER + A` | Toggle the assistant panel (Ori) |
+| `SUPER + A` | Toggle the assistant panel (Ori): the voice control room + typed chat |
 | `SUPER + SHIFT + A` | Let the orb out to live on the desktop / call it home to the bar |
 | `SUPER + Q` | Close the assistant panel if it is up, else close the window |
 | `SUPER + SHIFT + Q` | Exit Hyprland |
@@ -126,6 +126,40 @@ never see again after the first run. So this table is the only place they exist.
 Panel-owned commands, which never reach the model: `/model` `/effort` `/new`
 `/compact` `/name` `/export` `/restart`. See `runPanelCommand` in
 `PiSession.qml`.
+
+### The control room (tabs)
+
+The panel has six tabs: **Call, Work, Memory, Debug, Settings, Chat**. Chat is
+the typed pi conversation above, unchanged (the table above applies there);
+the other five are the voice agent's control room (`assistant/ControlRoom.qml`
++ `Room*.qml`). They read the ears daemon through `EarsModel.qml`, which
+`EarsLink` (the orb's SSE link, inside `Voice.qml`) feeds -- one stream, no
+second connection. The panel opens on Call while a call is open, else on the
+last tab used. `qs ipc call assistant tab <name>` switches from a script.
+
+| Key | Where | Action |
+|-----|-------|--------|
+| `Ctrl + 1..6` | any tab | Call / Work / Memory / Debug / Settings / Chat |
+| `Ctrl + PgDn` / `Ctrl + PgUp` | any tab | Next / previous tab |
+| `Ctrl + O` | any tab | Start or end the voice call (same as Right Alt) |
+| `Esc` | control tabs | Close the panel |
+| `↑` `↓` | Work | Select a worker |
+| `Enter` | Work | Open its live session in kitty (`dito worker tui <id>`) |
+| `Ctrl + X` | Work | Stop it -- asks first: press again, `Esc` keeps it |
+| `R` | Work | Reload the worker list |
+| `←` `→` | Memory | Inbox / Profile / Calls / Facts |
+| `/` | Memory | Search facts |
+| `Ctrl + S` | Memory, Profile | Save profile.md |
+| `←` `→` | Debug | Step the log filter |
+| `End` | Debug | Back to the newest event |
+| `[` `]` (or `PgUp` `PgDn`) | Settings | Voice / Brain / People / Behaviour / Tuning |
+| `↑` `↓` | Settings | Pick a row |
+| `←` `→` (or `-` `+`) | Settings | Change it: cycle a voice or model, step a number, step a plugin's mode (On / Auto / Off; Auto only for optional plugins, required ones are locked); on a person, step through their samples. Tuning thresholds go as POST `tune` (saved to `~/.local/state/ori-voice/tune.json`), the rest as POST `set` |
+| `Enter` | Settings | Open/close a row's option list; cycle a plugin's mode; on a person, add a sample; on the last People row, type a new name |
+| `Space` | Settings, Voice | Play the voice (`kokoro-npu say`) |
+| `Delete` | Settings, People | Remove the person or the selected sample -- asks first: press again, `Esc` keeps it |
+| `Delete` | Settings, Behaviour | Put the selected plugin back to its default mode (POST `set plugins.<name> default`) |
+| `Esc` | any tab, Chat too | While Ori is driving your apps (red strip over the header): POST `stop_driving` instead of closing |
 
 ## Useful Commands
 

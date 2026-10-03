@@ -185,9 +185,14 @@ PanelWindow {
     // live layer surface between outputs costs a configure round trip per frame.
     if (opened) { panel.screen = focusedScreen(); panel.recheckWindows() }
     revealed = opened ? 1 : 0
-    // Opening it means wanting to type into it. callLater because the composer
-    // does not exist yet on the frame `opened` flips.
-    if (opened) Qt.callLater(function () { entry.forceActiveFocus() })
+    // A call in progress opens the panel on the Call tab; otherwise it opens
+    // where you left it.
+    if (opened && EarsModel.call) EarsModel.panelTab = "call"
+    if (opened) { EarsModel.refreshMemory(); EarsModel.refreshWorkers() }
+    // Opening it means wanting to type into it (on Chat) or to drive it (on a
+    // control tab). callLater because neither exists yet on the frame
+    // `opened` flips.
+    if (opened) Qt.callLater(panel.focusTab)
     // ...and open ON the newest turn. Nothing did this before: the panel is
     // built lazily, so a first open creates the list fresh and it rests where
     // Qt leaves it, which is the OLDEST message -- you opened a conversation
@@ -196,12 +201,63 @@ PanelWindow {
     if (opened) Qt.callLater(function () { transcript.goBottom() })
   }
 
-  // The input-row orb's centre on the screen, for the overlay's flight in and
-  // out. The surface sits at the screen's left edge, under the bar's reserved
-  // strip; everything else is card geometry.
-  readonly property real orbDockX: card.x + composer.x + caret.x + caret.width / 2
-  readonly property real orbDockY: Style.bar.marginTop + Style.bar.height
-    + card.y + composer.y + caret.y + caret.height / 2
+  // ---------------------------------------------------------- control room
+  // Six tabs. Chat is this file's own transcript + composer, untouched; the
+  // other five are ControlRoom (the voice agent's control room). The tab
+  // lives on EarsModel because this window is rebuilt on every open.
+  //   Ctrl+1..6 pick a tab, Ctrl+PgUp/PgDn step through them, Ctrl+O starts
+  //   or ends the voice call -- from any tab, the composer included.
+  readonly property string tab: EarsModel.panelTab
+  readonly property bool chatTab: tab === "chat"
+  function selectTab(k) {
+    if (roomTabs.keys.indexOf(k) < 0) return
+    commands.close(); picker.close(); agents.close()
+    EarsModel.panelTab = k
+    Qt.callLater(panel.focusTab)
+    if (k === "chat") Qt.callLater(function () { transcript.goBottom() })
+  }
+  function stepTab(d) {
+    var ks = roomTabs.keys
+    var i = ks.indexOf(panel.tab) + d
+    selectTab(ks[(i + ks.length) % ks.length])
+  }
+  function focusTab() {
+    if (panel.chatTab) entry.forceActiveFocus()
+    else room.forceActiveFocus()
+  }
+  // The keys every tab shares. Returns true when it took the event.
+  function tabKey(event) {
+    if (!(event.modifiers & Qt.ControlModifier)) return false
+    if (event.key >= Qt.Key_1 && event.key <= Qt.Key_6) {
+      panel.selectTab(roomTabs.keys[event.key - Qt.Key_1]); return true
+    }
+    if (event.key === Qt.Key_PageDown) { panel.stepTab(1); return true }
+    if (event.key === Qt.Key_PageUp) { panel.stepTab(-1); return true }
+    if (event.key === Qt.Key_O) { EarsModel.toggleCall(); return true }
+    return false
+  }
+  // The meters only flow into EarsModel while someone can see them.
+  Binding { target: EarsModel; property: "watching"; value: panel.opened }
+
+  // The panel's orb perch on screen, for the overlay's flight in and out: the
+  // input row on Chat, the hero on Call, the header elsewhere. The surface
+  // sits at the screen's left edge, under the bar's reserved strip;
+  // everything else is card geometry.
+  readonly property point orbLocal:
+      panel.chatTab ? Qt.point(composer.x + caret.x + caret.width / 2, composer.y + caret.y + caret.height / 2)
+    : room.orbPoint ? Qt.point(room.x + room.orbPoint.x, room.y + room.orbPoint.y)
+    : Qt.point(header.x + headOrb.x + headOrb.width / 2, header.y + headOrb.y + headOrb.height / 2)
+  readonly property real orbDockX: card.x + orbLocal.x
+  readonly property real orbDockY: Style.bar.marginTop + Style.bar.height + card.y + orbLocal.y
+  // One creature, so one mode for every perch it has in this panel.
+  readonly property string orbMode:
+      OriClient.voiceState === "listening" ? "listening"
+    : (OriClient.speaking || OriClient.voiceState === "speaking") ? "speaking"
+    : OriClient.voiceState === "done" ? "done"
+    : OriClient.working ? "working"
+    : (OriClient.busy || OriClient.voiceState === "transcribing" || OriClient.voiceState === "thinking") ? "thinking"
+    : OriClient.error !== "" ? "failed"
+    : "idle"
   Binding {
     target: OriClient
     property: "panelDock"
@@ -507,6 +563,21 @@ PanelWindow {
         accent: panel.accent
         alive: OriClient.busy
         phase: clock.elapsedTime
+        // On Work/Memory/Debug/Settings the orb perches here instead.
+        opacity: headOrb.visible ? 0 : 1
+      }
+
+      Orb {
+        id: headOrb
+        anchors.centerIn: mark
+        size: 9
+        visible: !panel.chatTab && panel.tab !== "call"
+        alive: panel.opened && visible
+        bright: true
+        level: OriClient.voiceLevel
+        mode: panel.orbMode
+        scale: panel.opened && !OriClient.orbInFlight ? 1 : 0
+        Behavior on scale { NumberAnimation { duration: 420; easing.type: Easing.OutBack } }
       }
 
       // Brutal: the name sits on a pastel chip in the state's colour, the way
@@ -552,7 +623,7 @@ PanelWindow {
       Text {
         id: pathText
         anchors { right: newBtn.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
-        text: OriClient.workdir
+        text: panel.chatTab ? OriClient.workdir : (EarsModel.model !== "" ? EarsModel.model : "voice")
         color: Theme.overlay0
         font.family: Style.font.panelMono
         font.pixelSize: Style.font.panelMeta
@@ -562,7 +633,8 @@ PanelWindow {
       Rectangle {
         id: newBtn
         anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
-        width: 24; height: 24; radius: Theme.r(6)
+        width: panel.chatTab ? 24 : 0; height: 24; radius: Theme.r(6)
+        visible: panel.chatTab
         color: newArea.containsMouse ? Theme.hoverBackground : Theme.transparent
 
         Behavior on color {
@@ -594,12 +666,108 @@ PanelWindow {
       }
     }
 
+    // --------------------------------------------------------------- driving
+    // Ori is working your apps (a `drive` event in the last few seconds, or
+    // the engine's state.driving). Covers the header on every tab, Chat too,
+    // so it cannot be missed; Esc or Stop posts stop_driving.
+    Rectangle {
+      id: driveStrip
+      anchors.fill: header
+      z: 5
+      visible: opacity > 0
+      opacity: EarsModel.driving ? 1 : 0
+      Behavior on opacity { NumberAnimation { duration: Style.anim.quick } }
+      topLeftRadius: header.topLeftRadius
+      topRightRadius: header.topRightRadius
+      color: RoomLook.drive
+      MouseArea { anchors.fill: parent; hoverEnabled: true }
+      Rectangle {
+        id: driveDot
+        anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
+        width: 9; height: 9; radius: 4.5
+        color: Theme.crust
+        SequentialAnimation on opacity {
+          running: driveStrip.visible && panel.opened
+          loops: Animation.Infinite
+          NumberAnimation { from: 1; to: 0.3; duration: 500 }
+          NumberAnimation { from: 0.3; to: 1; duration: 500 }
+        }
+      }
+      Column {
+        anchors { left: driveDot.right; leftMargin: 10; right: driveStop.left; rightMargin: 10
+                  verticalCenter: parent.verticalCenter }
+        spacing: 0
+        Text {
+          width: parent.width
+          text: "Ori is controlling your apps — Esc / say stop"
+          color: Theme.crust
+          elide: Text.ElideRight
+          font.family: Style.font.panelFamily
+          font.pixelSize: Style.font.panelMeta
+          font.weight: Font.Bold
+          renderType: Text.QtRendering
+        }
+        Text {
+          width: parent.width
+          visible: EarsModel.driveLine !== ""
+          text: EarsModel.driveLine
+          color: Theme.alpha(Theme.crust, 0.75)
+          elide: Text.ElideRight
+          font.family: Style.font.panelFamily
+          font.pixelSize: Style.font.panelMeta - 2
+          renderType: Text.QtRendering
+        }
+      }
+      Rectangle {
+        id: driveStop
+        anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+        width: stopText.implicitWidth + 22; height: 26; radius: 13
+        color: stopArea.containsMouse ? Theme.crust : Theme.alpha(Theme.crust, 0.82)
+        Text {
+          id: stopText
+          anchors.centerIn: parent
+          text: "Stop"
+          color: RoomLook.drive
+          font.family: Style.font.panelFamily
+          font.pixelSize: Style.font.panelMeta
+          font.weight: Font.Bold
+          renderType: Text.QtRendering
+        }
+        MouseArea {
+          id: stopArea
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: EarsModel.stopDriving()
+        }
+      }
+    }
+    // Esc stops the driving before it closes anything: claimed at the window,
+    // ahead of the composer and the tabs' own Esc handlers, only while driving.
+    Shortcut {
+      sequence: "Escape"
+      context: Qt.WindowShortcut
+      enabled: EarsModel.driving && panel.opened
+      onActivated: EarsModel.stopDriving()
+    }
+
+    // ------------------------------------------------------------------ tabs
+    RoomTabs {
+      id: roomTabs
+      anchors { top: header.bottom; left: parent.left; right: parent.right
+                leftMargin: card.border.width; rightMargin: card.border.width }
+      current: panel.tab
+      chatBusy: OriClient.busy
+      onPicked: function (k) { panel.selectTab(k) }
+    }
+
     // ------------------------------------------------------------ transcript
     ListView {
       id: transcript
+      visible: panel.chatTab
 
       anchors {
-        top: header.bottom
+        top: roomTabs.bottom
         left: parent.left
         right: parent.right
         bottom: speakStrip.top
@@ -1398,6 +1566,7 @@ PanelWindow {
     // it, so it sits above the delegates and below the session picker.
     MouseArea {
       anchors.fill: transcript
+      enabled: panel.chatTab
       acceptedButtons: Qt.NoButton
       onWheel: function (w) {
         // A touchpad scroll carries pixel deltas and goes 1:1; a discrete
@@ -1492,7 +1661,7 @@ PanelWindow {
       // top and had it travel the wrong way.
       y: transcript.y + transcript.visibleArea.yPosition * transcript.height
       height: Math.max(20, transcript.visibleArea.heightRatio * transcript.height)
-      visible: transcript.visibleArea.heightRatio < 0.999
+      visible: panel.chatTab && transcript.visibleArea.heightRatio < 0.999
       color: Theme.alpha(Theme.overlay0, transcript.moving ? 0.9 : 0.35)
 
       Behavior on color {
@@ -1507,7 +1676,7 @@ PanelWindow {
       anchors.centerIn: transcript
       width: transcript.width - 40
       spacing: 6
-      visible: OriClient.turns.count === 0
+      visible: panel.chatTab && OriClient.turns.count === 0
       opacity: 0.9
 
       OriMark {
@@ -1582,6 +1751,7 @@ PanelWindow {
       anchors { left: transcript.left; right: transcript.right
                 bottom: rail.top; bottomMargin: 4 }
       height: implicitHeight
+      visible: panel.chatTab
       accent: panel.accent
       entry: entry
     }
@@ -1600,7 +1770,7 @@ PanelWindow {
       anchors { left: parent.left; right: parent.right; bottom: tray.top
                 leftMargin: 10; rightMargin: 10; bottomMargin: 4 }
       height: OriClient.speaking ? 24 : 0
-      visible: height > 0
+      visible: panel.chatTab && height > 0
       color: Theme.brutal ? Theme.fillYellow : Theme.alpha(Theme.yellow, 0.10)
       radius: Theme.r(6)
       border.width: Theme.brutal ? 2 : 0
@@ -1649,6 +1819,7 @@ PanelWindow {
       id: tray
       anchors { left: parent.left; right: parent.right; bottom: rail.top
                 leftMargin: 10; rightMargin: 10; bottomMargin: 4 }
+      visible: panel.chatTab
       accent: Theme.accent
       nowMs: panel.nowMs
       breath: panel.breath
@@ -1665,6 +1836,7 @@ PanelWindow {
       anchors { left: parent.left; right: parent.right; bottom: errorStrip.top
                 leftMargin: card.border.width; rightMargin: card.border.width }
       height: OriClient.busy ? 28 : 0
+      visible: panel.chatTab
       clip: true
 
       Behavior on height {
@@ -1762,6 +1934,7 @@ PanelWindow {
                 leftMargin: card.border.width; rightMargin: card.border.width }
       height: OriClient.error !== "" || OriClient.notice !== ""
               ? errText.implicitHeight + 12 : 0
+      visible: panel.chatTab
       color: OriClient.error !== "" ? (Theme.brutal ? Theme.fillRed : Theme.alpha(Theme.red, 0.15))
                                     : Theme.alpha(Theme.sapphire, 0.12)
       clip: true
@@ -1792,6 +1965,7 @@ PanelWindow {
       // Grows with the draft up to a ceiling, then the field scrolls. The card
       // is a fixed size, so this only moves the boundary between the two panes.
       height: Math.max(64, Math.min(entry.implicitHeight, 120) + 20)
+      visible: panel.chatTab
       radius: OriLook.inputRadius(height)
       // v2: the prototype's input well, its soft hairline lit in the theme's
       // focus colour while you are typing in it.
@@ -1846,7 +2020,6 @@ PanelWindow {
         id: caret
         anchors { left: parent.left; leftMargin: 4; verticalCenter: parent.verticalCenter }
         size: 22
-        alive: panel.opened
         breathe: true
         bright: true
         level: OriClient.voiceLevel
@@ -1857,13 +2030,8 @@ PanelWindow {
         scale: panel.opened && !OriClient.orbInFlight ? 1 : 0
         Behavior on scale { NumberAnimation { duration: 420; easing.type: Easing.OutBack } }
         floating: panel.opened
-        mode: OriClient.voiceState === "listening" ? "listening"
-            : (OriClient.speaking || OriClient.voiceState === "speaking") ? "speaking"
-            : OriClient.voiceState === "done" ? "done"
-            : OriClient.working ? "working"
-            : (OriClient.busy || OriClient.voiceState === "transcribing") ? "thinking"
-            : OriClient.error !== "" ? "failed"
-            : "idle"
+        mode: panel.orbMode
+        alive: panel.opened && panel.chatTab
         opacity: entry.activeFocus || mode !== "idle" ? 1 : 0.6
 
         Behavior on opacity {
@@ -1938,6 +2106,10 @@ PanelWindow {
             event.accepted = true
             return
           }
+          if (panel.tabKey(event)) {
+            event.accepted = true
+            return
+          }
           switch (event.key) {
           case Qt.Key_Down:
             // Ctrl+Down: the newest turn, and stick there again.
@@ -1983,6 +2155,7 @@ PanelWindow {
             event.accepted = true
             return
           case Qt.Key_Escape:
+            if (EarsModel.driving) { EarsModel.stopDriving(); event.accepted = true; return }
             panel.close()
             event.accepted = true
             return
@@ -2084,6 +2257,7 @@ PanelWindow {
       anchors { left: parent.left; right: parent.right; bottom: parent.bottom
                 margins: card.border.width }
       height: 24
+      visible: panel.chatTab
       // v2: no strip of its own, just the rule the gauge rides (the
       // prototype's status line).
       color: Theme.brutal ? Theme.mantle : OriLook.v2 ? Theme.transparent : Theme.alpha(Theme.mantle, 0.6)
@@ -2251,6 +2425,29 @@ PanelWindow {
 
         Behavior on color {
           ColorAnimation { duration: Style.anim.colorDuration; easing.type: Style.anim.easingSmooth }
+        }
+      }
+    }
+
+    // ---------------------------------------------------------- control room
+    // Call / Work / Memory / Debug / Settings. Declared last so it sits over
+    // the chat's box; the chat's own pieces are hidden while it shows.
+    ControlRoom {
+      id: room
+      anchors { top: roomTabs.bottom; left: parent.left; right: parent.right; bottom: parent.bottom
+                leftMargin: card.border.width; rightMargin: card.border.width; bottomMargin: card.border.width }
+      visible: !panel.chatTab
+      enabled: visible
+      tab: panel.chatTab ? "call" : panel.tab
+      live: panel.opened && visible
+      orbLevel: OriClient.voiceLevel
+      orbHidden: !panel.opened || OriClient.orbInFlight
+
+      Keys.onPressed: function (event) {
+        if (panel.tabKey(event)) { event.accepted = true; return }
+        if (event.key === Qt.Key_Escape) {
+          if (EarsModel.driving) EarsModel.stopDriving(); else panel.close()
+          event.accepted = true
         }
       }
     }
