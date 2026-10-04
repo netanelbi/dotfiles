@@ -37,11 +37,16 @@ FocusScope {
   readonly property var tn: EarsModel.tune || ({})
   readonly property bool hasSettings: st !== null && st !== undefined && typeof st === "object"
 
-  readonly property var langNames: ({ en: "English", fr: "French", es: "Spanish", it: "Italian", pt: "Portuguese",
+  readonly property var langNames: ({ en: "English", fr: "French", es: "Spanish", it: "Italian", pt: "Portuguese", he: "Hebrew",
                                       hi: "Hindi", ja: "Japanese", zh: "Chinese" })
   readonly property var hello: ({ en: "Hi, I'm Ori.", fr: "Bonjour, je suis Ori.", es: "Hola, soy Ori.",
                                   it: "Ciao, sono Ori.", pt: "Oi, eu sou a Ori.", hi: "Namaste, main Ori hoon.",
-                                  ja: "Konnichiwa, Ori desu.", zh: "Ni hao, wo shi Ori." })
+                                  ja: "Konnichiwa, Ori desu.", zh: "Ni hao, wo shi Ori.",
+                                  he: "שלום, אני אורי. במה אוכל לעזור?" })
+  function paceFor(lang) {
+    var sp = EarsModel.setting("speed") || 1
+    return lang === "he" ? sp * (EarsModel.setting("hebrew_speed") || 1) : sp
+  }
   function espeak(lang, voice) {
     if (lang === "en") return String(voice).charAt(0) === "b" ? "en-gb" : "en-us"
     return ({ fr: "fr-fr", es: "es", it: "it", pt: "pt-br", hi: "hi", ja: "ja", zh: "cmn" })[lang] || lang
@@ -50,11 +55,12 @@ FocusScope {
   function voiceName(id) {
     var s = String(id || "")
     var u = s.indexOf("_")
-    var n = u >= 0 ? s.slice(u + 1) : s
-    return n.charAt(0).toUpperCase() + n.slice(1)
+    if (u === 2) s = s.slice(3)  // a kokoro id: the prefix is accent + sex
+    return s.split("_").map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(" ")
   }
   function voiceHint(id) {
     var s = String(id || "")
+    if (s.indexOf("he_") === 0) return "Hebrew-tuned"
     if (s.length < 3 || s.charAt(2) !== "_") return ""
     var sex = s.charAt(1) === "f" ? "female" : s.charAt(1) === "m" ? "male" : ""
     var acc = s.charAt(0) === "a" ? "US " : s.charAt(0) === "b" ? "UK " : ""
@@ -115,7 +121,16 @@ FocusScope {
     var s = set.section
     if (s === "voice") {
       var ov = set.opt.voices || ({})
-      if (set.hasSettings && set.st.voices) {
+      var engine = EarsModel.setting("tts") || "kokoro"
+      if (set.hasSettings && set.st.tts !== undefined)
+        out.push({ t: "choice", key: "tts", label: "Voice engine", help: engine === "qwen"
+                     ? "Qwen3-TTS: one voice for every language, Hebrew included"
+                     : "Kokoro on the NPU: a voice per language",
+                   opts: set.opt.tts_engines || ["kokoro", "qwen"] })
+      if (engine === "qwen" && set.hasSettings && set.st.qwen_voice !== undefined) {
+        out.push({ t: "choice", voice: true, qwen: true, key: "qwen_voice", lang: "all",
+                   label: "Ori's voice", opts: set.opt.qwen_voices || [] })
+      } else if (set.hasSettings && set.st.voices) {
         var langs = Object.keys(set.st.voices)
         for (i = 0; i < langs.length; i++) {
           k = langs[i]
@@ -131,6 +146,9 @@ FocusScope {
       }
       if (set.hasSettings && set.st.speed !== undefined)
         out.push({ t: "num", key: "speed", label: "Speed", help: "How fast Ori talks, in every language",
+                   step: 0.05, min: 0.5, max: 2, dp: 2, unit: "×" })
+      if (set.hasSettings && set.st.hebrew_speed !== undefined)
+        out.push({ t: "num", key: "hebrew_speed", label: "Hebrew pace", help: "× Speed on Hebrew lines (he_heart already reads slower)",
                    step: 0.05, min: 0.5, max: 2, dp: 2, unit: "×" })
       if (set.hasSettings && set.st.hebrew !== undefined)
         out.push({ t: "choice", toggle: true, key: "hebrew", label: "Hear Hebrew",
@@ -236,7 +254,8 @@ FocusScope {
   function preview(row) {
     var v = value(row)
     if (!v) return
-    EarsModel.previewVoice(v, espeak(row.lang, v), set.hello[row.lang] || set.hello.en, EarsModel.setting("speed") || 1)
+    if (row.qwen) { EarsModel.previewQwen(v, set.hello.en, EarsModel.setting("speed") || 1); return }
+    EarsModel.previewVoice(v, espeak(row.lang, v), set.hello[row.lang] || set.hello.en, set.paceFor(row.lang))
   }
   // Delete: arm, then confirm.
   function remove(row) {
@@ -599,7 +618,7 @@ FocusScope {
                     }
                     Text {
                       id: hintT
-                      visible: rw.r.voice === true && rw.r.lang === "en" && rw.v !== undefined
+                      visible: rw.r.voice === true && (rw.r.lang === "en" || rw.r.lang === "he") && rw.v !== undefined
                       anchors.baseline: valT.baseline
                       text: set.voiceHint(rw.v)
                       color: Theme.overlay0
@@ -932,8 +951,10 @@ FocusScope {
         topPadding: 12
         visible: text !== ""
         text: set.section === "voice"
-              ? (set.hasSettings ? "Ori answers in the language you speak, in that language's voice. ▶ or Space plays it."
-                                 : "These are the voices in ears.py. Pick them here once the engine publishes its settings.")
+              ? (!set.hasSettings ? "These are the voices in ears.py. Pick them here once the engine publishes its settings."
+                 : EarsModel.setting("tts") === "qwen"
+                   ? "Ori answers in the language you speak, always in this voice (Hebrew is read through IPA). ▶ or Space plays it."
+                   : "Ori answers in the language you speak, in that language's voice. ▶ or Space plays it.")
             : set.section === "people" && EarsModel.people
               ? "Enrolling takes about 20 seconds of talking. More samples (another room, a morning voice) help Ori know someone anywhere."
             : set.section === "brain" ? "Changes apply from the next reply."
@@ -958,7 +979,8 @@ FocusScope {
   }
 
   function previewWith(row, voice) {
-    EarsModel.previewVoice(voice, espeak(row.lang, voice), set.hello[row.lang] || set.hello.en, EarsModel.setting("speed") || 1)
+    if (row.qwen) { EarsModel.previewQwen(voice, set.hello.en, EarsModel.setting("speed") || 1); return }
+    EarsModel.previewVoice(voice, espeak(row.lang, voice), set.hello[row.lang] || set.hello.en, set.paceFor(row.lang))
   }
   function day(iso) {
     var d = new Date(iso)

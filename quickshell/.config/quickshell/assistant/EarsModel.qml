@@ -622,6 +622,17 @@ Singleton {
                              "--speed", String(speed || 1), line])
   }
 
+  // The same for a Qwen3-TTS speaker: its server (port 8093, started by the engine) streams PCM.
+  function previewQwen(voice, line, speed) {
+    var body = JSON.stringify({ input: line, voice: voice, language: "auto", response_format: "pcm",
+                                speed: Number(speed || 1) })
+    // the whole clip first, then play: under a busy GPU the server is slower than real time
+    Quickshell.execDetached(["sh", "-c", "f=$(mktemp); curl -s -m 60 http://127.0.0.1:8093/v1/audio/speech "
+                             + "-H 'Content-Type: application/json' -d \"$1\" -o \"$f\" && "
+                             + "pw-play --raw --rate 24000 --channels 1 --format s16 \"$f\"; rm -f \"$f\"",
+                             "sh", body])
+  }
+
   // Start the daemon when it is not running: the same launcher Hyprland
   // autostarts, in its own scope so a shell reload cannot take it down.
   function startDaemon() {
