@@ -12,6 +12,7 @@ import ".."
 //             saves) or open it in the editor.
 //   Calls     the summaries written after each call
 //   Facts     the memory files, searchable
+//   Skills    Ori's playbooks, and the ones it drafted after calls (Keep / Drop)
 //
 // Read when the tab opens and whenever the daemon says memory changed.
 FocusScope {
@@ -20,7 +21,7 @@ FocusScope {
   property string view: "facts"
   property string note: ""
 
-  Component.onCompleted: { EarsModel.refreshMemory(); forceActiveFocus() }
+  Component.onCompleted: { EarsModel.refreshMemory(); EarsModel.refreshSkills(); forceActiveFocus() }
 
   Connections {
     target: EarsModel
@@ -39,12 +40,13 @@ FocusScope {
   readonly property var views: [
     { k: "facts", label: "Facts", n: EarsModel.memories.length },
     { k: "profile", label: "Profile", n: -1 },
-    { k: "calls", label: "Calls", n: EarsModel.calls.length }
+    { k: "calls", label: "Calls", n: EarsModel.calls.length },
+    { k: "skills", label: "Skills", n: EarsModel.skillDrafts.length, alert: EarsModel.skillDrafts.length > 0 }
   ]
 
   Keys.onPressed: function (e) {
     if (e.key === Qt.Key_Left || e.key === Qt.Key_Right) {
-      var ks = ["facts", "profile", "calls"]
+      var ks = ["facts", "profile", "calls", "skills"]
       var i = ks.indexOf(mem.view) + (e.key === Qt.Key_Right ? 1 : -1)
       mem.view = ks[(i + ks.length) % ks.length]
       e.accepted = true
@@ -87,7 +89,7 @@ FocusScope {
             id: segN
             visible: modelData.n > 0
             text: String(modelData.n)
-            color: modelData.k === "inbox" ? Theme.peach : Theme.overlay0
+            color: modelData.k === "inbox" || modelData.alert ? Theme.peach : Theme.overlay0
             font.family: RoomLook.mono
             font.pixelSize: RoomLook.small
             renderType: Text.QtRendering
@@ -373,6 +375,12 @@ FocusScope {
     }
 
     // ------------------------------------------------------------- facts
+    Loader {
+      anchors.fill: parent
+      active: mem.view === "skills"
+      sourceComponent: RoomSkills { }
+    }
+
     Loader {
       id: factsLoader
       anchors.fill: parent

@@ -172,6 +172,7 @@ Singleton {
     case "barge": onBarge(ev); break
     case "ignored": onIgnored(ev); break
     case "task": onTask(ev, history); break
+    case "skills": if (!history) refreshSkills(); break
     case "bgtask": onBgTask(ev); break
     case "usage": onUsage(ev); break
     case "banner":
@@ -863,6 +864,53 @@ print(name)
   }
 
   signal memoryNote(string text)
+
+  // ------------------------------------------------------------- skills
+  // Ori's playbooks (built-in + learned) and the drafts it wrote after calls, from the engine's
+  // skills plugin (POST cmd "plugin"). Refreshed on open and on every "skills" event.
+  property var skills: []        // [{name, description, learned, uses, last}]
+  property var skillDrafts: []   // [{action: new|edit, name, description, why, body, when}]
+  property bool skillsLoaded: false
+  function skillsCmd(obj, cb) {
+    var p = skillProc.createObject(m)
+    p.cb = cb || null
+    p.command = ["sh", "-c", "p=$(cat \"$1\" 2>/dev/null); curl -s -m 5 -X POST -H 'Content-Type: application/json' "
+                 + "-d \"$2\" \"http://127.0.0.1:${p:-8770}/cmd\"", "sh", m.portFile,
+                 JSON.stringify(Object.assign({ cmd: "plugin", plugin: "skills" }, obj))]
+    p.running = true
+  }
+  Component {
+    id: skillProc
+    Process {
+      id: sp
+      property var cb: null
+      stdout: StdioCollector {
+        onStreamFinished: {
+          var j = null
+          try { j = JSON.parse(this.text) } catch (e) { }
+          if (sp.cb) sp.cb(j)
+          sp.destroy()
+        }
+      }
+    }
+  }
+  function refreshSkills() {
+    skillsCmd({ action: "list" }, function (j) {
+      if (!j || !j.ok) return
+      m.skills = j.skills || []
+      m.skillDrafts = j.drafts || []
+      m.skillsLoaded = true
+    })
+  }
+  function skillAction(action, name) {  // keep | drop | forget
+    skillsCmd({ action: action, name: name }, function (j) {
+      m.memoryNote(j && j.ok ? ({ keep: "Kept " + name + " (from the next call)", drop: "Dropped " + name,
+                                  forget: "Forgot " + name })[action]
+                             : "Could not " + action + " " + name)
+      m.refreshSkills()
+    })
+  }
+  function skillText(name, cb) { skillsCmd({ action: "show", name: name }, function (j) { cb(j && j.ok ? j.text : "") }) }
 
   function acceptInbox(id) {
     var p = procComp.createObject(m)
