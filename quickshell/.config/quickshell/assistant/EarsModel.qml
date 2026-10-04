@@ -626,15 +626,17 @@ Singleton {
   }
   function stopPreview() { runPreview("", []) }
   function previewVoice(voice, espeak, line, speed) {
-    runPreview("exec kokoro-npu say --voice \"$1\" --lang \"$2\" --speed \"$3\" \"$4\"",
+    // never while the Qwen NPU server holds the NPU: two NPU users at once is unsafe
+    runPreview("ss -ltn | grep -q ':8095 ' && exit 0; exec kokoro-npu say --voice \"$1\" --lang \"$2\" --speed \"$3\" \"$4\"",
                [voice, espeak, String(speed || 1), line])
   }
   // A Qwen3-TTS speaker, streamed as it is generated (like a live line): you hear whether the
   // server keeps up -- gaps mean it is slower than real time right now.
-  function previewQwen(voice, line, speed) {
+  function previewQwen(voice, line, speed, engine) {
     var body = JSON.stringify({ input: line, voice: voice, language: "auto", response_format: "pcm",
-                                speed: Number(speed || 1) })
-    runPreview("curl -sN -m 60 http://127.0.0.1:8093/v1/audio/speech -H 'Content-Type: application/json' "
+                                speed: Number(speed || 1), temperature: 0.5, subtalker_temperature: 0.5 })
+    var port = engine === "qwen-npu" ? 8095 : 8093
+    runPreview("curl -sN -m 60 http://127.0.0.1:" + port + "/v1/audio/speech -H 'Content-Type: application/json' "
                + "-d \"$1\" | pw-play --raw --rate 24000 --channels 1 --format s16 -", [body])
   }
 

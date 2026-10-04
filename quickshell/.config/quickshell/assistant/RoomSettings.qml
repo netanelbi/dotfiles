@@ -124,10 +124,11 @@ FocusScope {
       var engine = EarsModel.setting("tts") || "kokoro"
       if (set.hasSettings && set.st.tts !== undefined)
         out.push({ t: "choice", key: "tts", label: "Voice engine", help: engine === "qwen"
-                     ? "Qwen3-TTS: one voice for every language, Hebrew included"
+                     ? "Qwen3-TTS on the GPU: one voice for every language, Hebrew included"
+                     : engine === "qwen-npu" ? "Qwen3-TTS on the NPU (start npu/server/serve.sh); GPU free"
                      : "Kokoro on the NPU: a voice per language",
-                   opts: set.opt.tts_engines || ["kokoro", "qwen"] })
-      if (engine === "qwen" && set.hasSettings && set.st.qwen_voice !== undefined) {
+                   opts: set.opt.tts_engines || ["kokoro", "qwen", "qwen-npu"] })
+      if (engine.indexOf("qwen") === 0 && set.hasSettings && set.st.qwen_voice !== undefined) {
         out.push({ t: "choice", voice: true, qwen: true, key: "qwen_voice", lang: "all",
                    label: "Ori's voice", opts: set.opt.qwen_voices || [] })
       } else if (set.hasSettings && set.st.voices) {
@@ -254,7 +255,7 @@ FocusScope {
   function preview(row) {
     var v = value(row)
     if (!v) return
-    if (row.qwen) { EarsModel.previewQwen(v, set.hello.en, EarsModel.setting("speed") || 1); return }
+    if (row.qwen) { EarsModel.previewQwen(v, set.hello.en, EarsModel.setting("speed") || 1, EarsModel.setting("tts")); return }
     EarsModel.previewVoice(v, espeak(row.lang, v), set.hello[row.lang] || set.hello.en, set.paceFor(row.lang))
   }
   // Delete: arm, then confirm.
@@ -952,7 +953,7 @@ FocusScope {
         visible: text !== ""
         text: set.section === "voice"
               ? (!set.hasSettings ? "These are the voices in ears.py. Pick them here once the engine publishes its settings."
-                 : EarsModel.setting("tts") === "qwen"
+                 : String(EarsModel.setting("tts")).indexOf("qwen") === 0
                    ? "Ori answers in the language you speak, always in this voice (Hebrew is read through IPA). ▶ or Space plays it."
                    : "Ori answers in the language you speak, in that language's voice. ▶ or Space plays it.")
             : set.section === "people" && EarsModel.people
@@ -979,7 +980,7 @@ FocusScope {
   }
 
   function previewWith(row, voice) {
-    if (row.qwen) { EarsModel.previewQwen(voice, set.hello.en, EarsModel.setting("speed") || 1); return }
+    if (row.qwen) { EarsModel.previewQwen(voice, set.hello.en, EarsModel.setting("speed") || 1, EarsModel.setting("tts")); return }
     EarsModel.previewVoice(voice, espeak(row.lang, voice), set.hello[row.lang] || set.hello.en, set.paceFor(row.lang))
   }
   function day(iso) {
