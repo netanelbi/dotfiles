@@ -840,7 +840,7 @@ FocusScope {
                       Text {
                         anchors.verticalCenter: parent.verticalCenter
                         visible: descIn.text === ""
-                        text: "Describe a voice: a warm woman in her thirties, a native " + (set.langNames[designRow.lang] || "English") + " speaker…"
+                        text: "Describe a voice in English: a warm woman in her thirties, a native " + (set.langNames[designRow.lang] || "English") + " speaker…"
                         color: Theme.overlay0
                         font: descIn.font
                         elide: Text.ElideRight

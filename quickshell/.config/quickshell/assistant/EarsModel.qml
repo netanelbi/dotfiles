@@ -653,11 +653,17 @@ Singleton {
     p.command = ["curl", "-s", "-m", "10"].concat(args)
     p.running = true
   }
+  // the languages the designer knows; Hebrew voices are designed as English ones (like bright)
+  readonly property var designLangs: ["en", "fr", "es", "de", "it", "pt", "ru", "zh", "ja", "ko"]
   function tryDesign(desc, lang, line) {
+    lang = designLangs.indexOf(lang) >= 0 ? lang : "en"
     m.designText = desc; m.designLang = lang; m.designStatus = "designing"
     httpJson(["-X", "POST", "-H", "Content-Type: application/json", "http://127.0.0.1:8095/v1/audio/voices/design",
               "-d", JSON.stringify({ voice_description: desc, voice_language: lang })], function (j) {
-      if (!j || !j.id) { m.designStatus = "error: the voice server didn't answer"; return }
+      if (!j || !j.id) {
+        m.designStatus = "error: " + (j && j.error ? (j.error.message || j.error) : "the voice server didn't answer")
+        return
+      }
       designPoll.vid = j.id; designPoll.line = line; designPoll.tries = 0
       if (j.status === "cached" || j.status === "ready") designPoll.done(); else designPoll.start()
     })
