@@ -30,6 +30,7 @@ Item {
   required property string source
   required property string tone
   required property string at
+  required property string style  // Ori's [tone: ...] for this reply: the voice instruction sent to Qwen
   required property real ms
 
   property bool latest: false
@@ -138,7 +139,7 @@ Item {
     // What the ears measured, and what became of it.
     Row {
       spacing: 10
-      visible: metaA.text !== "" || chip.visible || langChip.visible
+      visible: metaA.text !== "" || chip.visible || langChip.visible || styleChip.visible
       Text {
         id: metaA
         anchors.verticalCenter: parent.verticalCenter
@@ -168,6 +169,24 @@ Item {
           font.pixelSize: RoomLook.small - 2
           renderType: Text.QtRendering
         }
+      }
+      Rectangle {  // the speaking style Ori asked the voice for; hover shows the instruction itself
+        id: styleChip
+        visible: line.isOri && line.style !== ""
+        anchors.verticalCenter: parent.verticalCenter
+        width: sc.implicitWidth + 12; height: 18; radius: 9
+        color: Theme.alpha(Theme.mauve, styleHover.containsMouse ? 0.24 : 0.14)
+        Behavior on width { NumberAnimation { duration: 120 } }
+        Text {
+          id: sc
+          anchors.centerIn: parent
+          text: styleHover.containsMouse ? "voice: " + line.style : "♪ tone"
+          color: Theme.mauve
+          font.family: RoomLook.sans
+          font.pixelSize: RoomLook.small - 1
+          renderType: Text.QtRendering
+        }
+        MouseArea { id: styleHover; anchors.fill: parent; hoverEnabled: true }
       }
       Rectangle {
         id: chip

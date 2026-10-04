@@ -166,6 +166,7 @@ Singleton {
     case "stage": onStage(ev); break
     case "turn": onTurn(ev); break
     case "reply": onReply(ev); break
+    case "reply_style": entriesModel.setProperty(oriEntry(Number(ev.id), ev.lang), "style", String(ev.style || "")); break
     case "reply_end": onReplyEnd(ev); break
     case "silent": onSilent(ev); break
     case "speak": onSpeak(ev); break
@@ -355,7 +356,7 @@ Singleton {
       dur: e.dur !== undefined && e.dur !== null ? Number(e.dur) : -1,
       streaming: e.streaming === true, silent: e.silent === true,
       interrupted: e.interrupted === true, held: e.held === true,
-      source: e.source || "", tone: e.tone || "", at: e.at || "",
+      source: e.source || "", tone: e.tone || "", at: e.at || "", style: e.style || "",
       ms: e.ms !== undefined && e.ms !== null ? Number(e.ms) : -1
     }
     entriesModel.append(row)
