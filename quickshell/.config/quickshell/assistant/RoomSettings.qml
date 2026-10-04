@@ -130,6 +130,12 @@ FocusScope {
       if (engine.indexOf("qwen") === 0 && set.hasSettings && set.st.qwen_voice !== undefined) {
         out.push({ t: "choice", voice: true, qwen: true, key: "qwen_voice", lang: "all",
                    label: "Ori's voice", opts: set.opt.qwen_voices || [] })
+        // a language may speak with its own Qwen voice (fr -> fr_paris, a native French one);
+        // "–" = Ori's voice above, "default" clears an override
+        var ql = set.st.voices ? Object.keys(set.st.voices) : []
+        for (i = 0; i < ql.length; i++)
+          out.push({ t: "choice", voice: true, qwen: true, key: "qwen_voices." + ql[i], lang: ql[i],
+                     label: set.langNames[ql[i]] || ql[i], opts: ["default"].concat(set.opt.qwen_voices || []) })
       } else if (set.hasSettings && set.st.voices) {
         var langs = Object.keys(set.st.voices)
         for (i = 0; i < langs.length; i++) {
@@ -254,7 +260,10 @@ FocusScope {
   function preview(row) {
     var v = value(row)
     if (!v) return
-    if (row.qwen) { EarsModel.previewQwen(v, set.hello.en, EarsModel.setting("speed") || 1, EarsModel.setting("tts")); return }
+    if (row.qwen) {  // the row's own language (Hebrew needs IPA routing: the English line instead)
+      var qv = v === "default" || !v ? EarsModel.setting("qwen_voice") : v
+      EarsModel.previewQwen(qv, row.lang !== "he" && set.hello[row.lang] || set.hello.en, 1, EarsModel.setting("tts")); return
+    }
     EarsModel.previewVoice(v, espeak(row.lang, v), set.hello[row.lang] || set.hello.en, set.paceFor(row.lang))
   }
   // Delete: arm, then confirm.
@@ -979,7 +988,10 @@ FocusScope {
   }
 
   function previewWith(row, voice) {
-    if (row.qwen) { EarsModel.previewQwen(voice, set.hello.en, EarsModel.setting("speed") || 1, EarsModel.setting("tts")); return }
+    if (row.qwen) {  // the row's own language (Hebrew needs IPA routing: the English line instead)
+      var qv = voice === "default" || !voice ? EarsModel.setting("qwen_voice") : voice
+      EarsModel.previewQwen(qv, row.lang !== "he" && set.hello[row.lang] || set.hello.en, 1, EarsModel.setting("tts")); return
+    }
     EarsModel.previewVoice(voice, espeak(row.lang, voice), set.hello[row.lang] || set.hello.en, set.paceFor(row.lang))
   }
   function day(iso) {
