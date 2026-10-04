@@ -115,7 +115,8 @@ FocusScope {
       { k: "sure", label: "Sure enough", help: "Above this, no grace: reply at once", step: 0.05, unit: "", dp: 2 }
     ] },
     { title: "Tools", rows: [
-      { k: "inline_s", label: "Wait for a tool", help: "Slower tools finish in the background", step: 0.1, unit: " s", dp: 1 }
+      { k: "inline_s", label: "Wait for a tool", help: "Slower tools finish in the background", step: 0.1, unit: " s", dp: 1 },
+      { k: "rounds", label: "Tool rounds", help: "Tool steps Ori may take in one turn before it answers", step: 1, unit: "", dp: 0 }
     ] }
   ]
 
