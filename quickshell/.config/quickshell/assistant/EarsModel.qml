@@ -616,21 +616,26 @@ Singleton {
     var p = Object.assign({}, m.pendingSet); p[key] = value; m.pendingSet = p
     cmd({ cmd: "set", key: key, value: value })
   }
-  // Hear a voice before picking it. Plays on its own, outside the call.
-  function previewVoice(voice, espeak, line, speed) {
-    Quickshell.execDetached(["kokoro-npu", "say", "--voice", voice, "--lang", espeak,
-                             "--speed", String(speed || 1), line])
+  // Hear a voice before picking it. Plays on its own, outside the call. One preview at a time:
+  // each runs as its own process group (setsid) and first kills the previous one, curl /
+  // pw-play / kokoro-npu children included, so switching or clicking ▶ again cuts it off at once.
+  function runPreview(script, args) {
+    var stop = "pf=\"${XDG_RUNTIME_DIR:-/tmp}/ori-voice-preview.pgid\"; "
+             + "[ -f \"$pf\" ] && kill -TERM -- -\"$(cat \"$pf\")\" 2>/dev/null; echo $$ > \"$pf\"; "
+    Quickshell.execDetached(["setsid", "sh", "-c", stop + script, "sh"].concat(args))
   }
-
-  // The same for a Qwen3-TTS speaker: its server (port 8093, started by the engine) streams PCM.
+  function stopPreview() { runPreview("", []) }
+  function previewVoice(voice, espeak, line, speed) {
+    runPreview("exec kokoro-npu say --voice \"$1\" --lang \"$2\" --speed \"$3\" \"$4\"",
+               [voice, espeak, String(speed || 1), line])
+  }
+  // A Qwen3-TTS speaker, streamed as it is generated (like a live line): you hear whether the
+  // server keeps up -- gaps mean it is slower than real time right now.
   function previewQwen(voice, line, speed) {
     var body = JSON.stringify({ input: line, voice: voice, language: "auto", response_format: "pcm",
                                 speed: Number(speed || 1) })
-    // the whole clip first, then play: under a busy GPU the server is slower than real time
-    Quickshell.execDetached(["sh", "-c", "f=$(mktemp); curl -s -m 60 http://127.0.0.1:8093/v1/audio/speech "
-                             + "-H 'Content-Type: application/json' -d \"$1\" -o \"$f\" && "
-                             + "pw-play --raw --rate 24000 --channels 1 --format s16 \"$f\"; rm -f \"$f\"",
-                             "sh", body])
+    runPreview("curl -sN -m 60 http://127.0.0.1:8093/v1/audio/speech -H 'Content-Type: application/json' "
+               + "-d \"$1\" | pw-play --raw --rate 24000 --channels 1 --format s16 -", [body])
   }
 
   // Start the daemon when it is not running: the same launcher Hyprland
