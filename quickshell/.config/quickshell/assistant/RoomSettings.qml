@@ -153,10 +153,11 @@ FocusScope {
           out.push({ t: "choice", voice: true, key: "", fixed: v.voice, lang: v.lang, label: v.name, opts: [] })
         }
       }
-      if (set.hasSettings && set.st.speed !== undefined)
+      // speed is kokoro's: the Qwen server ignores it, so its rows go while Qwen speaks
+      if (set.hasSettings && set.st.speed !== undefined && set.st.tts !== "qwen")
         out.push({ t: "num", key: "speed", label: "Speed", help: "How fast Ori talks, in every language",
                    step: 0.05, min: 0.5, max: 2, dp: 2, unit: "×" })
-      if (set.hasSettings && set.st.hebrew_speed !== undefined)
+      if (set.hasSettings && set.st.hebrew_speed !== undefined && set.st.tts !== "qwen")
         out.push({ t: "num", key: "hebrew_speed", label: "Hebrew pace", help: "× Speed on Hebrew lines (he_heart already reads slower)",
                    step: 0.05, min: 0.5, max: 2, dp: 2, unit: "×" })
       if (set.hasSettings && set.st.hebrew !== undefined)
