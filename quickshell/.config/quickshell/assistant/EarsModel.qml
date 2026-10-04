@@ -642,6 +642,50 @@ Singleton {
                + "-d \"$1\" | pw-play --raw --rate 24000 --channels 1 --format s16 -", [body])
   }
 
+  // ---- a voice by description (the Qwen server designs it once, then caches it) ----
+  // tryDesign: POST /design, poll until ready ("designing the voice…"), then say a line in it.
+  property string designStatus: ""   // "" | designing | ready | error: <why>
+  property string designText: ""
+  property string designLang: "en"
+  function httpJson(args, cb) {
+    var p = skillProc.createObject(m)
+    p.cb = cb || null
+    p.command = ["curl", "-s", "-m", "10"].concat(args)
+    p.running = true
+  }
+  function tryDesign(desc, lang, line) {
+    m.designText = desc; m.designLang = lang; m.designStatus = "designing"
+    httpJson(["-X", "POST", "-H", "Content-Type: application/json", "http://127.0.0.1:8095/v1/audio/voices/design",
+              "-d", JSON.stringify({ voice_description: desc, voice_language: lang })], function (j) {
+      if (!j || !j.id) { m.designStatus = "error: the voice server didn't answer"; return }
+      designPoll.vid = j.id; designPoll.line = line; designPoll.tries = 0
+      if (j.status === "cached" || j.status === "ready") designPoll.done(); else designPoll.start()
+    })
+  }
+  Timer {
+    id: designPoll
+    property string vid: ""
+    property string line: ""
+    property int tries: 0
+    interval: 800; repeat: true
+    function done() {
+      stop(); m.designStatus = "ready"
+      var body = JSON.stringify({ input: line, voice: "serena", voice_description: m.designText,
+                                  voice_language: m.designLang, language: "auto", response_format: "pcm",
+                                  temperature: 0.5, subtalker_temperature: 0.5 })
+      m.runPreview("curl -sN -m 60 http://127.0.0.1:8095/v1/audio/speech -H 'Content-Type: application/json' "
+                   + "-d \"$1\" | pw-play --raw --rate 24000 --channels 1 --format s16 -", [body])
+    }
+    onTriggered: {
+      if (++tries > 90) { stop(); m.designStatus = "error: the design took too long"; return }
+      m.httpJson(["http://127.0.0.1:8095/v1/audio/voices/design/" + vid], function (j) {
+        if (!designPoll.running || !j) return
+        if (j.status === "ready" || j.status === "cached") designPoll.done()
+        else if (j.status === "error") { designPoll.stop(); m.designStatus = "error: " + (j.error || "design failed") }
+      })
+    }
+  }
+
   // Start the daemon when it is not running: the same launcher Hyprland
   // autostarts, in its own scope so a shell reload cannot take it down.
   function startDaemon() {

@@ -130,6 +130,7 @@ FocusScope {
       if (engine.indexOf("qwen") === 0 && set.hasSettings && set.st.qwen_voice !== undefined) {
         out.push({ t: "choice", voice: true, qwen: true, key: "qwen_voice", lang: "all",
                    label: "Ori's voice", opts: set.opt.qwen_voices || [] })
+        out.push({ t: "design", key: "design" })  // try / keep a voice by description
         // a language may speak with its own Qwen voice (fr -> fr_paris, a native French one);
         // "–" = Ori's voice above, "default" clears an override
         var ql = set.st.voices ? Object.keys(set.st.voices) : []
@@ -522,14 +523,14 @@ FocusScope {
             Item {
               id: body
               width: parent.width
-              height: rw.r.t === "enroll" ? 52 : rw.hasHelp || rw.r.t === "person" ? 48 : 38
+              height: rw.r.t === "design" ? 104 : rw.r.t === "enroll" ? 52 : rw.hasHelp || rw.r.t === "person" ? 48 : 38
 
               // ------------------------------------------------ the label
               Row {
                 id: lead
                 anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
                 spacing: 8
-                visible: rw.r.t !== "enroll"
+                visible: rw.r.t !== "enroll" && rw.r.t !== "design"
                 Rectangle {
                   visible: rw.r.voice === true
                   anchors.verticalCenter: parent.verticalCenter
@@ -591,7 +592,7 @@ FocusScope {
                 id: ctl
                 anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
                 spacing: 6
-                visible: rw.r.t !== "enroll"
+                visible: rw.r.t !== "enroll" && rw.r.t !== "design"
 
                 // choice: ‹ value ›, the value opens the list
                 RoomButton {
@@ -795,6 +796,95 @@ FocusScope {
                   enabled: EarsModel.linked
                   activeFocusOnTab: false
                   onClicked: { set.current = rw.index; set.sub = -1; set.remove(rw.r) }
+                }
+              }
+
+              // ---------------------------------------------- design row: a voice by description
+              Column {
+                id: designRow
+                visible: rw.r.t === "design"
+                anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
+                spacing: 8
+                readonly property var langs: ["en", "fr", "es", "he", "de", "it", "pt"]
+                property int li: 0
+                readonly property string lang: langs[li]
+                Row {
+                  width: parent.width
+                  spacing: 8
+                  Rectangle {  // the language the voice is native to: click to change
+                    width: 38; height: 32; radius: 16
+                    color: Theme.alpha(Theme.overlay0, 0.16)
+                    Text { anchors.centerIn: parent; text: designRow.lang; color: Theme.subtext0; font.family: RoomLook.mono; font.pixelSize: RoomLook.small }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: designRow.li = (designRow.li + 1) % designRow.langs.length }
+                  }
+                  Rectangle {
+                    width: parent.width - 46
+                    height: 32
+                    radius: 16
+                    color: Theme.alpha(Theme.crust, 0.35)
+                    border.width: 1
+                    border.color: descIn.activeFocus ? Theme.alpha(Theme.accent, 0.6) : Theme.alpha(Theme.overlay0, 0.3)
+                    TextInput {
+                      id: descIn
+                      anchors { fill: parent; leftMargin: 14; rightMargin: 14 }
+                      verticalAlignment: TextInput.AlignVCenter
+                      color: Theme.text
+                      clip: true
+                      font.family: RoomLook.sans
+                      font.pixelSize: RoomLook.meta + 1
+                      selectByMouse: true
+                      maximumLength: 300
+                      text: EarsModel.setting("voice_design") || ""
+                      onAccepted: tryBtn.clicked()
+                      Keys.onEscapePressed: function (e) { set.forceActiveFocus() }
+                      Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: descIn.text === ""
+                        text: "Describe a voice: a warm woman in her thirties, a native " + (set.langNames[designRow.lang] || "English") + " speaker…"
+                        color: Theme.overlay0
+                        font: descIn.font
+                        elide: Text.ElideRight
+                        width: descIn.width
+                      }
+                    }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.IBeamCursor; onClicked: { set.current = rw.index; descIn.forceActiveFocus() } }
+                  }
+                }
+                Row {
+                  spacing: 6
+                  RoomButton {
+                    id: tryBtn
+                    compact: true; kind: "primary"; tint: Theme.sapphire
+                    text: EarsModel.designStatus === "designing" ? "Designing…" : "▶ Try"
+                    enabled: descIn.text.trim().length >= 10 && EarsModel.designStatus !== "designing"
+                    onClicked: if (enabled) EarsModel.tryDesign(descIn.text.trim(), designRow.lang,
+                                                                 designRow.lang !== "he" && set.hello[designRow.lang] || set.hello.en)
+                  }
+                  RoomButton {
+                    compact: true; text: "Use for all"
+                    enabled: descIn.text.trim().length >= 10
+                    onClicked: EarsModel.set("voice_design", descIn.text.trim())
+                  }
+                  RoomButton {
+                    compact: true; text: "Use for " + (set.langNames[designRow.lang] || designRow.lang)
+                    enabled: descIn.text.trim().length >= 10
+                    onClicked: EarsModel.set("voice_designs." + designRow.lang, descIn.text.trim())
+                  }
+                  RoomButton {
+                    compact: true; text: "Clear"
+                    visible: !!EarsModel.setting("voice_design")
+                    onClicked: { EarsModel.set("voice_design", ""); descIn.text = "" }
+                  }
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    leftPadding: 6
+                    text: EarsModel.designStatus === "designing" ? "designing the voice… (about 10 s the first time)"
+                        : EarsModel.designStatus === "ready" ? "playing it"
+                        : EarsModel.designStatus.indexOf("error") === 0 ? EarsModel.designStatus : ""
+                    color: EarsModel.designStatus.indexOf("error") === 0 ? Theme.red : Theme.overlay0
+                    font.family: RoomLook.sans
+                    font.pixelSize: RoomLook.small
+                  }
                 }
               }
 
