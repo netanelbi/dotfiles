@@ -634,13 +634,12 @@ Singleton {
   }
   // A Qwen3-TTS speaker, streamed as it is generated (like a live line): you hear whether the
   // server keeps up -- gaps mean it is slower than real time right now.
-  function previewQwen(voice, line, speed, engine) {
-    var body = JSON.stringify({ input: line, voice: voice, language: "auto", response_format: "pcm",
-                                speed: Number(speed || 1), temperature: 0.5, subtalker_temperature: 0.5 })
-    var port = 8095  // the Qwen NPU server
-    runPreview("curl -sN -m 60 http://127.0.0.1:" + port + "/v1/audio/speech -H 'Content-Type: application/json' "
-               + "-d \"$1\" | pw-play --raw --rate 24000 --channels 1 --format s16 -", [body])
+  function previewQwen(voice, line, lang, design) {
+    // through ears itself, the same path a call uses (Hebrew read via IPA, a designed voice by its
+    // description); one at a time
+    cmd({ cmd: "voice_preview", text: line, lang: lang || "en", voice: voice, design: design || "" })
   }
+
 
   // ---- a voice by description (the Qwen server designs it once, then caches it) ----
   // tryDesign: POST /design, poll until ready ("designing the voice…"), then say a line in it.
@@ -655,7 +654,22 @@ Singleton {
   }
   // the languages the designer knows; Hebrew voices are designed as English ones (like bright)
   readonly property var designLangs: ["en", "fr", "es", "de", "it", "pt", "ru", "zh", "ja", "ko"]
+  property string designFor: "en"  // the language the voice is FOR (the sample is said in it)
+  // the designed voices the Qwen server keeps (GET /v1/audio/voices, kind "designed")
+  property var designedVoices: []
+  function refreshDesigned() {
+    httpJson(["http://127.0.0.1:8095/v1/audio/voices"], function (j) {
+      if (!j || !j.voices) return
+      var d = j.voices.filter(function (v) { return v.kind === "designed" })
+      d.sort(function (a, b) { return String(b.last_used || b.created).localeCompare(String(a.last_used || a.created)) })
+      m.designedVoices = d
+    })
+  }
+  function deleteDesigned(id) {
+    httpJson(["-X", "DELETE", "http://127.0.0.1:8095/v1/audio/voices/design/" + id], function () { m.refreshDesigned() })
+  }
   function tryDesign(desc, lang, line) {
+    m.designFor = lang
     lang = designLangs.indexOf(lang) >= 0 ? lang : "en"
     m.designText = desc; m.designLang = lang; m.designStatus = "designing"
     httpJson(["-X", "POST", "-H", "Content-Type: application/json", "http://127.0.0.1:8095/v1/audio/voices/design",
@@ -676,11 +690,8 @@ Singleton {
     interval: 800; repeat: true
     function done() {
       stop(); m.designStatus = "ready"
-      var body = JSON.stringify({ input: line, voice: "serena", voice_description: m.designText,
-                                  voice_language: m.designLang, language: "auto", response_format: "pcm",
-                                  temperature: 0.5, subtalker_temperature: 0.5 })
-      m.runPreview("curl -sN -m 60 http://127.0.0.1:8095/v1/audio/speech -H 'Content-Type: application/json' "
-                   + "-d \"$1\" | pw-play --raw --rate 24000 --channels 1 --format s16 -", [body])
+      m.cmd({ cmd: "voice_preview", text: line, lang: m.designFor, design: m.designText })
+      m.refreshDesigned()
     }
     onTriggered: {
       if (++tries > 90) { stop(); m.designStatus = "error: the design took too long"; return }

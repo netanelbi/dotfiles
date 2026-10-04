@@ -39,7 +39,7 @@ FocusScope {
 
   readonly property var langNames: ({ en: "English", fr: "French", es: "Spanish", it: "Italian", pt: "Portuguese", he: "Hebrew",
                                       hi: "Hindi", ja: "Japanese", zh: "Chinese" })
-  readonly property var hello: ({ en: "Hi, I'm Ori.", fr: "Bonjour, je suis Ori.", es: "Hola, soy Ori.",
+  readonly property var hello: ({ he: "שלום, אני אורי.", en: "Hi, I'm Ori.", fr: "Bonjour, je suis Ori.", es: "Hola, soy Ori.",
                                   it: "Ciao, sono Ori.", pt: "Oi, eu sou a Ori.", hi: "Namaste, main Ori hoon.",
                                   ja: "Konnichiwa, Ori desu.", zh: "Ni hao, wo shi Ori.",
                                   he: "שלום, אני אורי. במה אוכל לעזור?" })
@@ -70,6 +70,8 @@ FocusScope {
   // ------------------------------------------------------------ sections
   readonly property var sections: {
     var out = [{ k: "voice", label: "Voice" }]
+    if (hasSettings && EarsModel.setting("tts") === "qwen")
+      out.push({ k: "voices", label: "Voices", n: EarsModel.designedVoices.length })
     if (hasSettings) out.push({ k: "brain", label: "Brain" })
     out.push({ k: "people", label: "People", n: EarsModel.people ? EarsModel.people.length : -1 })
     out.push({ k: "behaviour", label: "Behaviour" })
@@ -80,6 +82,7 @@ FocusScope {
     EarsModel.settingsSection = k
     set.current = 0; set.openKey = ""; set.armed = ""; set.sub = -1
     flick.contentY = 0
+    if (k === "voices") EarsModel.refreshDesigned()
   }
   function stepSection(d) {
     var ks = sections.map(function (s) { return s.k })
@@ -130,7 +133,6 @@ FocusScope {
       if (engine.indexOf("qwen") === 0 && set.hasSettings && set.st.qwen_voice !== undefined) {
         out.push({ t: "choice", voice: true, qwen: true, key: "qwen_voice", lang: "all",
                    label: "Ori's voice", opts: set.opt.qwen_voices || [] })
-        out.push({ t: "design", key: "design" })  // try / keep a voice by description
         // a language may speak with its own Qwen voice (fr -> fr_paris, a native French one);
         // "–" = Ori's voice above, "default" clears an override
         var ql = set.st.voices ? Object.keys(set.st.voices) : []
@@ -160,6 +162,11 @@ FocusScope {
       if (set.hasSettings && set.st.hebrew !== undefined)
         out.push({ t: "choice", toggle: true, key: "hebrew", label: "Hear Hebrew",
                    help: "A second speech model for Hebrew turns (~1 GB RAM)", opts: [false, true] })
+    } else if (s === "voices") {
+      // design a voice by description, and manage the ones the server keeps
+      out.push({ t: "design", key: "design" })
+      var dv = EarsModel.designedVoices
+      for (i = 0; i < dv.length; i++) out.push({ t: "designed", key: "d:" + dv[i].id, d: dv[i] })
     } else if (s === "brain") {
       var models = set.opt.models || []
       if (set.st.model !== undefined)
@@ -263,7 +270,7 @@ FocusScope {
     if (!v) return
     if (row.qwen) {  // the row's own language (Hebrew needs IPA routing: the English line instead)
       var qv = v === "default" || !v ? EarsModel.setting("qwen_voice") : v
-      EarsModel.previewQwen(qv, row.lang !== "he" && set.hello[row.lang] || set.hello.en, 1, EarsModel.setting("tts")); return
+      EarsModel.previewQwen(qv, set.hello[row.lang] || set.hello.en, row.lang === "all" ? "en" : row.lang, set.designFor(row.lang)); return
     }
     EarsModel.previewVoice(v, espeak(row.lang, v), set.hello[row.lang] || set.hello.en, set.paceFor(row.lang))
   }
@@ -523,14 +530,14 @@ FocusScope {
             Item {
               id: body
               width: parent.width
-              height: rw.r.t === "design" ? 104 : rw.r.t === "enroll" ? 52 : rw.hasHelp || rw.r.t === "person" ? 48 : 38
+              height: rw.r.t === "design" ? 104 : rw.r.t === "designed" ? 92 : rw.r.t === "enroll" ? 52 : rw.hasHelp || rw.r.t === "person" ? 48 : 38
 
               // ------------------------------------------------ the label
               Row {
                 id: lead
                 anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
                 spacing: 8
-                visible: rw.r.t !== "enroll" && rw.r.t !== "design"
+                visible: rw.r.t !== "enroll" && rw.r.t !== "design" && rw.r.t !== "designed"
                 Rectangle {
                   visible: rw.r.voice === true
                   anchors.verticalCenter: parent.verticalCenter
@@ -592,7 +599,7 @@ FocusScope {
                 id: ctl
                 anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
                 spacing: 6
-                visible: rw.r.t !== "enroll" && rw.r.t !== "design"
+                visible: rw.r.t !== "enroll" && rw.r.t !== "design" && rw.r.t !== "designed"
 
                 // choice: ‹ value ›, the value opens the list
                 RoomButton {
@@ -618,7 +625,8 @@ FocusScope {
                     width: Math.min(implicitWidth, parent.width - 16)
                     Text {
                       id: valT
-                      text: rw.v === undefined ? "–" : rw.r.voice ? set.voiceName(rw.v) : rw.r.toggle ? (rw.v ? "on" : "off") : String(rw.v)
+                      text: rw.r.qwen && set.designFor(rw.r.lang) !== "" ? "✎ designed"
+                          : rw.v === undefined ? "–" : rw.r.voice ? set.voiceName(rw.v) : rw.r.toggle ? (rw.v ? "on" : "off") : String(rw.v)
                       color: Theme.text
                       elide: Text.ElideRight
                       width: Math.min(implicitWidth, parent.parent.width - 16 - (hintT.visible ? hintT.implicitWidth + 6 : 0))
@@ -805,20 +813,18 @@ FocusScope {
                 visible: rw.r.t === "design"
                 anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
                 spacing: 8
-                readonly property var langs: ["en", "fr", "es", "he", "de", "it", "pt"]
-                property int li: 0
-                readonly property string lang: langs[li]
+                readonly property string lang: set.forLang
                 Row {
                   width: parent.width
                   spacing: 8
-                  Rectangle {  // the language the voice is native to: click to change
-                    width: 38; height: 32; radius: 16
+                  Rectangle {  // which language this voice is FOR (the designer's own language is handled inside)
+                    width: 74; height: 32; radius: 16
                     color: Theme.alpha(Theme.overlay0, 0.16)
-                    Text { anchors.centerIn: parent; text: designRow.lang; color: Theme.subtext0; font.family: RoomLook.mono; font.pixelSize: RoomLook.small }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: designRow.li = (designRow.li + 1) % designRow.langs.length }
+                    Text { anchors.centerIn: parent; text: "for " + designRow.lang + " ▾"; color: Theme.subtext0; font.family: RoomLook.mono; font.pixelSize: RoomLook.small }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: set.designLi = (set.designLi + 1) % set.designLangsFor.length }
                   }
                   Rectangle {
-                    width: parent.width - 46
+                    width: parent.width - 82
                     height: 32
                     radius: 16
                     color: Theme.alpha(Theme.crust, 0.35)
@@ -840,7 +846,8 @@ FocusScope {
                       Text {
                         anchors.verticalCenter: parent.verticalCenter
                         visible: descIn.text === ""
-                        text: "Describe a voice in English: a warm woman in her thirties, a native " + (set.langNames[designRow.lang] || "English") + " speaker…"
+                        text: designRow.lang === "he" ? "Describe it in English: an Israeli woman in her thirties, warm, calm…"
+                            : "Describe it in English: a warm woman in her thirties, a native " + (set.langNames[designRow.lang] || "English") + " speaker…"
                         color: Theme.overlay0
                         font: descIn.font
                         elide: Text.ElideRight
@@ -858,15 +865,16 @@ FocusScope {
                     text: EarsModel.designStatus === "designing" ? "Designing…" : "▶ Try"
                     enabled: descIn.text.trim().length >= 10 && EarsModel.designStatus !== "designing"
                     onClicked: if (enabled) EarsModel.tryDesign(descIn.text.trim(), designRow.lang,
-                                                                 designRow.lang !== "he" && set.hello[designRow.lang] || set.hello.en)
+                                                                 set.hello[designRow.lang] || set.hello.en)
                   }
                   RoomButton {
-                    compact: true; text: "Use for all"
+                    compact: true; text: "Use for every language"
                     enabled: descIn.text.trim().length >= 10
                     onClicked: EarsModel.set("voice_design", descIn.text.trim())
                   }
                   RoomButton {
                     compact: true; text: "Use for " + (set.langNames[designRow.lang] || designRow.lang)
+                    kind: "good"; tint: Theme.green
                     enabled: descIn.text.trim().length >= 10
                     onClicked: EarsModel.set("voice_designs." + designRow.lang, descIn.text.trim())
                   }
@@ -882,6 +890,45 @@ FocusScope {
                         : EarsModel.designStatus === "ready" ? "playing it"
                         : EarsModel.designStatus.indexOf("error") === 0 ? EarsModel.designStatus : ""
                     color: EarsModel.designStatus.indexOf("error") === 0 ? Theme.red : Theme.overlay0
+                    font.family: RoomLook.sans
+                    font.pixelSize: RoomLook.small
+                  }
+                }
+              }
+
+              // ---------------------------------------------- a designed voice on the server
+              Column {
+                visible: rw.r.t === "designed"
+                anchors { left: parent.left; leftMargin: 12; right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
+                spacing: 6
+                Text {
+                  width: parent.width
+                  text: rw.r.d ? rw.r.d.description : ""
+                  color: Theme.text
+                  wrapMode: Text.Wrap
+                  maximumLineCount: 2
+                  elide: Text.ElideRight
+                  font.family: RoomLook.sans
+                  font.pixelSize: RoomLook.meta + 1
+                }
+                Row {
+                  spacing: 6
+                  RoomButton { compact: true; text: "▶"
+                    onClicked: EarsModel.previewQwen(EarsModel.setting("qwen_voice"), set.hello[set.forLang] || set.hello.en,
+                                                     set.forLang, rw.r.d.description) }
+                  RoomButton { compact: true; kind: "good"; tint: Theme.green
+                    text: "Use for " + (set.langNames[set.forLang] || set.forLang)
+                    onClicked: EarsModel.set("voice_designs." + set.forLang, rw.r.d.description) }
+                  RoomButton { compact: true; text: "Use for every language"
+                    onClicked: EarsModel.set("voice_design", rw.r.d.description) }
+                  RoomButton { compact: true; kind: "danger"; text: set.armed === rw.r.key ? "Delete it?" : "Delete"
+                    onClicked: { if (set.armed === rw.r.key) { EarsModel.deleteDesigned(rw.r.d.id); set.armed = "" } else set.armed = rw.r.key } }
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    leftPadding: 6
+                    readonly property string used: rw.r.d ? set.inUse(rw.r.d.description) : ""
+                    text: used !== "" ? "in use: " + used : (rw.r.d && rw.r.d.voice_language ? "native " + rw.r.d.voice_language : "")
+                    color: used !== "" ? Theme.green : Theme.overlay0
                     font.family: RoomLook.sans
                     font.pixelSize: RoomLook.small
                   }
@@ -1054,6 +1101,8 @@ FocusScope {
                  : String(EarsModel.setting("tts")).indexOf("qwen") === 0
                    ? "Ori answers in the language you speak, always in this voice (Hebrew is read through IPA). ▶ or Space plays it."
                    : "Ori answers in the language you speak, in that language's voice. ▶ or Space plays it.")
+            : set.section === "voices"
+              ? "A voice is its description: the first ▶ designs it (about 10 s), then it's instant. Pick the language with \"for\"; Hebrew voices are designed in English, like bright."
             : set.section === "people" && EarsModel.people
               ? "Enrolling takes about 20 seconds of talking. More samples (another room, a morning voice) help Ori know someone anywhere."
             : set.section === "brain" ? "Changes apply from the next reply."
@@ -1077,10 +1126,25 @@ FocusScope {
     }
   }
 
+  // the description in use for a language row ("all" = Ori's voice), or ""
+  readonly property var designLangsFor: ["he", "en", "fr", "es", "de", "it", "pt"]
+  property int designLi: 0
+  readonly property string forLang: designLangsFor[designLi]  // which language a designed voice is FOR
+  function inUse(desc) {  // where a description is used now: "every language", "he", ...
+    var out = [], ds = EarsModel.setting("voice_designs") || ({})
+    if (EarsModel.setting("voice_design") === desc) out.push("every language")
+    for (var k in ds) if (ds[k] === desc) out.push(set.langNames[k] || k)
+    return out.join(", ")
+  }
+  function designFor(lang) {
+    var ds = EarsModel.setting("voice_designs") || ({})
+    if (lang !== "all" && ds[lang]) return ds[lang]
+    return EarsModel.setting("voice_design") || ""
+  }
   function previewWith(row, voice) {
     if (row.qwen) {  // the row's own language (Hebrew needs IPA routing: the English line instead)
       var qv = voice === "default" || !voice ? EarsModel.setting("qwen_voice") : voice
-      EarsModel.previewQwen(qv, row.lang !== "he" && set.hello[row.lang] || set.hello.en, 1, EarsModel.setting("tts")); return
+      EarsModel.previewQwen(qv, set.hello[row.lang] || set.hello.en, row.lang === "all" ? "en" : row.lang, set.designFor(row.lang)); return
     }
     EarsModel.previewVoice(voice, espeak(row.lang, voice), set.hello[row.lang] || set.hello.en, set.paceFor(row.lang))
   }
