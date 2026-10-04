@@ -166,6 +166,7 @@ Singleton {
     case "stage": onStage(ev); break
     case "turn": onTurn(ev); break
     case "reply": onReply(ev); break
+    case "voice": if (!history) onVoice(ev); break
     case "reply_style": entriesModel.setProperty(oriEntry(Number(ev.id), ev.lang), "style", String(ev.style || "")); break
     case "reply_end": onReplyEnd(ev); break
     case "silent": onSilent(ev); break
@@ -657,6 +658,15 @@ Singleton {
   property string designFor: "en"  // the language the voice is FOR (the sample is said in it)
   // the designed voices the Qwen server keeps (GET /v1/audio/voices, kind "designed")
   property var designedVoices: []
+  // what Ori is doing with its voice right now (the voice tool): designing / trial / kept / dropped / failed
+  property var oriVoice: ({})
+  function onVoice(ev) {
+    m.oriVoice = { action: String(ev.action || ""), description: String(ev.description || ""),
+                   language: String(ev.language || ""), name: String(ev.name || ""),
+                   scope: String(ev.scope || ""), error: String(ev.error || ""), ts: ev.ts || now() }
+    if (ev.action === "kept" || ev.action === "dropped" || ev.action === "failed") oriVoiceClear.restart()
+  }
+  Timer { id: oriVoiceClear; interval: 8000; onTriggered: m.oriVoice = ({}) }
   function refreshDesigned() {
     httpJson(["http://127.0.0.1:8095/v1/audio/voices"], function (j) {
       if (!j || !j.voices) return
@@ -668,9 +678,10 @@ Singleton {
   function deleteDesigned(id) {
     httpJson(["-X", "DELETE", "http://127.0.0.1:8095/v1/audio/voices/design/" + id], function () { m.refreshDesigned() })
   }
-  function tryDesign(desc, lang, line) {
-    m.designFor = lang
-    lang = designLangs.indexOf(lang) >= 0 ? lang : "en"
+  // native: the language the voice is designed as a native speaker of; hear: the sample's language
+  function tryDesign(desc, native, line, hear) {
+    m.designFor = hear || native
+    var lang = designLangs.indexOf(native) >= 0 ? native : "en"
     m.designText = desc; m.designLang = lang; m.designStatus = "designing"
     httpJson(["-X", "POST", "-H", "Content-Type: application/json", "http://127.0.0.1:8095/v1/audio/voices/design",
               "-d", JSON.stringify({ voice_description: desc, voice_language: lang })], function (j) {

@@ -164,6 +164,7 @@ FocusScope {
                    help: "A second speech model for Hebrew turns (~1 GB RAM)", opts: [false, true] })
     } else if (s === "voices") {
       // design a voice by description, and manage the ones the server keeps
+      if (EarsModel.oriVoice.action) out.push({ t: "orivoice", key: "orivoice" })
       out.push({ t: "design", key: "design" })
       var lib = EarsModel.setting("voice_library") || ({})
       for (k in lib) out.push({ t: "designed", key: "d:" + k, name: k, d: lib[k] })
@@ -530,14 +531,14 @@ FocusScope {
             Item {
               id: body
               width: parent.width
-              height: rw.r.t === "design" ? 104 : rw.r.t === "designed" ? 100 : rw.r.t === "enroll" ? 52 : rw.hasHelp || rw.r.t === "person" ? 48 : 38
+              height: rw.r.t === "orivoice" ? 46 : rw.r.t === "design" ? 104 : rw.r.t === "designed" ? 100 : rw.r.t === "enroll" ? 52 : rw.hasHelp || rw.r.t === "person" ? 48 : 38
 
               // ------------------------------------------------ the label
               Row {
                 id: lead
                 anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
                 spacing: 8
-                visible: rw.r.t !== "enroll" && rw.r.t !== "design" && rw.r.t !== "designed"
+                visible: rw.r.t !== "enroll" && rw.r.t !== "design" && rw.r.t !== "designed" && rw.r.t !== "orivoice"
                 Rectangle {
                   visible: rw.r.voice === true
                   anchors.verticalCenter: parent.verticalCenter
@@ -599,7 +600,7 @@ FocusScope {
                 id: ctl
                 anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
                 spacing: 6
-                visible: rw.r.t !== "enroll" && rw.r.t !== "design" && rw.r.t !== "designed"
+                visible: rw.r.t !== "enroll" && rw.r.t !== "design" && rw.r.t !== "designed" && rw.r.t !== "orivoice"
 
                 // choice: ‹ value ›, the value opens the list
                 RoomButton {
@@ -812,18 +813,36 @@ FocusScope {
                 visible: rw.r.t === "design"
                 anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
                 spacing: 8
-                readonly property string lang: set.forLang
+                readonly property string lang: set.nativeLang
+                Connections {  // Edit on a saved voice fills the box; Save then overwrites it
+                  target: set
+                  function onEditSeqChanged() { descIn.text = set.editDesc; nameIn2.text = set.editName }
+                }
+                // (also when this box is (re)built: the banner appearing rebuilds the rows)
+                Component.onCompleted: oriFill.onOriVoiceChanged()
+                Connections {  // what Ori designs by voice shows up here, live
+                  id: oriFill
+                  target: EarsModel
+                  function onOriVoiceChanged() {
+                    var ov = EarsModel.oriVoice
+                    if ((ov.action === "designing" || ov.action === "trial") && ov.description) {
+                      descIn.text = ov.description
+                      var li = set.designerLangs.indexOf(ov.language || "en")
+                      if (li >= 0) set.nativeLi = li
+                    }
+                  }
+                }
                 Row {
                   width: parent.width
                   spacing: 8
-                  Rectangle {  // which language this voice is FOR (the designer's own language is handled inside)
-                    width: 74; height: 32; radius: 16
+                  Rectangle {  // the accent: the language the voice is designed as a native speaker of
+                    width: 94; height: 32; radius: 16
                     color: Theme.alpha(Theme.overlay0, 0.16)
-                    Text { anchors.centerIn: parent; text: "for " + designRow.lang + " ▾"; color: Theme.subtext0; font.family: RoomLook.mono; font.pixelSize: RoomLook.small }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: set.designLi = (set.designLi + 1) % set.designLangsFor.length }
+                    Text { anchors.centerIn: parent; text: "native " + set.nativeLang + " ▾"; color: Theme.subtext0; font.family: RoomLook.mono; font.pixelSize: RoomLook.small }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: set.nativeLi = (set.nativeLi + 1) % set.designerLangs.length }
                   }
                   Rectangle {
-                    width: parent.width - 82
+                    width: parent.width - 102
                     height: 32
                     radius: 16
                     color: Theme.alpha(Theme.crust, 0.35)
@@ -844,8 +863,7 @@ FocusScope {
                       Text {
                         anchors.verticalCenter: parent.verticalCenter
                         visible: descIn.text === ""
-                        text: designRow.lang === "he" ? "Describe it in English: an Israeli woman in her thirties, warm, calm…"
-                            : "Describe it in English: a warm woman in her thirties, a native " + (set.langNames[designRow.lang] || "English") + " speaker…"
+                        text: "Describe it in English: a warm woman in her thirties, a native " + (set.langNames[set.nativeLang] || "English") + " speaker…"
                         color: Theme.overlay0
                         font: descIn.font
                         elide: Text.ElideRight
@@ -857,13 +875,19 @@ FocusScope {
                 }
                 Row {
                   spacing: 6
+                  Rectangle {  // the language ▶ plays a sample in (here and in the list below)
+                    width: 92; height: 28; radius: 14
+                    color: Theme.alpha(Theme.overlay0, 0.16)
+                    Text { anchors.centerIn: parent; text: "hear in " + set.forLang + " ▾"; color: Theme.subtext0; font.family: RoomLook.mono; font.pixelSize: RoomLook.small }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: set.designLi = (set.designLi + 1) % set.hearLangs.length }
+                  }
                   RoomButton {
                     id: tryBtn
                     compact: true; kind: "primary"; tint: Theme.sapphire
                     text: EarsModel.designStatus === "designing" ? "Designing…" : "▶ Try"
                     enabled: descIn.text.trim().length >= 10 && EarsModel.designStatus !== "designing"
-                    onClicked: if (enabled) EarsModel.tryDesign(descIn.text.trim(), designRow.lang,
-                                                                 set.hello[designRow.lang] || set.hello.en)
+                    onClicked: if (enabled) EarsModel.tryDesign(descIn.text.trim(), set.nativeLang,
+                                                                 set.hello[set.forLang] || set.hello.en, set.forLang)
                   }
                   Rectangle {
                     width: 150; height: 28; radius: 14
@@ -888,12 +912,13 @@ FocusScope {
                   }
                   RoomButton {
                     id: saveBtn
-                    compact: true; kind: "good"; tint: Theme.green; text: "Save"
+                    compact: true; kind: "good"; tint: Theme.green
                     enabled: descIn.text.trim().length >= 10 && nameIn2.text.length >= 2
+                    text: (EarsModel.setting("voice_library") || ({}))[nameIn2.text.toLowerCase()] ? "Save over" : "Save"
                     onClicked: {
                       if (!enabled) return
                       EarsModel.set("voice_library." + nameIn2.text.toLowerCase(),
-                                    { description: descIn.text.trim(), language: set.nativeOf(designRow.lang) })
+                                    { description: descIn.text.trim(), language: set.nativeLang })
                       EarsModel.designStatus = "saved: pick \"" + nameIn2.text.toLowerCase() + "\" on the Voice tab"
                       nameIn2.text = ""; descIn.text = ""
                     }
@@ -910,6 +935,39 @@ FocusScope {
                     font.family: RoomLook.sans
                     font.pixelSize: RoomLook.small
                   }
+                }
+              }
+
+              // ---------------------------------------------- what Ori is doing with its voice, live
+              Row {
+                visible: rw.r.t === "orivoice"
+                anchors { left: parent.left; leftMargin: 12; right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
+                spacing: 10
+                Rectangle {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: 10; height: 10; radius: 5
+                  readonly property string a: EarsModel.oriVoice.action || ""
+                  color: a === "designing" ? Theme.yellow : a === "trial" ? Theme.mauve
+                       : a === "kept" ? Theme.green : a === "failed" ? Theme.red : Theme.overlay0
+                  SequentialAnimation on opacity {
+                    running: EarsModel.oriVoice.action === "designing"; loops: Animation.Infinite
+                    NumberAnimation { to: 0.3; duration: 500 }
+                    NumberAnimation { to: 1; duration: 500 }
+                  }
+                }
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: parent.width - 30
+                  elide: Text.ElideRight
+                  readonly property var ov: EarsModel.oriVoice
+                  text: ov.action === "designing" ? "Ori is designing a voice: " + ov.description
+                      : ov.action === "trial" ? "Ori is speaking in it now. Say \"keep it\" (and a name) or \"drop it\"."
+                      : ov.action === "kept" ? "Kept as \"" + ov.name + "\", in use for " + (ov.scope === "all" || ov.scope === "" ? "every language" : (set.langNames[ov.scope] || ov.scope))
+                      : ov.action === "dropped" ? "Dropped; back to the voice you had."
+                      : ov.action === "failed" ? "The design failed: " + ov.error : ""
+                  color: Theme.text
+                  font.family: RoomLook.sans
+                  font.pixelSize: RoomLook.meta + 1
                 }
               }
 
@@ -940,8 +998,9 @@ FocusScope {
                 }
                 Row {
                   spacing: 6
-                  RoomButton { compact: true; text: "▶ " + set.forLang
+                  RoomButton { compact: true; text: "▶ in " + set.forLang
                     onClicked: EarsModel.previewQwen(rw.r.name, set.hello[set.forLang] || set.hello.en, set.forLang, "") }
+                  RoomButton { compact: true; text: "Edit"; onClicked: set.editVoice(rw.r.name, rw.r.d) }
                   RoomButton { compact: true; kind: "danger"; text: set.armed === rw.r.key ? "Delete it?" : "Delete"
                     onClicked: {
                       if (set.armed !== rw.r.key) { set.armed = rw.r.key; return }
@@ -1122,7 +1181,7 @@ FocusScope {
                    ? "Ori answers in the language you speak, always in this voice (Hebrew is read through IPA). ▶ or Space plays it."
                    : "Ori answers in the language you speak, in that language's voice. ▶ or Space plays it.")
             : set.section === "voices"
-              ? "Describe a voice, ▶ Try it (about 10 s the first time, then instant), name it and Save. Saved voices are picked on the Voice tab like any other, for every language or one. \"for\" is the language you'll mostly use it in."
+              ? "Describe a voice, ▶ Try it (about 10 s the first time, then instant), name it and Save; Edit loads a saved one back. Saved voices are picked on the Voice tab like any other. \"native\" is its accent (Hebrew voices: English, like bright); \"hear in\" is just the language ▶ plays."
             : set.section === "people" && EarsModel.people
               ? "Enrolling takes about 20 seconds of talking. More samples (another room, a morning voice) help Ori know someone anywhere."
             : set.section === "brain" ? "Changes apply from the next reply."
@@ -1147,9 +1206,20 @@ FocusScope {
   }
 
   // the description in use for a language row ("all" = Ori's voice), or ""
-  readonly property var designLangsFor: ["he", "en", "fr", "es", "de", "it", "pt"]
-  property int designLi: 0
-  readonly property string forLang: designLangsFor[designLi]  // which language a designed voice is FOR
+  readonly property var hearLangs: ["he", "en", "fr", "es", "de", "it", "pt"]
+  property int designLi: 0                                 // index into hearLangs
+  readonly property string forLang: hearLangs[designLi]    // the language ▶ plays samples in
+  property int nativeLi: 0                                 // index into designerLangs
+  readonly property string nativeLang: designerLangs[nativeLi]
+  property string editName: ""                             // Edit on a saved voice: load it into the box
+  property string editDesc: ""
+  property int editSeq: 0
+  function editVoice(name, d) {
+    editName = name; editDesc = d.description
+    nativeLi = Math.max(0, designerLangs.indexOf(d.language || "en"))
+    editSeq++
+    current = 0
+  }
   function inUse(name) {  // where a library voice is picked: "every language", "Hebrew", ...
     var out = [], qv = EarsModel.setting("qwen_voices") || ({})
     if (EarsModel.setting("qwen_voice") === name) out.push("every language")
