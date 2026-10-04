@@ -124,10 +124,9 @@ FocusScope {
       var engine = EarsModel.setting("tts") || "kokoro"
       if (set.hasSettings && set.st.tts !== undefined)
         out.push({ t: "choice", key: "tts", label: "Voice engine", help: engine === "qwen"
-                     ? "Qwen3-TTS on the GPU: one voice for every language, Hebrew included"
-                     : engine === "qwen-npu" ? "Qwen3-TTS on the NPU (start npu/server/serve.sh); GPU free"
-                     : "Kokoro on the NPU: a voice per language",
-                   opts: set.opt.tts_engines || ["kokoro", "qwen", "qwen-npu"] })
+                     ? "Qwen3-TTS: one voice for every language, Hebrew included"
+                     : "Kokoro: a voice per language",
+                   opts: set.opt.tts_engines || ["kokoro", "qwen"] })
       if (engine.indexOf("qwen") === 0 && set.hasSettings && set.st.qwen_voice !== undefined) {
         out.push({ t: "choice", voice: true, qwen: true, key: "qwen_voice", lang: "all",
                    label: "Ori's voice", opts: set.opt.qwen_voices || [] })

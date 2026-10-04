@@ -635,7 +635,7 @@ Singleton {
   function previewQwen(voice, line, speed, engine) {
     var body = JSON.stringify({ input: line, voice: voice, language: "auto", response_format: "pcm",
                                 speed: Number(speed || 1), temperature: 0.5, subtalker_temperature: 0.5 })
-    var port = engine === "qwen-npu" ? 8095 : 8093
+    var port = 8095  // the Qwen NPU server
     runPreview("curl -sN -m 60 http://127.0.0.1:" + port + "/v1/audio/speech -H 'Content-Type: application/json' "
                + "-d \"$1\" | pw-play --raw --rate 24000 --channels 1 --format s16 -", [body])
   }
