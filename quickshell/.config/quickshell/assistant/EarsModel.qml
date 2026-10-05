@@ -421,6 +421,25 @@ Singleton {
   function onTurn(ev) {
     var tid = Number(ev.id)
     var ids = Object.assign({}, m.turnIds); ids[tid] = true; m.turnIds = ids
+    // He wasn't done: the merged turn takes the place of the line it continues,
+    // as Ori's own history holds it once (the first part's reply was rolled back).
+    var i = ev.replaces !== undefined && ev.replaces !== null ? findEntry("you", Number(ev.replaces)) : -1
+    if (i >= 0) {
+      entriesModel.set(i, { rid: tid, text: String(ev.text || ""), lang: ev.lang || "en",
+                            sim: ev.sim !== undefined && ev.sim !== null ? Number(ev.sim) : -1,
+                            turnP: ev.turn_p !== undefined && ev.turn_p !== null ? Number(ev.turn_p) : -1,
+                            dur: ev.dur !== undefined && ev.dur !== null ? Number(ev.dur) : -1, at: clock(ev.ts) })
+      var o = findEntry("ori", Number(ev.replaces))  // a reply to the first part, never heard
+      if (o >= 0) {
+        entriesModel.remove(o)
+        if (m.lastOri > o) m.lastOri--
+        else if (m.lastOri === o) {
+          m.lastOri = -1
+          for (var k = o - 1; k >= 0; k--) if (entriesModel.get(k).kind === "ori") { m.lastOri = k; break }
+        }
+      }
+      return
+    }
     m.youTurns++
     addEntry({ kind: "you", rid: tid, text: String(ev.text || ""), lang: ev.lang || "en",
                sim: ev.sim, turnP: ev.turn_p, dur: ev.dur, at: clock(ev.ts) })
@@ -509,7 +528,7 @@ Singleton {
       if (i >= 0) entriesModel.setProperty(i, "interrupted", true)
       addEntry({ kind: "note", tone: "cut", text: "You interrupted. Ori stopped and keeps only what you heard" })
     } else if (a === "continue") {
-      addEntry({ kind: "note", tone: "info", text: "You weren't done, so Ori kept listening" })
+      // he wasn't done: no note -- the merged turn replaces his line (onTurn)
     } else if (a === "yield") {
       addEntry({ kind: "note", tone: "info", text: "Ori paused to deliver a result" })
     }
