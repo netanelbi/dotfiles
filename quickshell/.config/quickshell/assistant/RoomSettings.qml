@@ -112,6 +112,7 @@ FocusScope {
     { title: "Interrupting", rows: [
       { k: "barge_db", label: "Gate while Ori talks", help: "The gate drops this much so you can cut in", step: 1, unit: " dB", dp: 0 },
       { k: "hold", label: "Grace", help: "Waits this long when unsure you finished", step: 0.1, unit: " s", dp: 2 },
+      { k: "merge_s", label: "Merge window", help: "Going on within this long joins the same request (0 = until Ori starts answering)", step: 0.5, unit: " s", dp: 1 },
       { k: "sure", label: "Sure enough", help: "Above this, no grace: reply at once", step: 0.05, unit: "", dp: 2 },
       { k: "duck", label: "Duck to", help: "Ori's volume while it checks you're talking over it (1 = off)", step: 0.05, unit: "", dp: 2 }
     ] },
