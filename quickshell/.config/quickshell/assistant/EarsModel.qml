@@ -296,6 +296,12 @@ Singleton {
         addEntry({ kind: "rule", text: "call resumed, same conversation", at: clock(ev.ts) })
       return
     }
+    var had = entriesModel.count > 0
+    clearConversation()
+    if (had) addEntry({ kind: "rule", text: "new conversation", at: clock(ev.ts) })
+  }
+
+  function clearConversation() {
     entriesModel.clear()
     m.turnIds = ({})
     m.pendingBg = []
@@ -305,8 +311,15 @@ Singleton {
     m.totals = []
     m.usage = ({})
     m.nodes = ({})
-    addEntry({ kind: "rule", text: "new conversation", at: clock(ev.ts) })
   }
+
+  // Hung up and it can't be resumed (resume_minutes 0): the transcript goes, as after a panel restart, and
+  // the Call room shows the last call's summary instead -- "summarizing" until ears saves it (memory
+  // call_saved -> refreshMemory). With a resume window the transcript stays: the call may come back.
+  property bool summaryPending: false
+  onSummaryPendingChanged: if (summaryPending) summaryGiveUp.restart()
+  Timer { id: summaryGiveUp; interval: 90000; onTriggered: { m.summaryPending = false; m.refreshMemory() } }
+  function canResume() { return Number((m.settings || {}).resume_minutes || 0) > 0 }
 
   function onState(ev, history) {
     // The first state of a connection is where we came in, not a change: a
@@ -320,6 +333,11 @@ Singleton {
         m.callSince = open && !first ? (ev.ts || now()) : 0
         if (!first && entriesModel.count > 0)
           addEntry({ kind: "rule", text: open ? "call opened" : "call closed", at: clock(ev.ts) })
+        if (!open && !first && !history && !canResume()) {
+          var talked = m.youTurns > 0
+          clearConversation()
+          m.summaryPending = talked
+        }
       }
       m.call = open
       if (!open) m.mode = "closed"
@@ -1034,7 +1052,7 @@ print(name)
   }
 
   // A saved call or a recalled memory can change what is on disk.
-  onMemoryEvent: function (ev) { m.refreshMemory() }
+  onMemoryEvent: function (ev) { if (ev.action === "call_saved") m.summaryPending = false; m.refreshMemory() }
   onTaskEvent: function (ev) { if (m.watching) m.refreshWorkers() }
 
   // ------------------------------------------------------------ voices

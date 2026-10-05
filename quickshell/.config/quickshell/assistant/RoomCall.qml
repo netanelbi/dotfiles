@@ -581,9 +581,18 @@ Item {
       font.pixelSize: RoomLook.body
       renderType: Text.QtRendering
     }
-    Item { width: 1; height: 6; visible: call.lastCall !== null }
+    Item { width: 1; height: 6; visible: call.lastCall !== null || EarsModel.summaryPending }
     Text {
-      visible: call.lastCall !== null
+      visible: EarsModel.summaryPending
+      text: "Last call: summarizing it…"
+      color: Theme.subtext1
+      font.family: RoomLook.sans
+      font.pixelSize: RoomLook.meta
+      font.weight: Font.DemiBold
+      renderType: Text.QtRendering
+    }
+    Text {
+      visible: call.lastCall !== null && !EarsModel.summaryPending
       text: call.lastCall ? "Last call, " + call.lastCall.when : ""
       color: Theme.subtext1
       font.family: RoomLook.sans
@@ -592,7 +601,7 @@ Item {
       renderType: Text.QtRendering
     }
     Text {
-      visible: call.lastCall !== null
+      visible: call.lastCall !== null && !EarsModel.summaryPending
       width: parent.width
       text: call.lastCall ? call.lastCall.summary : ""
       color: Theme.subtext0
