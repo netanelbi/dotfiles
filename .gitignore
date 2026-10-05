@@ -15,3 +15,6 @@ __pycache__/
 # btop rewrites its whole config on exit; not worth tracking
 btop/
 scripts/.local/bin/pad-hotkey
+
+# The assistant's memory about him (personal facts): on this machine only, never in this public repo
+pi/.pi/agent/memory/
