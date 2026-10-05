@@ -125,12 +125,8 @@ Scope {
   onSinkChanged: disarm()
   onSourceChanged: disarm()
 
-  // During an Ori call the default sink is Ori's own echo canceller ("ears_aec..."), and Ori ducks it
-  // while it checks whether he is talking over it: that is not his volume, so no OSD.
-  readonly property bool oriSink: sink !== null && String(sink.name || "").indexOf("ears_aec") === 0
-
-  onSinkVolumeChanged: if (armed && !oriSink) present("volume")
-  onSinkMutedChanged: if (armed && !oriSink) present("volume")
+  onSinkVolumeChanged: if (armed) present("volume")
+  onSinkMutedChanged: if (armed) present("volume")
   // Source *volume* deliberately does not trigger: an app nudging mic gain is
   // not something swayosd surfaces, and it would fire while recording. Mute is
   // a state you must be told about, so it does.
