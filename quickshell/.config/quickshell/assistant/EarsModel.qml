@@ -163,6 +163,7 @@ Singleton {
     logEvent(ev)
     switch (t) {
     case "state": onState(ev, history); break
+    case "call": onCall(ev); break
     case "stage": onStage(ev); break
     case "turn": onTurn(ev); break
     case "reply": onReply(ev); break
@@ -284,6 +285,27 @@ Singleton {
     m.silence = Number(ev.silence)
     m.sim = ev.sim === undefined || ev.sim === null ? -1 : Number(ev.sim)
     if (ev.spectrum) m.spectrum = ev.spectrum
+  }
+
+  // A call opened as a fresh conversation (ears: not resumed within resume_minutes): the transcript starts
+  // empty, as after a panel restart, so an empty Call room means "fresh" and a kept one means "resumed".
+  // History replay folds the same way, so a reconnect shows only the newest conversation.
+  function onCall(ev) {
+    if (ev.resumed === true) {
+      if (entriesModel.count > 0)
+        addEntry({ kind: "rule", text: "call resumed, same conversation", at: clock(ev.ts) })
+      return
+    }
+    entriesModel.clear()
+    m.turnIds = ({})
+    m.pendingBg = []
+    m.lastOri = -1
+    m.youTurns = 0
+    m.latency = null
+    m.totals = []
+    m.usage = ({})
+    m.nodes = ({})
+    addEntry({ kind: "rule", text: "new conversation", at: clock(ev.ts) })
   }
 
   function onState(ev, history) {
