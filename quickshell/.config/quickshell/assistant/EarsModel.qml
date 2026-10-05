@@ -491,7 +491,10 @@ Singleton {
   function onSilent(ev) {
     var i = findEntry("you", Number(ev.id), 20)
     if (i >= 0) { entriesModel.setProperty(i, "silent", true); return }
-    if (m.pendingBg.length > 0) { var q = m.pendingBg.slice(); q.shift(); m.pendingBg = q }
+    // an event turn that chose to say nothing ("your speech ended": nearly every reply ends with one) shows nothing;
+    // only a background result it let pass gets a note
+    if (m.pendingBg.length === 0) return
+    var q = m.pendingBg.slice(); q.shift(); m.pendingBg = q
     addEntry({ kind: "note", tone: "skip", text: "Ori skipped a background result that no longer mattered" })
   }
 
