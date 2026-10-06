@@ -43,7 +43,7 @@ Singleton {
   // The engine's editable settings, what it offers, and who it knows by voice.
   // null until a daemon that publishes them says so: the Settings tab hides
   // what is missing rather than inventing it.
-  //   settings  {voices:{en,fr,...}, speed, hebrew, model, thinker_model, worker_provider,
+  //   settings  {voices:{en,fr,...}, speed, languages, model, thinker_model, worker_provider,
   //              worker_model, resume_minutes, plugins:{name: mode}} -- overrides only
   //   options   {voices:{en:[ids]}, models:[], worker_providers:[],
   //              worker_models:{provider:[]}, plugins:[{name, description, core,

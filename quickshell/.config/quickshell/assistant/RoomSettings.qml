@@ -163,9 +163,11 @@ FocusScope {
       if (set.hasSettings && set.st.hebrew_speed !== undefined && set.st.tts !== "qwen")
         out.push({ t: "num", key: "hebrew_speed", label: "Hebrew pace", help: "× Speed on Hebrew lines (he_heart already reads slower)",
                    step: 0.05, min: 0.5, max: 2, dp: 2, unit: "×" })
-      if (set.hasSettings && set.st.hebrew !== undefined)
-        out.push({ t: "choice", toggle: true, key: "hebrew", label: "Hear Hebrew",
-                   help: "A second speech model for Hebrew turns (~1 GB RAM)", opts: [false, true] })
+      // what Ori listens for: one Whisper picks each turn's language among these (a list in settings, a string here)
+      if (set.hasSettings && set.st.languages !== undefined)
+        out.push({ t: "choice", langs: true, key: "languages", label: "Languages",
+                   help: "What Ori listens for; with Hebrew in the list it speaks Hebrew too",
+                   opts: set.langSets() })
     } else if (s === "voices") {
       // design a voice by description, and manage the ones the server keeps
       if (EarsModel.oriVoice.action) out.push({ t: "orivoice", key: "orivoice" })
@@ -229,7 +231,21 @@ FocusScope {
     if (row.t === "tune") return set.tn[row.k]
     if (row.t === "plugin") return EarsModel.pluginMode(row.p)
     if (row.fixed !== undefined) return row.fixed
+    if (row.langs) {  // ["en", "he"] -> "en he": one string, so the choice list can compare and send it
+      var l = EarsModel.setting(row.key)
+      return l && l.join ? l.join(" ") : (l === undefined ? undefined : String(l))
+    }
     return EarsModel.setting(row.key)
+  }
+  // the Languages row's choices: the usual sets, plus whatever is set now
+  function langSets() {
+    var sets = ["en he fr", "en he", "en fr", "en"]
+    var now = set.value({ langs: true, key: "languages" })
+    if (now && sets.indexOf(now) < 0) sets.push(now)
+    return sets
+  }
+  function langList(s) {
+    return String(s || "").split(" ").map(function (c) { return set.langNames[c] || c }).join(" · ")
   }
   function change(row, d) {
     if (!row || !EarsModel.linked) return
@@ -630,7 +646,8 @@ FocusScope {
                     width: Math.min(implicitWidth, parent.width - 16)
                     Text {
                       id: valT
-                      text: rw.v === undefined ? "–" : rw.r.voice ? set.voiceName(rw.v) : rw.r.toggle ? (rw.v ? "on" : "off") : String(rw.v)
+                      text: rw.v === undefined ? "–" : rw.r.voice ? set.voiceName(rw.v) : rw.r.toggle ? (rw.v ? "on" : "off")
+                            : rw.r.langs ? set.langList(rw.v) : String(rw.v)
                       color: Theme.text
                       elide: Text.ElideRight
                       width: Math.min(implicitWidth, parent.parent.width - 16 - (hintT.visible ? hintT.implicitWidth + 6 : 0))
@@ -1150,7 +1167,7 @@ FocusScope {
                     id: ocText
                     anchors.centerIn: parent
                     text: rw.r.voice ? set.voiceName(oc.modelData) + (rw.r.lang === "en" ? " " + set.voiceHint(oc.modelData).split(" ")[0] : "")
-                                     : String(oc.modelData)
+                                     : rw.r.langs ? set.langList(oc.modelData) : String(oc.modelData)
                     color: oc.picked ? Theme.text : Theme.subtext0
                     font.family: rw.r.voice ? RoomLook.sans : RoomLook.mono
                     font.pixelSize: RoomLook.small + (rw.r.voice ? 1 : 0)
