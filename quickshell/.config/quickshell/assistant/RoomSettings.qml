@@ -166,7 +166,7 @@ FocusScope {
       // what Ori listens for: one Whisper picks each turn's language among these (a list in settings, a string here)
       if (set.hasSettings && set.st.languages !== undefined)
         out.push({ t: "choice", langs: true, key: "languages", label: "Languages",
-                   help: "What Ori listens for; with Hebrew in the list it speaks Hebrew too",
+                   help: "What Ori listens for; with Hebrew in the list it speaks Hebrew too. Hebrew alone: a Hebrew-only model",
                    opts: set.langSets() })
     } else if (s === "voices") {
       // design a voice by description, and manage the ones the server keeps
@@ -239,7 +239,7 @@ FocusScope {
   }
   // the Languages row's choices: the usual sets, plus whatever is set now
   function langSets() {
-    var sets = ["en he fr", "en he", "en fr", "en"]
+    var sets = ["en he fr", "en he", "en fr", "en", "he"]
     var now = set.value({ langs: true, key: "languages" })
     if (now && sets.indexOf(now) < 0) sets.push(now)
     return sets
